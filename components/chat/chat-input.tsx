@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Globe, ArrowUp, Paperclip, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api } from "@/services/api";
+import { api } from "@/features/chat/api/chat.api";
 import { toast } from "sonner";
 
 interface ChatInputProps {
