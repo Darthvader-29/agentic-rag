@@ -38,7 +38,8 @@ sources-panel, message-actions).
     (sidebar, scroll area, message list, input, auto-scroll effect, `beforeunload` cleanup beacon).
 - Gut `app/page.tsx` to a thin shell that renders `<ChatScreen />`.
 - Rewrite `types/index.ts` as `z.infer` re-exports and extend `Message` with `steps` / `sources` /
-  `status`.
+  `status` / `components` (the last an **opaque forward-compat** carrier for the backend Phase-6
+  `component` SSE event — empty on the blocking path, rendered by M10).
 - Delete the dead `components/chat/chat-interface.tsx` (proven unused below).
 - Unit tests: store actions and `useBlockingChat`.
 
@@ -71,7 +72,7 @@ indistinguishable to a user.** Same requests on the wire, same messages on scree
 | **TanStack Query** for discrete async resources (`/chat` mutation, upload, cleanup) | First-class mutation lifecycle (`isPending`/`isError`/`onSuccess`), retry/cancellation, and a single place to grow sessions/document-status polling (M8) and auth (M6). The plan's "API layer" section names it explicitly. | **SWR** — excellent for `GET` caching but its mutation story (`useSWRMutation`) is thinner, and the roadmap's polling/refetch-interval needs (M8) and request cancellation map more cleanly onto Query. |
 | **Zustand** owns live chat (`messages[]`, in-flight buffer, per-message `steps[]`/`sources`/`status`, `draft`, `webSearchAllowed`) | Streaming (M2) appends tokens at high frequency (`appendContent` per chunk) and pushes `status` steps. Routing that through the Query cache would mean `setQueryData` churn + structural-sharing comparisons on every token — wrong tool. A plain external store with targeted selectors re-renders only the subscribed message. The blocking mutation writes into this **same** store with the **same** shape, so when streaming flips on the UI is unchanged. | **React Query cache as the message store** — high-frequency mutation of cached data is an anti-pattern; **`useState` in `page.tsx`** (today) — prop-drills, can't be shared by future strategies, and dies on every route change. |
 | **`http-client` wrapper** over raw `fetch` | One choke point for: base-URL prepend (`env.NEXT_PUBLIC_API_URL`), Zod response parsing → typed data, uniform `ApiError` mapping (so callers `catch` one shape), and the dormant `Bearer`/`401-refresh` seam for M6. Today's `services/api.ts` repeats `fetch` + ad-hoc `res.ok` checks + manual `detail` extraction in every method. | **Per-call raw `fetch`** — duplicated error handling, no runtime validation, `any` leakage (`uploadFile: Promise<any>` today, `services/api.ts:80`). |
-| **Unified `Message` shape now** (`steps`/`sources`/`status`) even though M1 is blocking-only | The plan mandates it: the blocking path synthesizes one `done` step + `context_count` sources, so the M3 thinking-steps/sources panels render today and the M2 streaming path writes the identical shape. Adding the fields later would force a second `page.tsx`-scale refactor. | **Minimal `Message` now, extend in M2** — guarantees a churn wave through the store, hooks, and `chat-message.tsx` exactly when streaming lands; defeats the "architect once" principle. |
+| **Unified `Message` shape now** (`steps`/`sources`/`status`/`components`) even though M1 is blocking-only | The plan mandates it: the blocking path synthesizes one `done` step + `context_count` sources, so the M3 thinking-steps/sources panels render today and the M2 streaming path writes the identical shape. We also carry an **opaque `components` field now** (empty on the blocking path) so the backend Phase-6 `component` event — the agentic rich-output upgrade — lands as a **flag-flip + renderer (M10)**, not another `Message` refactor. Adding any of these fields later would force a second `page.tsx`-scale refactor. | **Minimal `Message` now, extend in M2/M10** — guarantees a churn wave through the store, hooks, and `chat-message.tsx` exactly when streaming or rich components land; defeats the "architect once" principle. |
 | **`z.infer` re-exports** in `types/index.ts` | Runtime validation (Zod) and compile-time types stay locked to one source of truth; impossible for the TS type and the parsed shape to drift. | Hand-written `interface`s parallel to schemas — two sources of truth that silently diverge. |
 
 ---
@@ -648,7 +649,7 @@ inside `useBlockingChat`.
 // features/chat/store/chat.store.ts
 import { create } from "zustand";
 import { v4 as uuidv4 } from "uuid";
-import type { Message, Step, Source, MessageStatus, RouteType } from "@/types";
+import type { Message, Step, Source, RichComponent, MessageStatus, RouteType } from "@/types";
 
 interface ChatState {
   messages: Message[];
@@ -663,6 +664,8 @@ interface ChatState {
   /** Push/replace a thinking step (matched by `label`) onto a message. */
   pushStep: (id: string, step: Step) => void;
   setSources: (id: string, sources: Source[]) => void;
+  /** Append a backend P6 rich component (immutable append). Dark in M1; rendered by M10. */
+  addComponent: (id: string, component: RichComponent) => void;
   setStatus: (id: string, status: MessageStatus) => void;
   setRoute: (id: string, route: RouteType) => void;
   /** Mark a message complete (status -> "done") and flip the route badge in. */
@@ -727,6 +730,16 @@ export const useChatStore = create<ChatState>((set) => ({
   setSources: (id, sources) =>
     set((s) => ({
       messages: updateMessage(s.messages, id, (m) => ({ ...m, sources })),
+    })),
+
+  // Dark in M1: nothing emits components yet (the backend `component` event is M2's
+  // SSE plumbing, gated behind M10's renderer). Kept here so M10 needs no store change.
+  addComponent: (id, component) =>
+    set((s) => ({
+      messages: updateMessage(s.messages, id, (m) => ({
+        ...m,
+        components: [...(m.components ?? []), component],
+      })),
     })),
 
   setStatus: (id, status) =>
@@ -1105,6 +1118,20 @@ export interface Source {
   url?: string;
 }
 
+/**
+ * Opaque forward-compat placeholder for the backend Phase-6 `component` SSE event
+ * (catalog: table | chart | citation | code | callout | media — backend
+ * `09_Phase6_Agentic_Architecture.md` §5 + Appendix C). M1 carries it as an
+ * untyped bag so the agentic rich-output upgrade is a flag-flip + renderer, not a
+ * second `Message` refactor (the "architect once" principle). It is **refined into
+ * a validated discriminated union by M10** (the strict per-type Zod schemas +
+ * renderers live there); nothing in M1/M2 reads or writes a typed shape.
+ */
+export interface RichComponent {
+  type: string;
+  [key: string]: unknown;
+}
+
 /** The one message shape both blocking (M1) and streaming (M2) write. */
 export interface Message {
   id: string;
@@ -1116,6 +1143,8 @@ export interface Message {
   steps: Step[];
   sources: Source[];
   route?: RouteType;
+  /** Backend P6 `component` event payloads; empty on the blocking path; rendered by M10. */
+  components?: RichComponent[];
   /** Legacy alias kept so the unmodified chat-message.tsx renders the chunk count in M1. */
   sourcesCount?: number;
 }
@@ -1179,6 +1208,7 @@ export interface Message {
   steps: Step[];
   sources: Source[];
   route?: RouteType;
+  components?: RichComponent[]; // backend P6 `component` event; empty on the blocking path; rendered by M10
   sourcesCount?: number;      // legacy alias for the unmodified chat-message.tsx (M1 only)
 }
 ```

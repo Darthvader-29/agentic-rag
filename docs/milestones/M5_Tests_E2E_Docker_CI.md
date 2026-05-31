@@ -99,9 +99,15 @@ JSON**:
 - The API base is `process.env.NEXT_PUBLIC_API_URL` (default the Render URL). MSW handlers must match
   whatever base the test env sets (see §6).
 
-The future SSE contract (backend P6, frontend M9) — which our streaming MSW stub mimics — is
-`text/event-stream` emitting `event: status` with `data: {"stage": "routing"|"retrieving"|"searching web"|"synthesizing"}`,
-`event: token` with `data: {"text": "..."}`, and a terminal `[DONE]`.
+The future SSE contract (backend P6, frontend M9; authoritative in
+`Python-Agentic-RAG-Backend/docs/09_Phase6_Agentic_Architecture.md`) — which our streaming MSW stub
+mimics — is `text/event-stream` emitting `event: status` with
+`data: {"stage": "routing"|"retrieving"|"searching web"|"synthesizing"}`, `event: token` with
+`data: {"text": "..."}`, zero-or-more `event: component` with
+`data: {"type": "table"|"chart"|"citation"|"code"|"callout"|"media", ...}` (a whole rich-output block,
+rendered by M10), and a terminal **typed** `event: done` with
+`data: {"answer": "...", "route": "RAG"|"WEB"|"BOTH"|"DIRECT"}` (the flat route enum; `BOTH → "WEB+RAG"`).
+A bare `[DONE]` sentinel is also tolerated defensively by the M2 parser.
 
 ---
 
@@ -364,7 +370,13 @@ export const handlers = [
       `event: status\ndata: ${JSON.stringify({ stage: "synthesizing" })}\n\n`,
       `event: token\ndata: ${JSON.stringify({ text: "Hello" })}\n\n`,
       `event: token\ndata: ${JSON.stringify({ text: ", world." })}\n\n`,
-      `event: done\ndata: [DONE]\n\n`,
+      // 09_Phase6 `component` event — a whole rich-output block (citation = sources channel). M10 renders it.
+      `event: component\ndata: ${JSON.stringify({
+        type: "citation",
+        items: [{ label: "doc.pdf · p.1", source_id: "chunk_1", snippet: "…relevant excerpt…" }],
+      })}\n\n`,
+      // Typed terminal `done` with the FLAT route enum (09_Phase6); the M2 parser also tolerates a bare [DONE].
+      `event: done\ndata: ${JSON.stringify({ answer: "Hello, world.", route: "RAG" })}\n\n`,
     ];
     const stream = new ReadableStream({
       async start(controller) {
@@ -645,6 +657,10 @@ describe("ChatInput", () => {
 - `message-actions.test.tsx` — copy button calls `navigator.clipboard.writeText` (mocked in setup),
   retry invokes the callback.
 - Optional: a `use-reduced-motion.test.ts` asserting it reads `matchMedia('(prefers-reduced-motion: reduce)')`.
+- **(M10-owned)** The rich-component renderer tests (`features/chat/components/rich/*.test.tsx`) and the
+  `component.schemas` discriminated-union tests are authored in **M10**, not here. M5's MSW SSE stub
+  already emits a `component` event (Task 4) so M10's renderers and the streaming E2E have a contract to
+  exercise; M5 does not test the renderers themselves.
 
 ### Task 6 — npm scripts
 

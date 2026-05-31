@@ -12,7 +12,10 @@ choreography over surfaces M3 already built.
 `thinking-steps`, `sources-panel`, `route-badge`, `chat-input`, `message-loading`,
 `components/layout/app-sidebar`) and M0's `app/providers.tsx` provider root · **Unlocks:** M9
 (real SSE streaming motion — live token caret and `status`-driven thinking-step stagger reuse the
-exact variants and reduced-motion contract defined here).
+exact variants and reduced-motion contract defined here) and **M10** (rich `component` blocks —
+table/chart/citation/code/callout/media — reuse these motion tokens, e.g. the message-enter /
+crossfade variants, for their mount transition, honoring the same reduced-motion contract, so M10
+needs no new motion infrastructure).
 
 ---
 

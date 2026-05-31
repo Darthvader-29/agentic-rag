@@ -1,4 +1,4 @@
-# M7 — Multi-Provider BYOK (Backend Phase P4)
+# M7 — Multi-Provider BYOK (Backend Phase P4 + Phase 6 freemium ladder)
 
 This milestone makes the app multi-tenant *and* multi-provider on the client: an authenticated
 user can store their own LLM provider keys (Bring Your Own Key — Gemini / OpenAI / Anthropic) on a
@@ -8,9 +8,21 @@ the user's encrypted key per request (P4 `get_llm_provider`). Everything here is
 `NEXT_PUBLIC_FEATURE_BYOK` — with the flag off, the app behaves *exactly* like today (server default
 provider, no Settings link, no model picker).
 
+**BYOK is the upgrade path in a freemium model, not merely optional multi-provider.** Phase 6 reframes
+provider selection as a 3-tier per-request **freemium ladder** (BYOK → operator free-tier → exhausted;
+see §2.5, [`Python-Agentic-RAG-Backend/docs/09_Phase6_Agentic_Architecture.md`](../../../Python-Agentic-RAG-Backend/docs/09_Phase6_Agentic_Architecture.md)
+§3): an evaluator with **no key** can use the app on the operator's free Gemini key (heavily
+rate-limited), and BYOK is the *upgrade* to private, unlimited use. This adds two client surfaces on
+top of the keys-CRUD + picker above — both flag-gated, both dark by default:
+
+- a **free-tier data-policy disclaimer** shown to keyless (free-mode) users (§2.5 / Phase 6 §4); and
+- recognition of the backend's **`free_tier_exhausted`** error → a **BYOK upsell CTA** (§2.5 / Phase 6 §3)
+  instead of a generic error.
+
 > **Status:** backend-dependent (needs **P4** provider abstraction + **P3** encrypted `user_llm_keys`
-> storage) / **depends on** M6 (auth — keys are user-owned and require a Bearer token) / **unlocks**
-> per-user cost attribution (cost scales with users, not with the operator's single key).
+> storage + the **Phase 6** freemium ladder & `FreeTierExhaustedError`) / **depends on** M6 (auth —
+> keys are user-owned and require a Bearer token; "free tier" is an *authenticated* user with no key)
+> / **unlocks** per-user cost attribution (cost scales with users, not with the operator's single key).
 > **Flag default: OFF** (`NEXT_PUBLIC_FEATURE_BYOK=false`).
 
 ---
@@ -22,22 +34,37 @@ provider, no Settings link, no model picker).
 - **API-keys CRUD UI** (`api-keys-form` + `api-key-row`) — list the user's stored keys (masked
   metadata only), **add** a key for a provider, **rotate** (replace) it, and **delete** it.
 - **Per-conversation `model-picker`** — choose `provider` + `model` (gemini / openai / anthropic)
-  for the current conversation, surfaced near the chat input.
+  for the current conversation, surfaced near the chat input. Model tiering applies **only** on the
+  BYOK path; the operator free tier is a single backend-chosen Gemini Flash model (§2.5).
 - **Sending `provider` + `model` on `/chat`** — extend the chat request payload (flag-gated) so the
   backend `get_llm_provider` resolves the right stored key.
+- **Free-tier data-policy disclaimer** (`free-tier-disclaimer`) — a dismissible banner near the chat
+  input, shown only when the user has **no** BYOK key (free mode), advertising BYOK (§2.5; Task l).
+- **`free_tier_exhausted` recognition → BYOK upsell CTA** (`free-tier-exhausted-dialog`) — when a
+  `/chat` call fails with the stable backend `code` `"free_tier_exhausted"`, surface an "add your own
+  key to continue" CTA → `/settings` instead of a generic error (§2.5; Task m).
 - **Flag gating** — `NEXT_PUBLIC_FEATURE_BYOK` controls every surface above; off == today.
 
 ### Out of scope (do NOT build here)
 - **Streaming changes** — SSE / token streaming is M9 (P6). The model picker only chooses
   provider + model; it does not alter the streaming vs blocking strategy.
+- **Provider resolution, free-tier allowance counting, and the shared-quota global guard** — the
+  3-tier ladder, the per-user/global Redis counters, and the `FreeTierExhaustedError` *decision* are
+  Phase 6 (§3) backend-owned. The frontend only **reacts** to the resulting `code` and to "user has
+  no key"; it never sets or reads any allowance number (those are backend `Settings`).
 - **Provider-specific advanced params** beyond model choice — temperature, top-p, max-tokens,
   system-prompt overrides, tool config. The backend `/chat` contract accepts only provider + model
   selection; nothing else is exposed.
+- **Per-node model tiering + provider-native prompt caching** — backend-internal cost levers
+  (Phase 6 §6); no frontend surface.
 - **A "default provider" server preference endpoint** — P3/P4 store a key *per provider* with a
   `(user_id, provider)` unique constraint; there is no backend "set my default provider" route. The
-  client-side default is derived (see §4 decisions) and persisted locally.
+  client-side default is derived (see §3 decisions) and persisted locally.
 - **Key validation against the provider at add-time** — the backend stores ciphertext without a live
   test call; an invalid key surfaces as a 401/402 on the next `/chat` (handled gracefully, §10).
+- **Any anonymous / unauthenticated tier** — there is none. "Free tier" = an **authenticated** user
+  with no BYOK key (backend P3 makes `/api/chat` bearer-only; §2.5).
+- **Billing / usage metering and any free-tier usage dashboard** — future milestone.
 
 ---
 
@@ -52,6 +79,10 @@ exactly. Two source docs are authoritative:
 - **P4 — provider abstraction & per-request resolution:**
   `Python-Agentic-RAG-Backend/docs/05_Phase4_Multi_Provider_LLM_Abstraction.md`
   (provider enum, default models, `get_llm_provider`, `build_provider`).
+- **Phase 6 — freemium provider ladder & free-tier policy:**
+  [`Python-Agentic-RAG-Backend/docs/09_Phase6_Agentic_Architecture.md`](../../../Python-Agentic-RAG-Backend/docs/09_Phase6_Agentic_Architecture.md)
+  (§0 product context, §3 the freemium ladder, §3.1 shared-quota gotcha, §4 free-tier data policy,
+  Appendix B `get_llm_provider`). Drives §2.5 below.
 
 ### 2.1 Provider enum + model identifiers (P4)
 
@@ -211,6 +242,59 @@ backend resolves the user's key for that `provider`; the frontend never sends a 
 > fields harmlessly (ignored extra keys) and the picker effectively mirrors the stored provider. The
 > frontend codes them as optional so neither interpretation breaks.
 
+### 2.5 The freemium provider ladder (Phase 6 §3)
+
+Phase 6 reframes provider resolution as a **3-tier per-request freemium ladder**, evaluated inside the
+extended `get_llm_provider` on **every** `/api/chat` request (source of truth:
+[`Python-Agentic-RAG-Backend/docs/09_Phase6_Agentic_Architecture.md`](../../../Python-Agentic-RAG-Backend/docs/09_Phase6_Agentic_Architecture.md)
+§3 and Appendix B `get_llm_provider`). This is invisible on the happy path — the only client-visible
+additions are the `free_tier_exhausted` error code and the free-mode disclaimer. The ladder:
+
+1. **BYOK (user's own key).** The authenticated user has an enabled key ⇒ the backend builds a provider
+   on *their* key, with cheap/strong **model tiering** (the §2.4 picker; cheap routes, strong
+   synthesizes). This is the only tier where the picker and tier hints matter.
+2. **Operator free tier.** No key but **within** the free allowance ⇒ the operator's
+   `LLM_FALLBACK_API_KEY` — a **single basic model, free Gemini Flash** (no tiering; route and synth use
+   the same model). Double-gated by Redis counters (backend Phase 5): a **per-user daily allowance**
+   *and* a **global daily guard**. A request must pass **both**.
+3. **Exhausted.** No key and **over** the cap ⇒ the backend raises **`FreeTierExhaustedError`**, an
+   `AppException` subclass carrying a **stable machine-readable code `"free_tier_exhausted"`**. The
+   frontend keys off this code (not the HTTP status) to show a BYOK upsell CTA (Task m) instead of a
+   generic error. **BYOK is the upgrade path.**
+
+**The shared-quota gotcha (Phase 6 §3.1 — do not forget this).** Google's free quota is attached to the
+operator's **one** key and is **shared across all users**, not per-user: ~1,500 req/day, and each query
+spends ~2 LLM calls ⇒ ~**750 queries/day across the entire free user base**. Hence two counters: the
+**per-user allowance** is for fairness (stops one user draining the budget), but the **global guard is
+the real protection** — when it trips, every free user is down until reset, while BYOK users (on their
+own quota) are unaffected. All thresholds are backend-configured via `Settings`
+(`FREE_TIER_PER_USER_DAILY`, `FREE_TIER_GLOBAL_DAILY`, the free/cheap/strong model IDs, …);
+**the frontend neither sets nor reads these numbers** — it only reacts to the `free_tier_exhausted`
+signal and to "the user has no key."
+
+**Free-tier data policy (Phase 6 §4).** Free-tier RAG is **allowed** (the demo needs it) but **must be
+disclosed**: free-tier requests run on the operator's key against Google's free Gemini tier, and Google
+may use free-tier data per their terms. The frontend surfaces a disclaimer to free-mode users *before*
+they upload anything sensitive. **Exact copy (this is the contract — a product/legal requirement, not
+optional polish):**
+
+> "Demo mode runs on Google's free Gemini tier — please avoid uploading sensitive documents (data may
+> be used per Google's policy). Add your own API key for private, unlimited use."
+
+Shown when the user has **no** enabled BYOK key; **hidden the moment any key exists** — BYOK documents
+and queries only ever reach the user's own provider (no operator path, no shared quota, no disclaimer).
+
+**Auth, not anonymity.** Backend P3 makes `/api/chat` require a Bearer token, so **"free tier" means an
+authenticated user with no BYOK key** — there is **no anonymous tier**. The disclaimer and the exhausted
+CTA only ever appear for a signed-in user; both surfaces are additionally gated behind
+`flags.byok && flags.auth` (see §3 D8).
+
+> **Contract assumption (Phase 6 is silent on the HTTP status; flagged in §10).** The exhausted
+> response's status code is **unspecified**. We assume the error **body** is
+> `{ detail, code: "free_tier_exhausted" }` and surface it **by the `code`**, tolerant of whatever HTTP
+> status accompanies it (likely `402` or `429`). Do **not** branch on status; branch on `code`. The
+> per-user allowance and global-guard numbers are backend `Settings`, never frontend concerns.
+
 ---
 
 ## 3. Decisions & Rationale
@@ -223,6 +307,9 @@ backend resolves the user's key for that `provider`; the frontend never sends a 
 | **Provider/model registry as a typed constant synced to the backend enum.** | `providers.registry.ts` is the single client-side source of truth: a `Provider` union (`"gemini" \| "openai" \| "anthropic"`) plus a curated per-provider model list, labels, and icons, matching `05_Phase4...md` Appendix A. The `/chat` payload and the picker both derive from it, so we never send an unknown provider/model and a backend enum change is a one-file edit. |
 | **Graceful fallback to server default when no key / no selection.** | With the flag on but the user holding no key for the chosen provider, the picker hints "no key — add one in Settings" and we either disable selection of that provider or send no `provider`/`model` (server falls back to `DEFAULT_LLM_PROVIDER`). With the flag off we send neither field → behavior is byte-identical to today. |
 | **All BYOK surfaces gated by `flags.byok` AND auth.** | Keys are user-owned and need a Bearer token (P3 Appendix B). The Settings route and the model picker only mount when `flags.byok && flags.auth && isAuthenticated`. The flag is the kill-switch; auth is the precondition. |
+| **(D6) Surface `free_tier_exhausted` by its `code`, not HTTP status; treat it as terminal — no retry.** | Phase 6 §3 makes the *code* stable but is silent on the status (§2.5), so branching on status is fragile. The failed `/chat` call is **not** retried (retrying an exhausted shared quota only burns more budget); we render a BYOK upsell CTA (Task m) as the resolution. |
+| **(D7) Show the free-tier disclaimer **only in free mode**, derived from "user has zero enabled keys."** | Phase 6 §4: BYOK traffic never touches the operator/Google free path, so the privacy warning would be **false** there. "Free mode" is read off the existing `useApiKeys().list` — an **empty** key list ⇒ free mode; the banner disappears the moment any key exists. No new endpoint. |
+| **(D8) Free-tier surfaces require an authenticated user (no anonymous tier); gate behind `flags.byok && flags.auth`.** | Backend P3 makes `/api/chat` bearer-only, so "free tier" = a **signed-in** user with no key (§2.5). With either flag off, neither the disclaimer nor the exhausted CTA renders ⇒ today's behavior. |
 
 ---
 
@@ -262,6 +349,7 @@ features/providers/                    NEW feature module
     providers.registry.ts              NEW  typed Provider union + per-provider model list/labels/icons
     keys.schemas.ts                    NEW  Zod: AddKeyRequest, KeyMetadata, KeyListResponse
     keys.api.ts                        NEW  add/list/rotate/delete via authed http-client
+    errors.ts                          NEW  getApiErrorCode + isFreeTierExhausted (Task k, §2.5)
   store/
     provider.store.ts                  NEW  Zustand: per-conversation provider+model selection (persisted)
   hooks/
@@ -272,11 +360,14 @@ features/providers/                    NEW feature module
     api-key-row.tsx                    NEW  one provider row: masked ••••last4 + rotate/delete
     provider-icon.tsx                  NEW  small icon per provider
     model-picker.tsx                   NEW  provider+model dropdown near the chat input
+    free-tier-disclaimer.tsx           NEW  free-mode data-policy banner (Task l, §2.5)
+    free-tier-exhausted-dialog.tsx     NEW  BYOK upsell CTA on free_tier_exhausted (Task m, §2.5)
 
 features/chat/
   api/chat.schemas.ts                  EDIT add optional provider+model to ChatRequestSchema
   api/chat.api.ts                      EDIT thread provider+model into the /chat payload
-  components/chat-input.tsx            EDIT mount <ModelPicker/> (flag-gated)
+  components/chat-input.tsx            EDIT mount <ModelPicker/> + <FreeTierDisclaimer/> (flag-gated)
+  components/*                         EDIT render <FreeTierExhaustedDialog/> in the /chat error branch
 
 components/layout/
   app-sidebar.tsx                      EDIT add a flag+auth-gated "Settings" link / user-menu item
@@ -286,7 +377,8 @@ lib/
   env.ts                              EDIT add NEXT_PUBLIC_FEATURE_BYOK to the Zod env schema
 
 test/
-  msw/handlers.ts                      EDIT add /api/keys CRUD + masked GET handlers
+  msw/handlers.ts                      EDIT add /api/keys CRUD + masked GET handlers; a /chat
+                                            handler variant returning { code: "free_tier_exhausted" }
   features/providers/*.test.ts(x)      NEW  unit/component tests (see §9)
 ```
 
@@ -1195,6 +1287,187 @@ function SettingsLink() {
 
 ---
 
+### Task k — `errors.ts` (capture the backend `code`; `isFreeTierExhausted`)
+
+**Goal:** extend error handling so the backend's stable `code` is captured **regardless of HTTP
+status** (§2.5 / D6) and expose a typed `isFreeTierExhausted(err)` helper. M1 already throws a typed
+`ApiError`; we add a `code` field to it and a tolerant reader that also handles a raw
+`{ detail, code }` body, so the helper works whichever shape arrives.
+
+**Files:** `features/providers/api/errors.ts`, `lib/api/api-error.ts` (EDIT — one optional field).
+
+```ts
+// lib/api/api-error.ts  (M1 ApiError — add an optional stable backend code)
+// The M1 class already carries (kind, status, message, detail). Add:
+//   public readonly code?: string;     // stable machine-readable backend code, e.g. "free_tier_exhausted"
+// and, where the http-client builds the error from a parsed error body, copy it through:
+//   code: (body as { code?: string } | undefined)?.code,
+// Existing call sites are unaffected (the field is optional).
+```
+
+```ts
+// features/providers/api/errors.ts
+import { isApiError } from "@/lib/api/api-error";
+
+/** Stable machine-readable error codes the backend may attach to an error body (§2.5). */
+export type ApiErrorCode = "free_tier_exhausted";
+export const FREE_TIER_EXHAUSTED: ApiErrorCode = "free_tier_exhausted";
+
+/**
+ * Pull the stable backend `code` off any thrown value, tolerant of HTTP status.
+ * Handles the M1 typed ApiError (with the new `code` field) AND a raw
+ * { detail, code } object, so callers never branch on status (Phase 6 is silent on it).
+ */
+export function getApiErrorCode(err: unknown): string | undefined {
+  if (isApiError(err)) return err.code;
+  if (err && typeof err === "object" && "code" in err) {
+    return (err as { code?: unknown }).code as string | undefined;
+  }
+  return undefined;
+}
+
+/** True when a /chat call failed because the operator free tier is spent (§2.5 tier 3). */
+export function isFreeTierExhausted(err: unknown): boolean {
+  return getApiErrorCode(err) === FREE_TIER_EXHAUSTED;
+}
+```
+
+> Why a helper and not a status check: Phase 6 §3 guarantees the **code** is stable but leaves the
+> **status** unspecified (likely 402 or 429). Keying off `code` is robust to whatever status the
+> backend ends up using, and `isFreeTierExhausted` is the single chokepoint the UI (Task m) and
+> tests share.
+
+---
+
+### Task l — `free-tier-disclaimer.tsx` (free-mode data-policy banner)
+
+**Goal:** a dismissible banner near the chat input, shown **only** when the user has no enabled BYOK
+key (free mode), carrying the **exact** Phase 6 §4 copy and linking to `/settings`. "Free mode" is
+derived from the existing `useApiKeys().list` — an **empty** list ⇒ free mode (§2.5 / D7). Flag- and
+auth-gated; off (or any key present) ⇒ renders nothing (dark-by-default parity with today).
+
+**Files:** `features/providers/components/free-tier-disclaimer.tsx`.
+
+```tsx
+// features/providers/components/free-tier-disclaimer.tsx
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { Info, X } from "lucide-react";
+import { flags } from "@/lib/flags";
+import { useApiKeys } from "../hooks/use-api-keys";
+
+// EXACT contract copy — Phase 6 §4 (09_Phase6_Agentic_Architecture.md). Do not paraphrase.
+const DISCLAIMER =
+  "Demo mode runs on Google's free Gemini tier — please avoid uploading sensitive documents " +
+  "(data may be used per Google's policy). Add your own API key for private, unlimited use.";
+
+export function FreeTierDisclaimer() {
+  const { list } = useApiKeys();
+  const [dismissed, setDismissed] = useState(false);
+
+  // Flag + auth gate (D8): off ⇒ render nothing (byte-for-byte today's UI).
+  if (!flags.byok || !flags.auth) return null;
+  // Free mode = zero enabled keys (D7). Any key ⇒ BYOK ⇒ no disclaimer (their docs stay private).
+  // While loading, render nothing rather than flash a warning we may immediately retract.
+  if (list.isLoading || (list.data?.length ?? 0) > 0) return null;
+  if (dismissed) return null;
+
+  return (
+    <div
+      role="note"
+      className="mb-2 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+    >
+      <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" aria-hidden />
+      <p className="flex-1 leading-relaxed">
+        {DISCLAIMER}{" "}
+        <Link href="/settings" className="font-medium underline hover:text-amber-100">
+          Add a key →
+        </Link>
+      </p>
+      <button
+        type="button"
+        aria-label="Dismiss demo-mode notice"
+        onClick={() => setDismissed(true)}
+        className="rounded p-0.5 text-amber-400 hover:text-amber-200"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+```
+
+> Mount it inside `chat-input.tsx` (Task i), above the input row, alongside `<ModelPicker/>`. With the
+> flag off it returns `null`, so the composer layout is unchanged. Dismissal is per-session (component
+> state); on a fresh session while still keyless, the disclaimer reappears — intentional, since the
+> data-policy notice must be seen before each session's uploads.
+
+---
+
+### Task m — `free-tier-exhausted-dialog.tsx` (BYOK upsell CTA)
+
+**Goal:** when a `/chat` request fails with `code: "free_tier_exhausted"` (detected via
+`isFreeTierExhausted`, Task k — **status-agnostic**), surface a clear "you've hit the free demo limit —
+add your own key to continue" CTA → `/settings`, framed as the **upgrade path** rather than an error.
+**Terminal:** the request is **not** retried (D6); the CTA is the resolution. Same `flags.byok &&
+flags.auth` gating; when it doesn't apply it returns `null` so the existing M1 error UI renders.
+
+**Files:** `features/providers/components/free-tier-exhausted-dialog.tsx`, plus a one-line mount in the
+chat surface's error branch (M5/M9 integration point).
+
+```tsx
+// features/providers/components/free-tier-exhausted-dialog.tsx
+"use client";
+
+import Link from "next/link";
+import { KeyRound } from "lucide-react";
+import { flags } from "@/lib/flags";
+import { isFreeTierExhausted } from "../api/errors";
+
+/**
+ * Render the BYOK upsell when `error` is a free-tier-exhausted failure; null otherwise.
+ * Self-gating on the code + flags, so a caller can drop it directly into its error branch:
+ *   <FreeTierExhaustedDialog error={chat.error} />
+ * and fall through to the generic error UI when this returns null.
+ */
+export function FreeTierExhaustedDialog({ error }: { error: unknown }) {
+  if (!flags.byok || !flags.auth) return null;
+  if (!isFreeTierExhausted(error)) return null; // not our case ⇒ let the caller handle it
+
+  return (
+    <div
+      role="alert"
+      className="rounded-lg border border-border bg-card p-4 text-sm"
+    >
+      <div className="mb-1 flex items-center gap-2 font-semibold text-foreground">
+        <KeyRound className="h-4 w-4 text-amber-400" aria-hidden />
+        You&apos;ve reached the free demo limit
+      </div>
+      <p className="mb-3 text-muted-foreground">
+        The free demo tier is exhausted for now. Add your own API key for private, unlimited use with
+        your choice of models — it takes a few seconds.
+      </p>
+      <Link
+        href="/settings"
+        className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground hover:opacity-90"
+      >
+        Add your API key
+      </Link>
+    </div>
+  );
+}
+```
+
+> **Wiring (M5/M9 integration).** In the chat surface's error branch, render
+> `<FreeTierExhaustedDialog error={chat.error} />` **before** the generic error toast/inline message.
+> When it returns `null` (any other error, or flags off), the existing error path renders unchanged.
+> **Do not auto-retry** an exhausted `/chat` request (D6) — TanStack Query `retry` for the chat
+> mutation should already be `false`/`0`; if not, special-case `isFreeTierExhausted` to never retry.
+
+---
+
 ## 7. Security Notes (BYOK)
 
 The masking contract is enforced **client-side too**, defense-in-depth on top of the P3 server
@@ -1233,11 +1506,18 @@ guarantees:
 | `provider.store` persistence | Inert (never read by a visible surface) | Persists per-conversation selection across reloads |
 | `/chat` payload | `{ message, session_id, web_search_allowed }` only | Same **plus** optional `provider` + `model` from the picker |
 | No selection / no key | n/a (no picker) | `chatPayloadFragment()` falls back to server default; backend uses its own default key/provider |
-| Net behavior | **Identical to M6** — server default provider, anonymous-safe | BYOK live end-to-end |
+| Free-tier disclaimer (`FreeTierDisclaimer`) | Returns `null` — never shown | Shown **only** when `flags.auth` **and** the user has **zero** keys (free mode); hidden once any key exists; dismissible (§2.5 / D7; Task l) |
+| Exhausted CTA (`FreeTierExhaustedDialog`) | Returns `null` — `free_tier_exhausted` (if it ever arrives) falls through to the generic M5 error path | When `flags.auth` and a `/chat` call fails with `code: "free_tier_exhausted"`, renders the BYOK upsell → `/settings`; the call is **not** retried (§2.5 / D6; Task m) |
+| Net behavior | **Identical to M6** — server default provider, anonymous-safe | BYOK live end-to-end; free-mode disclaimer + exhausted upsell live (auth required) |
+
+Free-tier rows summarized: flag **off** ⇒ **neither** the disclaimer nor the CTA renders; flag **on**
+(+ auth) **and no key** ⇒ disclaimer shows; flag **on** (+ auth) **and** `/chat` returns
+`free_tier_exhausted` ⇒ CTA shows. Both free-tier surfaces additionally require `flags.auth` (D8) —
+there is no anonymous tier.
 
 The single guarantee: when `flags.byok === false`, every new surface short-circuits to `null` /
-`notFound()` / `enabled:false`, and `chatPayloadFragment()` returns `{}` so the `/chat` body is
-byte-for-byte the M6 shape.
+`notFound()` / `enabled:false` (this includes `FreeTierDisclaimer` and `FreeTierExhaustedDialog`), and
+`chatPayloadFragment()` returns `{}` so the `/chat` body is byte-for-byte the M6 shape.
 
 ---
 
@@ -1280,6 +1560,15 @@ export const keysHandlers = [
   }),
 ];
 // Reset `keys = []` in an afterEach to isolate tests.
+
+// Free-tier-exhausted /chat variant — surfaced by CODE, not status (§2.5 / D6).
+// Status is deliberately one of the plausible values; tests must NOT depend on it.
+export const freeTierExhaustedChatHandler = http.post("*/api/chat", () =>
+  HttpResponse.json(
+    { detail: "Free tier exhausted.", code: "free_tier_exhausted" },
+    { status: 429 }, // could equally be 402; isFreeTierExhausted keys off `code`, not this
+  ),
+);
 ```
 
 **Unit / component tests** (`test/features/providers/`):
@@ -1304,11 +1593,32 @@ export const keysHandlers = [
    `localStorage` (`byok-model-selection`); `reset()` clears it.
 9. **Schema guards.** `KeyMetadataSchema` rejects a payload carrying a stray `api_key`/`ciphertext`
    field only insofar as it is ignored (strip), and `AddKeyRequestSchema` rejects empty `api_key`.
+10. **`isFreeTierExhausted` / `getApiErrorCode` (Task k).** Returns `true` for an error body
+    `{ code: "free_tier_exhausted" }` at status **402 and 429** (status-agnostic — assert both); for an
+    M1 `ApiError` whose `code` field is set; `false` for other codes, a non-`ApiError`/non-object value,
+    and `undefined`.
+11. **`FreeTierDisclaimer` (Task l).** With an **empty** key list it renders the **exact** §2.5 copy
+    string and a `/settings` link; with ≥1 key, while `list.isLoading`, after the dismiss button is
+    clicked, or with `flags.auth`/`flags.byok` off → renders **nothing**.
+12. **`FreeTierExhaustedDialog` (Task m).** Given a free-tier-exhausted error it renders the CTA (link
+    to `/settings`); given any other error, a non-matching code, or flags off → renders nothing (so the
+    caller's generic error UI takes over).
+13. **Exhausted `/chat` → CTA, no retry.** With `freeTierExhaustedChatHandler` active and `flags.byok &&
+    flags.auth` on, sending a message surfaces the CTA and the `/chat` endpoint is hit **exactly once**
+    (assert no retry — D6). With `flags.auth` off (no anonymous tier, D8), neither free-tier surface
+    renders even when keyless.
 
 **Manual (flag on, against MSW or a P4 backend):** log in → open `/settings` → add an OpenAI key →
 see masked row → pick OpenAI/GPT-4o in the chat picker → send → confirm the network `/chat` body
 carries `provider`/`model` and the answer renders; rotate then delete the key; toggle the flag off and
 confirm the picker and Settings link vanish and `/chat` reverts to the three-field body.
+
+**Manual (free tier / freemium ladder):** log in with **no** key → confirm the Task l disclaimer shows
+near the composer (exact copy) and dismisses; add a key → confirm it disappears; delete the key →
+confirm it returns. Point the chat handler at `freeTierExhaustedChatHandler` (or exhaust a real
+backend allowance) → send → confirm the **BYOK upsell CTA** appears (not a generic error), links to
+`/settings`, and the request was **not** retried. Toggle `flags.byok`/`flags.auth` off → confirm both
+free-tier surfaces vanish and behavior is today's.
 
 **Gates:** `npm run lint`, `prettier --check`, `tsc --noEmit`, `vitest run`, `next build` all green;
 CI green on the branch (same per-milestone gate as the rest of the plan).
@@ -1355,6 +1665,26 @@ CI green on the branch (same per-milestone gate as the rest of the plan).
 10. **Flag-off regressions.** Any new surface that forgets its `flags.byok` guard breaks the "off ==
     today" guarantee. The flag-off test (§9.7) snapshots the `/chat` body and asserts the picker /
     link render null as a regression tripwire.
+11. **`free_tier_exhausted` HTTP-status assumption (Phase 6 is silent).** Phase 6 §3 guarantees the
+    stable *code* but **not** the HTTP status of the exhausted response (§2.5). We therefore branch on
+    `code` (Task k `isFreeTierExhausted`), tolerant of whatever status (likely 402 or 429). **Risk:** if
+    a generic interceptor swallows 402/429 (e.g. routes 401/403 specially, or coerces 429 into a bare
+    "rate limited" toast) *before* the body's `code` is read, the upsell never fires. Mitigation: ensure
+    the M1 `ApiError` carries `code` from the error body for **all** non-2xx (Task k edit), and that the
+    chat error branch consults `isFreeTierExhausted` before any status-based handling. Test §9.10 asserts
+    both 402 and 429 resolve to the CTA. If the backend later pins a specific status, nothing changes —
+    we still key off `code`.
+12. **Shared free quota → the CTA is a fleet-wide event, not per-user (Phase 6 §3.1).** Because the
+    operator's free key has **one** quota shared across all free users, the **global guard** can trip and
+    every keyless user sees `free_tier_exhausted` at once, even a brand-new evaluator on their first
+    query. This is expected, not a bug — the CTA copy is intentionally framed as "the free demo is
+    busy/limited, add a key" rather than "you personally used it up." BYOK users are unaffected. The
+    frontend must not assume the user "spent" anything; it only knows the free path is closed right now.
+13. **Free-mode derivation can briefly be wrong while the key list loads.** "Free mode" is derived from
+    `useApiKeys().list` being empty (§2.5 / D7). On first paint the query may be `isLoading` (or briefly
+    empty before hydration), which could flash the disclaimer to a BYOK user. Mitigation: the disclaimer
+    returns `null` while `list.isLoading` (Task l), so it only appears once we **know** the list is empty;
+    never infer "free" from a still-loading/`undefined` list.
 
 ---
 
@@ -1376,7 +1706,16 @@ CI green on the branch (same per-milestone gate as the rest of the plan).
    `05_Phase4...md` Appendix A (gemini/openai/anthropic + their default models).
 7. **Graceful fallback.** No selection / no key → server default is used; invalid-key errors surface
    as clean toasts, not crashes.
-8. **All gates green.** `lint`, `prettier --check`, `tsc --noEmit`, `vitest run`, `next build`, CI.
+8. **Free-tier disclaimer (flag on, authed, no key).** The **exact** Phase 6 §4 copy shows near the
+   chat input in free mode (zero keys), links to `/settings`, is dismissible, and disappears once any
+   key exists; hidden while the key list is still loading (tests §9.11). Hidden entirely with the flag
+   off.
+9. **`free_tier_exhausted` → BYOK upsell, by code, terminal.** A `/chat` failure carrying
+   `code: "free_tier_exhausted"` (at **any** status — verified for 402 and 429) renders the upsell CTA
+   → `/settings` instead of a generic error, and the request is **not** retried (tests §9.10/§9.12/§9.13).
+10. **Free tier requires auth — no anonymous tier.** Both free-tier surfaces are gated behind
+    `flags.byok && flags.auth`; with `flags.auth` off they never render even when keyless (test §9.13).
+11. **All gates green.** `lint`, `prettier --check`, `tsc --noEmit`, `vitest run`, `next build`, CI.
 
 ---
 
@@ -1395,7 +1734,10 @@ Milestone-sized commits on the milestone branch (no `git` is run as part of writ
 9. `feat(providers): model-picker with no-key hints linking to settings`
 10. `feat(chat): carry optional provider+model on /chat (flag-gated)`
 11. `feat(layout): flag+auth-gated settings link in sidebar/user-menu`
-12. `test(providers): MSW keys CRUD + secret-never-echoed + picker→/chat + flag-off parity`
+12. `feat(providers): error-code helpers (getApiErrorCode/isFreeTierExhausted) + ApiError.code`
+13. `feat(providers): free-tier data-policy disclaimer banner for free mode (flag+auth-gated)`
+14. `feat(providers): FreeTierExhaustedDialog BYOK upsell on free_tier_exhausted (terminal, no retry)`
+15. `test(providers): MSW keys CRUD + secret-never-echoed + picker→/chat + flag-off parity + disclaimer + exhausted-CTA + auth-gating`
 
 Each commit leaves the tree releasable; with the flag off the app is indistinguishable from M6.
 ```

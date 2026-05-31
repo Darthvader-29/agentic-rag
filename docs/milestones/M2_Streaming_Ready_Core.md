@@ -27,9 +27,11 @@ for real token streaming + live thinking-steps), M4 (streaming caret animation t
   anywhere (mid-line, mid-frame, mid-multibyte-UTF-8-codepoint).
 - `lib/sse/stream-chat.ts` — `streamChat(payload, handlers)`: a POST `fetch` + `ReadableStream`
   transport that drives `parseSSE` and dispatches typed callbacks (`onStatus`, `onToken`,
-  `onDone`, `onError`).
-- Zod schemas (`features/chat/api/chat.schemas.ts`) for the two SSE `data:` payloads (`status`
-  stage, `token` text) and the `done` payload, so every event the parser yields is runtime-validated.
+  `onComponent`, `onDone`, `onError`).
+- Zod schemas (`features/chat/api/chat.schemas.ts`) for the SSE `data:` payloads — `status` stage,
+  `token` text, the `component` block (a **loose** `SseComponentSchema` validating only the catalog
+  `type`; M10 tightens it to the strict per-type union), and the `done` payload (flat-enum `route`) —
+  so every event the parser yields is runtime-validated.
 - `features/chat/hooks/use-streaming-chat.ts` — a streaming strategy hook exposing the **exact
   same surface** as `use-blocking-chat`: `{ sendMessage, stop, isStreaming }`, writing through the
   **same store actions** and producing the **identical `Message` shape**.
@@ -54,10 +56,15 @@ for real token streaming + live thinking-steps), M4 (streaming caret animation t
 
 ## 2. Backend SSE Contract
 
-> **Source:** `Python-Agentic-RAG-Backend/docs/07_Phase6_LangGraph_and_Streaming.md`,
-> **Appendix C — SSE event-type catalog + helpers** (lines 191–213) and **§5 Task 6 / Appendix F**
-> (event-ordering test, lines 86, 379–390). This is the QUALITY BAR; our parser and types MUST
-> match it exactly.
+> **Source (authoritative):** [`Python-Agentic-RAG-Backend/docs/09_Phase6_Agentic_Architecture.md`](../../../Python-Agentic-RAG-Backend/docs/09_Phase6_Agentic_Architecture.md)
+> — the refined agentic decision record (§5 Output contract + Appendix A `GraphState` + Appendix C
+> component examples). It **supersedes `07_Phase6` for the design**: `07` still supplies the SSE
+> framing helper, the base event catalog, and the event-ordering test (Appendix C lines 191–213, §5
+> Task 6 / Appendix F, lines 86, 379–390), but `09` brings **two additions** we design against from
+> the start: (1) a new **`component`** SSE event (rich-output blocks), and (2) a **flat `route` enum**
+> (`RAG | WEB | BOTH | DIRECT`, Appendix A) replacing `07`'s `{destination, relevant}` object. This is
+> the QUALITY BAR; our parser and types MUST match it exactly. **Rendering** the `component` blocks is
+> **M10**; **flipping `flags.streaming` on + final verification** against the live endpoint is **M9**.
 
 ### 2.1 Transport & framing
 
@@ -81,17 +88,39 @@ event: <name>\ndata: <json>\n\n
 assume single-line `data:` — the SSE spec permits multiple `data:` lines joined by `\n`, and a
 future backend or a proxy could re-chunk. We handle the general case.
 
-### 2.2 Event catalog (verbatim from Appendix C, lines 195–203)
+### 2.2 Event catalog (base from `07` Appendix C lines 195–203; `component` + flat `route` from `09`)
 
-| `event:`  | `data:` payload                          | Emitted when                                            |
-| --------- | ---------------------------------------- | ------------------------------------------------------- |
-| `status`  | `{"stage": "routing"}`                   | supervisor node starts                                  |
-| `status`  | `{"stage": "searching web"}`             | web node starts                                         |
-| `status`  | `{"stage": "retrieving"}`                | vector node starts                                      |
-| `status`  | `{"stage": "synthesizing"}`              | synthesis node starts                                   |
-| `token`   | `{"text": "..."}`                        | each generated chunk (or one final chunk if no stream)  |
-| `done`    | `{"answer": "...", "route": {...}}`      | stream complete; final answer + route                   |
-| `error`   | `{"detail": "..."}`                      | any node raises; closes the stream cleanly              |
+| `event:`    | `data:` payload                                              | Emitted when                                            |
+| ----------- | ----------------------------------------------------------- | ------------------------------------------------------- |
+| `status`    | `{"stage": "routing"}`                                      | supervisor node starts                                  |
+| `status`    | `{"stage": "searching web"}`                                | web node starts                                         |
+| `status`    | `{"stage": "retrieving"}`                                   | vector node starts                                      |
+| `status`    | `{"stage": "synthesizing"}`                                 | synthesis node starts                                   |
+| `token`     | `{"text": "..."}`                                           | each generated chunk (or one final chunk if no stream)  |
+| `component` | `{"type": "...", ...}`                                      | a synthesis component block's fence closed (whole block) |
+| `done`      | `{"answer": "...", "route": "RAG"\|"WEB"\|"BOTH"\|"DIRECT"}` | stream complete; final answer + flat route enum         |
+| `error`     | `{"detail": "..."}`                                         | any node raises; closes the stream cleanly              |
+
+**Notes on the two `09` additions (the part `07` does not cover):**
+
+- **`component` is buffered-until-fence and emitted whole.** Synthesis streams Markdown prose
+  token-by-token (`token` events) **plus** zero-or-more fenced ```` ```json ```` component blocks; the
+  backend **buffers each block until its closing fence**, then emits it as **one** `component` event
+  (you can't render half a chart). An invalid/malformed block is **dropped** — the prose still
+  renders and the backend **never 500s** (`09` §5; mirrors `07`'s defensive `decide_combined_route`).
+  The catalog `type` is one of `table | chart | citation | code | callout | media` (`09` §5 +
+  Appendix C). The `citation` component **is the SOURCES / provenance channel** (clickable cards
+  linking to the exact retrieved chunk / web source).
+- **`done.route` is a FLAT enum** — `RAG | WEB | BOTH | DIRECT` (`09` Appendix A `GraphState.route`),
+  **not** `07`'s `{destination, relevant}` object. The streaming strategy maps it to the frontend
+  `RouteType`: `RAG`→"RAG", `WEB`→"WEB", `BOTH`→"WEB+RAG", `DIRECT`→"DIRECT" (§5 Task 4). We
+  **tolerate the legacy object form defensively** (a contract assumption while the backend ships;
+  fully reconciled in **M9**).
+- **Event-name-agnostic parser, so `component` already passes through.** A `component` event may
+  arrive **between `synthesizing` and `done`** (interleaved with `token`s). `parseSSE` does not
+  enumerate event names — it yields every `{event, data}` frame verbatim — so it already passes
+  `component` through with **no parser change**; only the `streamChat` dispatch (Task 3) needs a new
+  `case`.
 
 **Status stage progression** (Appendix F event-order assertion, line 386 — the observed order for
 a vectorstore route is `["routing", "retrieving", "synthesizing"]`; the web route substitutes
@@ -113,9 +142,12 @@ routing → (retrieving | searching web | both) → synthesizing → [token …]
 - `error` carries `{"detail": "..."}` and **closes the stream cleanly** — the backend never leaks
   a mid-stream HTTP 500 (Appendix C line 203, line 259 comment "never leak a 500 mid-stream"). On
   the wire an error is therefore a normal SSE `error` event, not a transport failure.
-- `route` here is the backend `RouteDecision` `{"destination": "...", "relevant": bool}` (state doc
-  Appendix B, lines 156–159), **not** the frontend `RouteType` union. The streaming strategy maps
-  it to the existing `RouteType` (see §5 Task 4) so the `Message` shape stays identical to blocking.
+- `route` is a **flat enum** `RAG | WEB | BOTH | DIRECT` (`09` Appendix A `GraphState.route`),
+  superseding `07`'s `RouteDecision` `{"destination": "...", "relevant": bool}` object (state doc
+  Appendix B, lines 156–159). Either way it is **not** the frontend `RouteType` union: the streaming
+  strategy maps it to the existing `RouteType` (see §5 Task 4) — `BOTH`→"WEB+RAG", the rest pass
+  through — so the `Message` shape stays identical to blocking. The legacy object form is tolerated
+  defensively and fully reconciled in **M9**.
 
 ### 2.3 `[DONE]` sentinel
 
@@ -154,15 +186,22 @@ data: {"text": "answer"}␊
 event: token␊
 data: {"text": "."}␊
 ␊
+event: component␊
+data: {"type": "citation", "items": [{"label": "contract.pdf · p.4", "source_id": "chunk_8c1f", "snippet": "...30 days' notice..."}]}␊
+␊
 event: done␊
-data: {"answer": "Grounded answer.", "route": {"destination": "vectorstore", "relevant": true}}␊
+data: {"answer": "Grounded answer.", "route": "RAG"}␊
 ␊
 ```
 
 Concatenated token texts (`"Grounded " + "answer" + "."`) = `"Grounded answer."` = `done.answer`,
-exactly as Appendix F asserts. A keep-alive heartbeat (a comment line `: keep-alive\n\n`, used by
-many SSE servers / proxies to hold the connection open) may appear between any two frames and MUST
-be ignored by the parser.
+exactly as Appendix F asserts. The `component` frame is one **whole** ```` ```json ```` block the
+backend buffered until its fence closed (here a `citation`, the sources/provenance channel — `09`
+Appendix C); it may arrive **between `synthesizing` and `done`**, interleaved with `token`s, and is
+emitted atomically (never split). `done.route` is the **flat enum** `"RAG"` (`09` Appendix A), which
+the strategy maps to the frontend `RouteType` (Task 4). A keep-alive heartbeat (a comment line
+`: keep-alive\n\n`, used by many SSE servers / proxies to hold the connection open) may appear
+between any two frames and MUST be ignored by the parser.
 
 ---
 
@@ -195,7 +234,7 @@ lib/
 
 features/chat/
   api/
-✎   chat.schemas.ts                   + SseStatusSchema, SseTokenSchema, SseDoneSchema, SseErrorSchema
+✎   chat.schemas.ts                   + SseStatusSchema, SseTokenSchema, SseComponentSchema, SseRouteSchema, SseDoneSchema, SseErrorSchema
   hooks/
 ✚   use-streaming-chat.ts             streaming strategy: { sendMessage, stop, isStreaming }
 ✎   use-chat.ts                       facade: read flags.streaming, pick strategy
@@ -209,11 +248,12 @@ test/
 ```
 
 **Pre-existing from M1 that M2 depends on (read-only here):** `features/chat/store/chat.store.ts`
-(the `addMessage`/`appendContent`/`pushStep`/`setSources`/`setStatus`/`finalize` actions, §6),
+(the `addMessage`/`appendContent`/`pushStep`/`setSources`/`addComponent`/`setStatus`/`finalize`
+actions, §6 — `addComponent` is the M1-created opaque sink the new `onComponent` callback writes to),
 `features/chat/hooks/use-blocking-chat.ts` (the strategy whose surface streaming must mirror),
 `lib/flags.ts` (`flags.streaming`), `lib/env.ts` (`env.NEXT_PUBLIC_API_URL`,
 `env.NEXT_PUBLIC_FEATURE_STREAMING`), `lib/api/http-client.ts`, `features/chat/api/chat.schemas.ts`,
-`types/index.ts` (the unified `Message` shape with `steps`/`sources`/`status`).
+`types/index.ts` (the unified `Message` shape with `steps`/`sources`/`status`/`components`).
 
 ---
 
@@ -397,19 +437,41 @@ export const SseTokenSchema = z.object({
 });
 export type SseToken = z.infer<typeof SseTokenSchema>;
 
-/** The backend RouteDecision carried by the done event (Appendix B). */
-export const SseRouteDecisionSchema = z.object({
-  destination: z.string(), // "vectorstore" | "web_search"
+/**
+ * The `done` event's route. Authoritative shape is the FLAT enum from 09 Appendix A
+ * (`GraphState.route`); we still accept 07's legacy `{destination, relevant}` object
+ * defensively while the backend ships (reconciled in M9).
+ */
+export const SseFlatRouteSchema = z.enum(["RAG", "WEB", "BOTH", "DIRECT"]);
+export const SseLegacyRouteSchema = z.object({
+  destination: z.string(), // legacy 07 form: "vectorstore" | "web_search"
   relevant: z.boolean().optional(),
 });
-export type SseRouteDecision = z.infer<typeof SseRouteDecisionSchema>;
+export const SseRouteSchema = z.union([SseFlatRouteSchema, SseLegacyRouteSchema]);
+export type SseRoute = z.infer<typeof SseRouteSchema>;
 
-/** event: done  →  data: {"answer": "...", "route": {...}} */
+/** event: done  →  data: {"answer": "...", "route": "RAG"|"WEB"|"BOTH"|"DIRECT"} (flat enum; legacy object tolerated) */
 export const SseDoneSchema = z.object({
   answer: z.string(),
-  route: SseRouteDecisionSchema.nullable().optional(),
+  route: SseRouteSchema.nullable().optional(),
 });
 export type SseDone = z.infer<typeof SseDoneSchema>;
+
+/**
+ * event: component  →  data: {"type": "table"|"chart"|"citation"|"code"|"callout"|"media", ...}
+ *
+ * A whole rich-output block (buffered-until-fence, emitted atomically by the backend —
+ * 09 §5 + Appendix C). M2 validates ONLY the catalog `type` and passes the rest through
+ * untouched (`.passthrough()`); the **strict per-type discriminated union lives in M10**
+ * (`features/chat/components/rich/`). An unknown/invalid block is **dropped, never thrown**
+ * (mirrors the backend "invalid component degrades to prose-only, never 500").
+ */
+export const SseComponentSchema = z
+  .object({
+    type: z.enum(["table", "chart", "citation", "code", "callout", "media"]),
+  })
+  .passthrough();
+export type SseComponent = z.infer<typeof SseComponentSchema>;
 
 /** event: error  →  data: {"detail": "..."} */
 export const SseErrorSchema = z.object({
@@ -422,7 +484,9 @@ export type SseError = z.infer<typeof SseErrorSchema>;
 > `status` stages; the canonical completion/error frames are the typed `done`/`error` events.
 
 **Acceptance.** Each schema parses its sample payload from §2.4 and rejects a payload missing the
-required key.
+required key. `SseDoneSchema` accepts a flat-enum `route` (`"RAG"`/.../`"BOTH"`) **and** the legacy
+`{destination, relevant}` object. `SseComponentSchema` accepts each catalog `type` (passing extra
+fields through) and rejects an unknown `type` (so `streamChat` drops it rather than throwing).
 
 ---
 
@@ -443,7 +507,9 @@ import {
   SseTokenSchema,
   SseDoneSchema,
   SseErrorSchema,
-  type SseRouteDecision,
+  SseComponentSchema,
+  type SseRoute,
+  type SseComponent,
 } from "@/features/chat/api/chat.schemas";
 
 /** The POST body for /api/chat — identical to the blocking ChatRequest. */
@@ -458,8 +524,10 @@ export interface StreamChatHandlers {
   onStatus?: (stage: string) => void;
   /** A token chunk arrived; `text` is the raw chunk to append to the body. */
   onToken?: (text: string) => void;
-  /** The stream completed with the final answer + backend route decision. */
-  onDone?: (result: { answer: string; route: SseRouteDecision | null }) => void;
+  /** A whole rich-output component block arrived (09 `component` event). Dark until M10. */
+  onComponent?: (component: SseComponent) => void;
+  /** The stream completed with the final answer + backend route (flat enum, legacy tolerated). */
+  onDone?: (result: { answer: string; route: SseRoute | null }) => void;
   /** A typed `error` event OR a transport failure occurred. */
   onError?: (error: Error) => void;
   /** AbortController.signal that powers the Stop button. */
@@ -475,7 +543,7 @@ export async function streamChat(
   payload: StreamChatPayload,
   handlers: StreamChatHandlers,
 ): Promise<void> {
-  const { onStatus, onToken, onDone, onError, signal } = handlers;
+  const { onStatus, onToken, onComponent, onDone, onError, signal } = handlers;
 
   let res: Response;
   try {
@@ -527,6 +595,14 @@ export async function streamChat(
           if (parsed.success) onToken?.(parsed.data.text);
           break;
         }
+        case "component": {
+          // Loose-validate the catalog `type` only (M10 owns the strict per-type union).
+          // Drop on failure — mirrors the backend "invalid component degrades to
+          // prose-only, never 500"; an unparseable block must never break the stream.
+          const parsed = SseComponentSchema.safeParse(safeJson(data));
+          if (parsed.success) onComponent?.(parsed.data);
+          break;
+        }
         case "done": {
           const parsed = SseDoneSchema.safeParse(safeJson(data));
           if (parsed.success) {
@@ -568,8 +644,9 @@ function toError(err: unknown): Error {
 ```
 
 **Acceptance.** POSTs with `Accept: text/event-stream`; guards `!res.ok` and `!res.body`;
-dispatches typed callbacks; `done`/`error` terminate; `AbortError` resolves cleanly without calling
-`onError`; bad JSON / failed Zod parse is dropped silently (fail-closed), never throws.
+dispatches typed callbacks (including `onComponent` for a `component` event); `done`/`error`
+terminate; `AbortError` resolves cleanly without calling `onError`; bad JSON / failed Zod parse —
+including an invalid `component` block — is dropped silently (fail-closed), never throws.
 
 ---
 
@@ -592,15 +669,25 @@ import { v4 as uuidv4 } from "uuid";
 import { useChatStore } from "@/features/chat/store/chat.store";
 import { getSessionId } from "@/features/chat/api/chat.api";
 import { streamChat } from "@/lib/sse/stream-chat";
+import type { SseRoute } from "@/features/chat/api/chat.schemas";
 import type { RouteType } from "@/types";
 
 /**
- * Map a backend RouteDecision ({destination, relevant}) to the frontend RouteType
- * union, so a streamed Message is shape-identical to a blocking one.
+ * Map the backend `done.route` to the frontend RouteType union so a streamed Message
+ * is shape-identical to a blocking one. Authoritative form is the FLAT enum from 09
+ * Appendix A (`RAG | WEB | BOTH | DIRECT`): `BOTH`→"WEB+RAG"; `RAG`/`WEB`/`DIRECT`
+ * pass through. The legacy 07 `{destination, relevant}` object is tolerated defensively
+ * (reconciled in M9).
  */
-function mapRoute(route: { destination: string; relevant?: boolean } | null): RouteType {
+function mapRoute(route: SseRoute | null): RouteType {
   if (!route) return "DIRECT";
-  return route.destination === "web_search" ? "WEB" : "RAG";
+  // Legacy object form (07): map by destination.
+  if (typeof route === "object") {
+    return route.destination === "web_search" ? "WEB" : "RAG";
+  }
+  // Flat enum (09, authoritative).
+  if (route === "BOTH") return "WEB+RAG";
+  return route; // "RAG" | "WEB" | "DIRECT" are valid RouteType members
 }
 
 export function useStreamingChat() {
@@ -609,6 +696,7 @@ export function useStreamingChat() {
   const pushStep = useChatStore((s) => s.pushStep);
   const setStatus = useChatStore((s) => s.setStatus);
   const setSources = useChatStore((s) => s.setSources);
+  const addComponent = useChatStore((s) => s.addComponent);
   const setRoute = useChatStore((s) => s.setRoute);
   const finalize = useChatStore((s) => s.finalize);
   const setStreaming = useChatStore((s) => s.setStreaming);
@@ -660,6 +748,12 @@ export function useStreamingChat() {
             // token chunk → append to the streaming body (+ M4 caret rides this)
             appendContent(assistantId, chunk);
           },
+          onComponent: (component) => {
+            // whole rich block → append to message.components.
+            // Dark in M2 (no renderer yet); rendered by M10. A `citation`
+            // component feeds the sources panel (it's the provenance channel).
+            addComponent(assistantId, component);
+          },
           onDone: ({ answer, route }) => {
             // Canonical final body is done.answer (== concatenated tokens).
             // Idempotently set it so a non-streaming provider (single token) and a
@@ -688,6 +782,7 @@ export function useStreamingChat() {
       pushStep,
       setStatus,
       setSources,
+      addComponent,
       setRoute,
       finalize,
       setStreaming,
@@ -790,6 +885,7 @@ action surface:
 | `pushStep` | `(id: string, step: Step) => void` | once: synthesized `{stage:"done"}` step | per `onStatus` stage (live) |
 | `setStatus` | `(id: string, status: string) => void` | `"done"` | per stage, then `"done"`/`"error"` |
 | `setSources` | `(id: string, sources: Source[]) => void` | from `context_count` | `[]` in M2; backend metadata in M9 |
+| `addComponent` | `(id, component) => void` | — (not used) | per `onComponent` event (whole block); dark until M10 |
 | `setRoute` | `(id: string, route: RouteType) => void` | from `response.route` | `mapRoute(done.route)` |
 | `finalize` | `(id: string, patch?: Partial<Message>) => void` | flips `status:"done"` | overwrite `content = done.answer`, `status:"done"` |
 | `setStreaming` | `(b: boolean) => void` | true on send, false on settle | true on send, false on settle/stop/error |
@@ -879,6 +975,20 @@ describe("parseSSE", () => {
     );
     expect(events.map((e) => e.event)).toEqual(["status", "token", "done"]);
     expect(events[0].data).toBe('{"stage": "routing"}');
+  });
+
+  it("passes a component frame through verbatim (event-name-agnostic)", async () => {
+    // The parser does not enumerate event names; a `component` block (09) is
+    // yielded whole, between synthesizing and done. Still runs dark in M2.
+    const events = await collect(
+      streamFromChunks([
+        'event: token\ndata: {"text": "Hi"}\n\n',
+        'event: component\ndata: {"type": "citation", "items": [{"label": "doc.pdf · p.4"}]}\n\n',
+        'event: done\ndata: {"answer": "Hi", "route": "RAG"}\n\n',
+      ]),
+    );
+    expect(events.map((e) => e.event)).toEqual(["token", "component", "done"]);
+    expect(JSON.parse(events[1].data).type).toBe("citation");
   });
 
   it("joins multiple data: lines with \\n", async () => {
@@ -984,6 +1094,46 @@ describe("streamChat", () => {
     expect(done!.answer).toBe("Grounded answer."); // == concatenated tokens
   });
 
+  it("fires onComponent for a component event and maps the flat done.route", async () => {
+    // 09: a whole `component` block + a flat-enum route. Still dark in M2 (no renderer),
+    // but the transport must dispatch onComponent and surface the flat route to onDone.
+    mockFetchOnce(
+      streamFromChunks([
+        'event: token\ndata: {"text": "Hi"}\n\n',
+        'event: component\ndata: {"type": "citation", "items": [{"label": "doc.pdf · p.4"}]}\n\n',
+        'event: done\ndata: {"answer": "Hi", "route": "BOTH"}\n\n',
+      ]),
+    );
+    const components: Array<{ type: string }> = [];
+    let done: { answer: string; route: unknown } | null = null;
+
+    await streamChat(
+      { message: "q", session_id: "s", web_search_allowed: false },
+      { onComponent: (c) => components.push(c), onDone: (d) => (done = d) },
+    );
+
+    expect(components).toHaveLength(1);
+    expect(components[0].type).toBe("citation");
+    expect(done!.route).toBe("BOTH"); // flat enum surfaced raw; mapRoute → "WEB+RAG" in the hook
+  });
+
+  it("drops an invalid component block without throwing (degrades to prose-only)", async () => {
+    mockFetchOnce(
+      streamFromChunks([
+        'event: component\ndata: {"type": "definitely-not-a-catalog-type"}\n\n',
+        'event: done\ndata: {"answer": "Hi", "route": "RAG"}\n\n',
+      ]),
+    );
+    const onComponent = vi.fn();
+    let done: { answer: string } | null = null;
+    await streamChat(
+      { message: "q", session_id: "s", web_search_allowed: false },
+      { onComponent, onDone: (d) => (done = d) },
+    );
+    expect(onComponent).not.toHaveBeenCalled(); // invalid type dropped, never thrown
+    expect(done!.answer).toBe("Hi"); // stream still completes cleanly
+  });
+
   it("reports a typed error event via onError and stops", async () => {
     mockFetchOnce(streamFromChunks(['event: error\ndata: {"detail": "boom"}\n\n']));
     const onError = vi.fn();
@@ -1065,6 +1215,7 @@ import { describe, it, expect, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 
 // Replay a scripted SSE sequence by invoking the handlers streamChat would call.
+// Scripts the 09 contract: a whole `component` block + a FLAT-enum done.route.
 vi.mock("@/lib/sse/stream-chat", () => ({
   streamChat: vi.fn(async (_payload, h) => {
     h.onStatus?.("routing");
@@ -1072,7 +1223,8 @@ vi.mock("@/lib/sse/stream-chat", () => ({
     h.onStatus?.("synthesizing");
     h.onToken?.("Grounded ");
     h.onToken?.("answer.");
-    h.onDone?.({ answer: "Grounded answer.", route: { destination: "vectorstore" } });
+    h.onComponent?.({ type: "citation", items: [{ label: "doc.pdf · p.4" }] });
+    h.onDone?.({ answer: "Grounded answer.", route: "BOTH" }); // flat enum (09)
   }),
 }));
 
@@ -1091,7 +1243,7 @@ describe("useStreamingChat end-to-end", () => {
     const msgs = useChatStore.getState().messages;
     const assistant = msgs.find((m) => m.role === "assistant")!;
     expect(assistant.content).toBe("Grounded answer.");
-    expect(assistant.route).toBe("RAG");
+    expect(assistant.route).toBe("WEB+RAG"); // mapRoute("BOTH") → "WEB+RAG"
     expect(assistant.status).toBe("done");
     expect(assistant.steps.map((s) => s.stage)).toEqual([
       "routing",
@@ -1099,10 +1251,17 @@ describe("useStreamingChat end-to-end", () => {
       "synthesizing",
     ]);
     expect(assistant.sources).toEqual([]);
+    // Opaque component captured (dark in M2 — no renderer yet; rendered by M10).
+    expect(assistant.components).toHaveLength(1);
+    expect(assistant.components![0].type).toBe("citation");
     expect(useChatStore.getState().isStreaming).toBe(false);
   });
 });
 ```
+
+> This end-to-end test runs **dark** like the rest of M2: it drives the hook directly, asserting the
+> store-write plumbing (including the new `onComponent → addComponent` sink and the flat-route
+> mapping). No component renders the captured `components` until **M10**; the flag flip is **M9**.
 
 ### 7.6 MSW SSE handler (for M5 integration / Playwright)
 
@@ -1117,7 +1276,8 @@ const SSE_SCRIPT =
   'event: status\ndata: {"stage": "synthesizing"}\n\n' +
   'event: token\ndata: {"text": "Grounded "}\n\n' +
   'event: token\ndata: {"text": "answer."}\n\n' +
-  'event: done\ndata: {"answer": "Grounded answer.", "route": {"destination": "vectorstore"}}\n\n';
+  'event: component\ndata: {"type": "citation", "items": [{"label": "doc.pdf · p.4", "source_id": "chunk_8c1f"}]}\n\n' +
+  'event: done\ndata: {"answer": "Grounded answer.", "route": "RAG"}\n\n'; // flat enum (09)
 
 export const sseChatHandler = http.post(`${env.NEXT_PUBLIC_API_URL}/chat`, ({ request }) => {
   if (request.headers.get("accept") !== "text/event-stream") return; // fall through to blocking handler
@@ -1184,11 +1344,15 @@ dark.
 - [ ] All §7.2 `parseSSE` unit tests pass, **including the multibyte-split test**.
 - [ ] `lib/sse/stream-chat.ts` POSTs with `Accept: text/event-stream`, guards `!res.ok`/`!res.body`,
       dispatches typed Zod-validated callbacks, and swallows `AbortError` (all §7.3 tests pass).
-- [ ] `features/chat/api/chat.schemas.ts` exports `SseStatusSchema`/`SseTokenSchema`/`SseDoneSchema`/
-      `SseErrorSchema`; each parses its §2.4 sample and rejects a missing-key payload.
+- [ ] `features/chat/api/chat.schemas.ts` exports `SseStatusSchema`/`SseTokenSchema`/
+      `SseComponentSchema`/`SseRouteSchema`/`SseDoneSchema`/`SseErrorSchema`; each parses its §2.4
+      sample and rejects a missing-key payload; `SseDoneSchema.route` accepts the flat enum **and**
+      the legacy object; `SseComponentSchema` accepts each catalog `type` and drops an unknown one.
 - [ ] `features/chat/hooks/use-streaming-chat.ts` exposes `{ sendMessage, stop, isStreaming }`
-      identical to `use-blocking-chat`, writes through the §6 store actions, and the §7.5 end-to-end
-      test shows a finalized assistant `Message` of the canonical shape.
+      identical to `use-blocking-chat`, writes through the §6 store actions (including
+      `onComponent → addComponent`, dark until M10), maps the flat `done.route` via `mapRoute`
+      (`BOTH`→"WEB+RAG"), and the §7.5 end-to-end test shows a finalized assistant `Message` of the
+      canonical shape.
 - [ ] `features/chat/hooks/use-chat.ts` reads `flags.streaming`; the §7.4 strategy-switch test passes
       for both flag states.
 - [ ] **Flag-off parity:** with `NEXT_PUBLIC_FEATURE_STREAMING=false`, the app behaves exactly as M1
@@ -1204,7 +1368,7 @@ Milestone-sized, conventional commits on the milestone branch (one concern each)
 
 1. `feat(sse): add parseSSE async-generator frame parser + unit tests`
    — `lib/sse/parser.ts`, `lib/sse/__tests__/parser.test.ts`, `test/utils/mock-stream.ts`.
-2. `feat(chat): add SSE payload Zod schemas (status/token/done/error)`
+2. `feat(chat): add SSE payload Zod schemas (status/token/component/route/done/error)`
    — `features/chat/api/chat.schemas.ts`.
 3. `feat(sse): add streamChat POST+ReadableStream transport + tests`
    — `lib/sse/stream-chat.ts`, `lib/sse/__tests__/stream-chat.test.ts`.

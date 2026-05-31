@@ -21,6 +21,7 @@ Replace today's fire-and-forget multipart upload with a **presigned-PUT, direct-
 - Provider keys / BYOK / model picker (M7).
 - Resumable / multipart-chunked S3 uploads, pause/resume, client-side retry of S3 PUT (noted as future work in §9).
 - Server-side document deletion UI beyond what `/cleanup` already provides (cleanup wiring is untouched here).
+- Chat-path freemium rate-limiting / the `free_tier_exhausted` error (backend Phase 5 rate limiting + `09_Phase6` §3 provider ladder) — handled in **M7/M9**, not here. The upload routes have their own per-route rate limit (backend Phase 5 Appendix C); a `429` on `/api/upload` surfaces as an ordinary upload error, with no BYOK/freemium UX in this milestone.
 
 ---
 

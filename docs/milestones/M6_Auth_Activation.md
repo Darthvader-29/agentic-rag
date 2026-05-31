@@ -26,6 +26,7 @@ Activate the dormant authentication seam built into the API layer: add a self-co
 - **Provider/model picker** (gemini/openai/anthropic) → M7 (consumes P4).
 - Streaming, presigned uploads, document-status polling — unrelated phases.
 - Email verification, password reset, OAuth, refresh-token rotation/reuse detection, token revocation/blocklist, rate limiting, account lockout — **all out of scope on the backend too** (P3 Appendix B "Known gaps (deferred)"; §1 "Explicitly deferred"). The frontend must not pretend these exist (e.g. no "forgot password" link that 404s).
+- **Freemium / free-tier provider resolution** (backend `09_Phase6` §3: BYOK → operator free-tier → `free_tier_exhausted`) → **M7**. Note the "free tier" is **not** an anonymous tier: backend P3 makes `/api/chat` require a bearer token, so a free-tier user is still an **authenticated** user who simply has no BYOK key on file. M6 only establishes that authenticated identity; the `free_tier_exhausted` error handling, the BYOK upsell CTA, and the free-tier data-policy disclaimer banner all land in **M7** (consuming P4 + the `09_Phase6` ladder).
 
 ---
 

@@ -268,6 +268,7 @@ const envSchema = z.object({
   NEXT_PUBLIC_FEATURE_AUTH: FeatureFlag,
   NEXT_PUBLIC_FEATURE_BYOK: FeatureFlag,
   NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD: FeatureFlag,
+  NEXT_PUBLIC_FEATURE_RICH_COMPONENTS: FeatureFlag,
 
   // --- Build/runtime context ---
   NODE_ENV: z
@@ -286,6 +287,8 @@ const parsed = envSchema.safeParse({
   NEXT_PUBLIC_FEATURE_BYOK: process.env.NEXT_PUBLIC_FEATURE_BYOK,
   NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD:
     process.env.NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD,
+  NEXT_PUBLIC_FEATURE_RICH_COMPONENTS:
+    process.env.NEXT_PUBLIC_FEATURE_RICH_COMPONENTS,
   NODE_ENV: process.env.NODE_ENV,
 });
 
@@ -323,6 +326,7 @@ import { env } from "@/lib/env";
  *   auth             -> M6 (backend P3 JWT auth + login/register)
  *   byok             -> M7 (backend P4 multi-provider BYOK + model picker)
  *   presignedUpload  -> M8 (backend P5 presigned S3 uploads + status polling)
+ *   richComponents   -> M10 (backend P6 rich-output `component` SSE event — table/chart/citation/…)
  *
  * In M0 nothing reads these yet — they exist so the seams are ready.
  */
@@ -331,6 +335,7 @@ export const flags = {
   auth: env.NEXT_PUBLIC_FEATURE_AUTH,
   byok: env.NEXT_PUBLIC_FEATURE_BYOK,
   presignedUpload: env.NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD,
+  richComponents: env.NEXT_PUBLIC_FEATURE_RICH_COMPONENTS,
 } as const;
 
 export type Flags = typeof flags;
@@ -642,14 +647,16 @@ jobs:
 NEXT_PUBLIC_API_URL=http://localhost:8000/api
 
 # Feature flags — keep "false" until the matching backend phase ships.
-# streaming  -> backend P6 SSE   (consumed M2/M9)
-# auth       -> backend P3 JWT   (consumed M6)
-# byok       -> backend P4 BYOK  (consumed M7)
-# presigned  -> backend P5 S3    (consumed M8)
+# streaming  -> backend P6 SSE        (consumed M2/M9)
+# auth       -> backend P3 JWT        (consumed M6)
+# byok       -> backend P4 BYOK       (consumed M7)
+# presigned  -> backend P5 S3         (consumed M8)
+# rich       -> backend P6 component  (consumed M10 — rich-output rendering)
 NEXT_PUBLIC_FEATURE_STREAMING=false
 NEXT_PUBLIC_FEATURE_AUTH=false
 NEXT_PUBLIC_FEATURE_BYOK=false
 NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD=false
+NEXT_PUBLIC_FEATURE_RICH_COMPONENTS=false
 ```
 > `.env.example` is committed; real `.env.local` is git-ignored by Next's default `.gitignore`. Note `services/api.ts:6` currently defaults to the Render URL and `app/page.tsx:20` to localhost — both keep working because `env.ts` is not yet consumed by them in M0 (that rewire is M1); `.env.example` documents the intended single value going forward.
 
@@ -666,6 +673,7 @@ All env is validated once in `lib/env.ts` and surfaced via `env` (raw, typed) an
 | `NEXT_PUBLIC_FEATURE_AUTH` | `boolean` | `false` | `"true"|"false"` → bool | M6 |
 | `NEXT_PUBLIC_FEATURE_BYOK` | `boolean` | `false` | `"true"|"false"` → bool | M7 |
 | `NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD` | `boolean` | `false` | `"true"|"false"` → bool | M8 |
+| `NEXT_PUBLIC_FEATURE_RICH_COMPONENTS` | `boolean` | `false` | `"true"|"false"` → bool | M10 (backend P6 `component` event) |
 | `NODE_ENV` | `"development"|"test"|"production"` | `development` | enum | tooling/build |
 
 - **`.env.example`** (Task 13) is the canonical list; CI's `build` step pins the same values.

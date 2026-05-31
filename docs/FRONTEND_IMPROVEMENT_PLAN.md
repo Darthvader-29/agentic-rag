@@ -12,8 +12,15 @@ Today **all state lives in `app/page.tsx`** with prop-drilling, chat is **blocki
 The paired **Python backend is mid-roadmap** (docs in `Python-Agentic-RAG-Backend/docs`).
 Upcoming phases change the API contract: **P3** JWT auth + login/register + user-owned
 sessions; **P4** multi-provider BYOK (Gemini/OpenAI/Anthropic) + model picker; **P5**
-presigned S3 uploads + ingestion-status polling; **P6** switches `/chat` to **SSE streaming**
-(`event: status {stage}` and `event: token "chunk"`).
+presigned S3 uploads + ingestion-status polling; **P6** rebuilds `/chat` as a **LangGraph
+agentic graph** (supervisor → vector/web → synthesis; `BOTH` fans out in parallel) over **SSE
+streaming** (`event: status {stage}`, `event: token`, typed `event: done`), adds a new
+`event: component` for **rich structured output** (a fixed catalog —
+`table`/`chart`/`citation`/`code`/`callout`/`media`), and introduces a **freemium provider
+ladder** (BYOK → operator free-tier → `free_tier_exhausted`). The P6 route is a **flat enum**
+`RAG | WEB | BOTH | DIRECT` (`BOTH` → the frontend's `WEB+RAG`), replacing the old
+`{destination, relevant}` object. (`09_Phase6_Agentic_Architecture.md` is authoritative over
+`07_Phase6` for this design.)
 
 **Goal:** a minimal-looking but polished chat UI with tasteful micro-animations,
 token-by-token **streaming**, and **"thinking / agent-steps" tabs** (driven by the SSE
@@ -54,7 +61,9 @@ lib/            env.ts (Zod env), flags.ts, query-client.ts,
 features/chat/  api/{chat.api,chat.schemas} · store/chat.store · hooks/{use-chat,
                 use-streaming-chat,use-blocking-chat} · components/{chat-screen,message-list,
                 chat-message,chat-input,thinking-steps,sources-panel,message-actions,
-                code-block,route-badge,empty-state,message-loading}
+                code-block,route-badge,empty-state,message-loading},
+                components/rich/* (component dispatcher + per-type renderers — table/chart/
+                citation/code/callout/media) [P6]
 features/sessions|auth|upload|providers/   scaffolded per backend phase (flag-gated)
 components/     ui/* (shadcn + add dropdown-menu,tooltip,collapsible,skeleton,command),
                 theme/{theme-provider,theme-toggle}, layout/app-sidebar, error/error-fallback
@@ -72,9 +81,10 @@ mutation writes its result into the same Zustand store on success — identical 
 **`useChat` facade** (`features/chat/hooks/use-chat.ts`) exposes a stable API
 `{ messages, isStreaming, sendMessage, stop, retry }`. Reads `flags.streaming`; delegates to
 `useStreamingChat` or `useBlockingChat`, both writing through the **same store actions** and
-`Message` shape (with `steps`, `sources`, `status`). Blocking path synthesizes a single "done"
-step + `context_count` sources so the thinking/sources panels work today. Flipping the flag
-after P6 is the only change.
+`Message` shape (with `steps`, `sources`, `status`, and an opaque `components?: RichComponent[]`
+for P6 rich blocks — added in M1, populated by the `addComponent` store action, rendered later by
+M10). Blocking path synthesizes a single "done" step + `context_count` sources so the
+thinking/sources panels work today. Flipping the flag after P6 is the only change.
 
 **API layer.** `lib/api/http-client.ts`: typed `request<T>(path,{method,body,schema,auth,signal})`,
 prepends `env.NEXT_PUBLIC_API_URL`, Zod-parses responses into typed `ApiError`. Auth interceptor
@@ -84,17 +94,29 @@ forbidden. `types/index.ts` becomes `z.infer` re-exports so runtime + compile-ti
 **SSE design (POST + ReadableStream, not EventSource** — EventSource can't POST or send auth):
 `lib/sse/parser.ts` `async function* parseSSE(stream)` pipes through `TextDecoderStream`, splits
 on `\n\n`, parses `event:`/`data:` (handles multi-line data, partial buffer, `[DONE]`).
-`lib/sse/stream-chat.ts` `streamChat(payload,{signal,onStatus,onToken,onError})` fetches with
-`Accept: text/event-stream`, iterates events. `useStreamingChat` maps `onStatus(stage)` →
-`pushStep` (feeds **ThinkingSteps** live), `onToken(chunk)` → `appendContent` (streams body +
-blinking caret), completion → `finalize`. `AbortController` powers the Stop button.
+`lib/sse/stream-chat.ts` `streamChat(payload,{signal,onStatus,onToken,onComponent,onError})`
+fetches with `Accept: text/event-stream`, iterates events. `useStreamingChat` maps
+`onStatus(stage)` → `pushStep` (feeds **ThinkingSteps** live), `onToken(chunk)` →
+`appendContent` (streams body + blinking caret), completion → `finalize`. `AbortController`
+powers the Stop button.
+
+The P6 stream carries three payload events plus terminator: `status` (stage), `token` (prose,
+streamed token-by-token), and **`component`** — a *whole-block* event the backend emits only
+once a structured block's fence closes (you can't render half a chart), carrying one item from
+the fixed catalog (`table`/`chart`/`citation`/`code`/`callout`/`media`). `onComponent(block)` →
+`addComponent` appends it to the message's opaque `components[]`; the **`citation`** type is the
+real sources/provenance channel (so live streaming finally has sources). The typed `event: done`
+ends the stream (tolerating a `[DONE]` sentinel) and its `done.route` is a **flat enum**
+(`RAG | WEB | BOTH | DIRECT`; `BOTH` → `WEB+RAG`) consumed by the route badge.
 
 ## Milestones (each independently shippable)
 
 - **M0 — Tooling & guardrails** (no UX change): Prettier + ESLint a11y + Husky + lint-staged,
-  CI skeleton, `lib/env.ts` Zod env + `lib/flags.ts`, fix `app/layout.tsx` (metadata, mount
-  `Providers`/`ThemeProvider`/`Toaster`, `suppressHydrationWarning`), `theme-provider` +
-  `theme-toggle`. *Verify:* `lint`/`format`/`typecheck` pass, CI green, theme toggle + toasts work.
+  CI skeleton, `lib/env.ts` Zod env + `lib/flags.ts` (the `NEXT_PUBLIC_FEATURE_*` set —
+  `STREAMING`, `AUTH`, `BYOK`, `PRESIGNED_UPLOAD`, `RICH_COMPONENTS` — all default **false**),
+  fix `app/layout.tsx` (metadata, mount `Providers`/`ThemeProvider`/`Toaster`,
+  `suppressHydrationWarning`), `theme-provider` + `theme-toggle`. *Verify:* `lint`/`format`/
+  `typecheck` pass, CI green, theme toggle + toasts work.
 - **M1 — Architecture refactor (parity)**: add TanStack Query + Zustand, `http-client`, Zod
   schemas, feature folders; gut `page.tsx` to a thin shell; port `services/api.ts`; delete dead
   `components/chat/chat-interface.tsx`. Behavior identical (blocking). *Verify:* send/upload/
@@ -124,12 +146,22 @@ blinking caret), completion → `finalize`. `AbortController` powers the Stop bu
   polling (Query `refetchInterval`), progress UI, `document-manager`; flag `..._PRESIGNED_UPLOAD`,
   multipart fallback when off.
 - **M9 — Real SSE on + rich markdown/observability**: flip `NEXT_PUBLIC_FEATURE_STREAMING=true`;
-  live thinking-steps + token streaming; `next.config` images allowlist for rich markdown;
+  live thinking-steps + token streaming; wire the **`component`** SSE event end-to-end (parsed +
+  stored as `components[]`, `citation` = live sources) and handle the **`free_tier_exhausted`**
+  error code (BYOK upsell, not a raw error); `next.config` images allowlist for rich markdown;
   enable Sentry + analytics via env/DSN. *Verify:* end-to-end streaming vs real backend; steps
-  animate from real `status` events; reduced-motion clean; Sentry receives a test error.
+  animate from real `status` events; a `component` event arrives live; freemium error surfaces the
+  CTA; reduced-motion clean; Sentry receives a test error.
+- **M10 — Rich Component Rendering [P6]**: render the P6 `component` catalog from the message's
+  `components[]` via `features/chat/components/rich/*` (a dispatcher + per-type renderers for
+  `table`/`chart`/`citation`/`code`/`callout`/`media`); flag `NEXT_PUBLIC_FEATURE_RICH_COMPONENTS`
+  (default off → blocks stay buffered/hidden). *Verify:* each renderer round-trips its sample
+  block; unknown/invalid blocks degrade gracefully (prose still renders); a11y + reduced-motion
+  pass; flag-off path equals today's prose-only output.
 
 **Recommended first delivery:** M0 → M5 (foundation, streaming-ready core, full UX polish,
-motion, tests/CI/Docker) — all shippable against today's backend. M6–M9 land as backend phases do.
+motion, tests/CI/Docker) — all shippable against today's backend. M6–M10 land as backend phases
+ship.
 
 ## Critical Files
 

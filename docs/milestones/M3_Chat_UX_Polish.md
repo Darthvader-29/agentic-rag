@@ -58,6 +58,21 @@ static components built here).
 | D7 | **`message-actions` retry calls `useChat().retry`** | The facade already exposes `retry`; actions stay presentational and call into the store action, so the same component works for blocking (re-run mutation) and streaming (re-open SSE) without change. |
 | D8 | **`useCopyToClipboard` shared hook** | Copy is needed by both `code-block` (copy snippet) and `message-actions` (copy answer). One hook owns the `navigator.clipboard.writeText` call, the 2s "copied" reset timer, and the toast, avoiding duplicated state machines. |
 
+> **Forward-compat seams (backend Phase 6 — left here, built later).** M3 builds the static chat
+> surface against the unified `Message` shape so the agentic upgrade is additive, not a rewrite:
+> - **`chat-message.tsx` will render `message.components`** via M10's `<ComponentBlock>` dispatcher
+>   (after the markdown body) — the rich-output catalog (table/chart/citation/code/callout/media) from
+>   the backend `component` SSE event (`09_Phase6` §5). M3 only leaves the seam; **M10** builds the
+>   renderers and reuses M3's `code-block` for the `code` type.
+> - **`sources-panel` will also be fed by `citation` components** (M9/M10) in addition to the
+>   synthesized `context_count`/`sourcesCount` it renders today — the `citation` component is the real
+>   provenance channel, so the panel's shape needs no change when it lights up.
+> - **A free-tier data-policy disclaimer banner** (built in **M7**) mounts near the chat input in free
+>   mode; M3 leaves the layout room, does not build it.
+> - **Route badge already covers `WEB+RAG`** — that is the backend's `BOTH` route (`09_Phase6` flat
+>   enum `RAG|WEB|BOTH|DIRECT`, mapped `BOTH → "WEB+RAG"` by the streaming strategy, M2). No change to
+>   the `route-badge` map is needed.
+
 ---
 
 ## 3. Current-State Snapshot
