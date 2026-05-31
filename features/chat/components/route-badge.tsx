@@ -1,7 +1,10 @@
 "use client";
 
+import { AnimatePresence, m } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { badgeVariants, reduceVariants } from "@/lib/motion";
+import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import type { RouteType } from "@/types";
 
 type Variant = React.ComponentProps<typeof Badge>["variant"];
@@ -20,23 +23,38 @@ const ROUTE_MAP: Record<
 };
 
 interface RouteBadgeProps {
-  route: RouteType;
+  route?: RouteType;
   className?: string;
 }
 
 export function RouteBadge({ route, className }: RouteBadgeProps) {
-  const cfg = ROUTE_MAP[route] ?? ROUTE_MAP.DIRECT;
+  const reduced = useReducedMotion();
+  const cfg = route ? (ROUTE_MAP[route] ?? ROUTE_MAP.DIRECT) : null;
+
   return (
-    <Badge
-      variant={cfg.variant}
-      className={cn(
-        "h-5 px-2 text-[10px] font-normal",
-        cfg.className,
-        className
+    <AnimatePresence mode="wait">
+      {route && cfg && (
+        <m.span
+          key={route}
+          variants={reduceVariants(badgeVariants, reduced)}
+          initial="initial"
+          animate="animate"
+          exit="exit"
+          className="inline-flex"
+        >
+          <Badge
+            variant={cfg.variant}
+            className={cn(
+              "h-5 px-2 text-[10px] font-normal",
+              cfg.className,
+              className
+            )}
+            aria-label={`Route: ${cfg.label}`}
+          >
+            {cfg.label}
+          </Badge>
+        </m.span>
       )}
-      aria-label={`Route: ${cfg.label}`}
-    >
-      {cfg.label}
-    </Badge>
+    </AnimatePresence>
   );
 }

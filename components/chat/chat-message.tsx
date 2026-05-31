@@ -3,16 +3,20 @@
 import * as React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { m } from "framer-motion";
 import { Bot, User } from "lucide-react";
 
 import { Message } from "@/types";
 import { cn } from "@/lib/utils";
+import { messageVariants, reduceVariants, layoutSpring } from "@/lib/motion";
+import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { CodeBlock } from "@/features/chat/components/code-block";
 import { RouteBadge } from "@/features/chat/components/route-badge";
 import { ThinkingSteps } from "@/features/chat/components/thinking-steps";
 import { SourcesPanel } from "@/features/chat/components/sources-panel";
 import { MessageActions } from "@/features/chat/components/message-actions";
+import { StreamingCaret } from "@/features/chat/components/streaming-caret";
 
 // Module-scope stable map — ReactMarkdown does not rebuild its renderer tree
 // on each streamed token (M9) or parent re-render.
@@ -59,11 +63,21 @@ interface ChatMessageProps {
 
 function ChatMessageImpl({ message }: ChatMessageProps) {
   const isUser = message.role === "user";
+  const reduced = useReducedMotion();
+  const isStreaming = message.status === "streaming";
 
   return (
-    <div
+    <m.div
+      // Exclude the streaming message from layout projection — its height changes every
+      // token and animating that reflow is pure jank. Settled messages get layout.
+      layout={isStreaming ? false : "position"}
+      transition={{ layout: layoutSpring }}
+      variants={reduceVariants(messageVariants, reduced)}
+      initial="initial"
+      animate="animate"
+      exit="exit"
       className={cn(
-        "group flex w-full gap-4 rounded-xl p-5 transition-colors",
+        "group flex w-full gap-4 rounded-xl p-5",
         isUser
           ? "bg-primary/5 flex-row-reverse"
           : "border-border bg-card border shadow-sm"
@@ -112,12 +126,15 @@ function ChatMessageImpl({ message }: ChatMessageProps) {
           {isUser ? (
             <p className="whitespace-pre-wrap">{message.content}</p>
           ) : (
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={markdownComponents}
-            >
-              {message.content}
-            </ReactMarkdown>
+            <>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={markdownComponents}
+              >
+                {message.content}
+              </ReactMarkdown>
+              {isStreaming && <StreamingCaret reduced={reduced} />}
+            </>
           )}
         </div>
 
@@ -132,7 +149,7 @@ function ChatMessageImpl({ message }: ChatMessageProps) {
           <MessageActions content={message.content} />
         )}
       </div>
-    </div>
+    </m.div>
   );
 }
 
@@ -150,3 +167,4 @@ export const ChatMessage = React.memo(ChatMessageImpl, (prev, next) => {
     a.sources === b.sources
   );
 });
+ChatMessage.displayName = "ChatMessage";
