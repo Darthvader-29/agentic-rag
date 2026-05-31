@@ -50,10 +50,10 @@ export function ChatScreen() {
   };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-slate-50 dark:bg-slate-950">
+    <div className="bg-background flex h-screen w-full overflow-hidden">
       <div
         className={cn(
-          "overflow-hidden transition-all duration-300 ease-in-out",
+          "overflow-hidden transition-all duration-300 ease-in-out motion-reduce:transition-none",
           isSidebarOpen ? "w-64 opacity-100" : "w-0 opacity-0"
         )}
       >
@@ -63,16 +63,17 @@ export function ChatScreen() {
         />
       </div>
 
-      <div className="bg-background relative my-0 mr-0 flex h-full flex-1 flex-col overflow-hidden rounded-l-2xl border-l border-slate-100 shadow-xl dark:border-slate-800 dark:shadow-none">
+      <div className="border-border bg-background relative my-0 mr-0 flex h-full flex-1 flex-col overflow-hidden rounded-l-2xl border-l shadow-xl dark:shadow-none">
         {!isSidebarOpen && (
           <div className="absolute top-4 left-4 z-10">
             <Button
               variant="ghost"
               size="icon"
               onClick={() => setIsSidebarOpen(true)}
-              className="hover:bg-slate-100 dark:hover:bg-slate-800"
+              aria-label="Open sidebar"
+              className="hover:bg-accent"
             >
-              <Menu className="h-5 w-5 text-slate-500" />
+              <Menu className="text-muted-foreground h-5 w-5" />
             </Button>
           </div>
         )}

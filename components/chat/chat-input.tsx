@@ -1,17 +1,23 @@
 "use client";
 
-import { useState, KeyboardEvent, useRef } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
+import TextareaAutosize from "react-textarea-autosize";
+import { ArrowUp, Globe, Loader2, Paperclip } from "lucide-react";
+import { toast } from "sonner";
+
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Globe, ArrowUp, Paperclip, Loader2 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { api } from "@/features/chat/api/chat.api";
-import { toast } from "sonner";
 
 interface ChatInputProps {
   isLoading: boolean;
   onSend: (message: string, webSearch: boolean) => void;
-  onFileUploaded?: (fileName: string) => void; // NEW
+  onFileUploaded?: (fileName: string) => void;
 }
 
 export function ChatInput({
@@ -40,13 +46,12 @@ export function ChatInput({
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     setIsUploading(true);
     try {
       await api.uploadFile(file);
       toast.success(`${file.name} uploaded`);
-      onFileUploaded?.(file.name); // notify parent to add a message
-    } catch (error) {
+      onFileUploaded?.(file.name);
+    } catch {
       toast.error("Upload failed");
     } finally {
       setIsUploading(false);
@@ -55,10 +60,9 @@ export function ChatInput({
   };
 
   return (
-    <div className="bg-background border-t p-4 dark:border-slate-800">
+    <div className="border-border bg-background border-t p-4">
       <div className="mx-auto max-w-4xl space-y-2">
-        <div className="bg-background focus-within:ring-ring relative flex items-center rounded-full border p-1 shadow-sm focus-within:ring-1 dark:border-slate-800">
-          {/* Left buttons */}
+        <div className="border-border bg-background focus-within:ring-ring relative flex items-end gap-1 rounded-2xl border p-1 shadow-sm focus-within:ring-1">
           <div className="flex items-center gap-1 pl-1">
             <input
               type="file"
@@ -67,62 +71,79 @@ export function ChatInput({
               onChange={handleFileUpload}
               accept=".pdf,.docx,.txt"
             />
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-muted-foreground hover:text-foreground h-8 w-8 rounded-full"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading || isLoading}
-              title="Upload document"
-            >
-              {isUploading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Paperclip className="h-4 w-4" />
-              )}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Upload document"
+                  className="text-muted-foreground hover:text-foreground h-8 w-8 rounded-full"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading || isLoading}
+                >
+                  {isUploading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Paperclip className="h-4 w-4" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Upload document</TooltipContent>
+            </Tooltip>
 
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn(
-                "h-8 w-8 rounded-full transition-colors",
-                webSearch
-                  ? "bg-blue-50 text-blue-500 hover:bg-blue-100 hover:text-blue-600"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-              onClick={() => setWebSearch(!webSearch)}
-              title={webSearch ? "Web search enabled" : "Web search disabled"}
-            >
-              <Globe className="h-4 w-4" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Toggle web search"
+                  aria-pressed={webSearch}
+                  className={cn(
+                    "h-8 w-8 rounded-full transition-colors motion-reduce:transition-none",
+                    webSearch
+                      ? "bg-primary/10 text-primary hover:bg-primary/15"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                  onClick={() => setWebSearch((v) => !v)}
+                >
+                  <Globe className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {webSearch ? "Web search enabled" : "Web search disabled"}
+              </TooltipContent>
+            </Tooltip>
           </div>
 
-          {/* Text input */}
-          <Textarea
+          <TextareaAutosize
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask anything..."
-            className="max-h-[200px] min-h-[40px] flex-1 resize-none border-0 bg-transparent px-3 py-2 leading-6 shadow-none focus-visible:ring-0"
-            style={{ height: "40px" }}
+            placeholder="Ask anything…"
+            minRows={1}
+            maxRows={8}
             disabled={isLoading}
+            aria-label="Message"
+            className="placeholder:text-muted-foreground flex-1 resize-none border-0 bg-transparent px-3 py-2 text-sm leading-6 outline-none disabled:opacity-50"
           />
 
-          {/* Send */}
           <Button
-            size="icon"
+            type="button"
+            size="icon-sm"
+            aria-label="Send message"
             onClick={handleSend}
             disabled={isLoading || !input.trim()}
-            className="mr-1 h-8 w-8 shrink-0 rounded-full"
+            className="mr-1 mb-0.5 h-8 w-8 shrink-0 rounded-full"
           >
             <ArrowUp className="h-4 w-4" />
           </Button>
         </div>
 
-        <div className="text-muted-foreground text-center text-[10px]">
+        <p className="text-muted-foreground text-center text-[10px]">
           AI can make mistakes. Check important info.
-        </div>
+        </p>
       </div>
     </div>
   );
