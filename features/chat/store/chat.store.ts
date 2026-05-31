@@ -14,6 +14,7 @@ interface ChatState {
   draft: string;
   webSearchAllowed: boolean;
   isLoading: boolean;
+  isStreaming: boolean;
 
   addMessage: (msg: Message) => void;
   appendContent: (id: string, chunk: string) => void;
@@ -25,11 +26,15 @@ interface ChatState {
   addComponent: (id: string, component: RichComponent) => void;
   setStatus: (id: string, status: MessageStatus) => void;
   setRoute: (id: string, route: RouteType) => void;
-  finalize: (id: string) => void;
+  /** Flip status to "done" and optionally apply a partial patch (e.g. overwrite content with done.answer). */
+  finalize: (id: string, patch?: Partial<Message>) => void;
+  /** Returns the most-recent user message; used by the retry callback. */
+  lastUserMessage: () => Message | undefined;
 
   setDraft: (draft: string) => void;
   setWebSearchAllowed: (v: boolean) => void;
   setLoading: (v: boolean) => void;
+  setStreaming: (v: boolean) => void;
   reset: () => void;
 }
 
@@ -58,11 +63,12 @@ const updateMessage = (
   fn: (m: Message) => Message
 ): Message[] => messages.map((m) => (m.id === id ? fn(m) : m));
 
-export const useChatStore = create<ChatState>((set) => ({
+export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   draft: "",
   webSearchAllowed: false,
   isLoading: false,
+  isStreaming: false,
 
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
 
@@ -117,16 +123,21 @@ export const useChatStore = create<ChatState>((set) => ({
       messages: updateMessage(s.messages, id, (m) => ({ ...m, route })),
     })),
 
-  finalize: (id) =>
+  finalize: (id, patch) =>
     set((s) => ({
       messages: updateMessage(s.messages, id, (m) => ({
         ...m,
+        ...patch,
         status: "done" as MessageStatus,
       })),
     })),
 
+  lastUserMessage: () =>
+    [...get().messages].reverse().find((m) => m.role === "user"),
+
   setDraft: (draft) => set({ draft }),
   setWebSearchAllowed: (webSearchAllowed) => set({ webSearchAllowed }),
   setLoading: (isLoading) => set({ isLoading }),
-  reset: () => set({ messages: [], isLoading: false }),
+  setStreaming: (isStreaming) => set({ isStreaming }),
+  reset: () => set({ messages: [], isLoading: false, isStreaming: false }),
 }));

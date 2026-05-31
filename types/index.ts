@@ -47,4 +47,6 @@ export interface Message {
   components?: RichComponent[];
   /** Legacy alias kept so the unmodified chat-message.tsx renders the chunk count in M1. */
   sourcesCount?: number;
+  /** Stored on user messages so the retry function can re-send with the same web-search setting. */
+  webSearchAllowed?: boolean;
 }

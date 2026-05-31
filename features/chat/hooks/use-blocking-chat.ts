@@ -37,9 +37,14 @@ export function useBlockingChat() {
   const mutation = useMutation<ChatResponse, unknown, SendVars, Ctx>({
     mutationFn: ({ text, webSearch }) => sendMessage(text, webSearch),
 
-    onMutate: ({ text }) => {
+    onMutate: ({ text, webSearch }) => {
       addMessage(
-        createMessage({ role: "user", content: text, status: "done" })
+        createMessage({
+          role: "user",
+          content: text,
+          status: "done",
+          webSearchAllowed: webSearch,
+        })
       );
       const assistant = createMessage({
         role: "assistant",
@@ -81,6 +86,8 @@ export function useBlockingChat() {
   return {
     sendMessage: (text: string, webSearch: boolean) =>
       mutation.mutate({ text, webSearch }),
+    isStreaming: mutation.isPending,
+    stop: () => {},
     isPending: mutation.isPending,
     reset: mutation.reset,
   };
