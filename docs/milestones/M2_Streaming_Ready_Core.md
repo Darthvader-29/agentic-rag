@@ -90,21 +90,21 @@ future backend or a proxy could re-chunk. We handle the general case.
 
 ### 2.2 Event catalog (base from `07` Appendix C lines 195–203; `component` + flat `route` from `09`)
 
-| `event:`    | `data:` payload                                              | Emitted when                                            |
-| ----------- | ----------------------------------------------------------- | ------------------------------------------------------- |
-| `status`    | `{"stage": "routing"}`                                      | supervisor node starts                                  |
-| `status`    | `{"stage": "searching web"}`                                | web node starts                                         |
-| `status`    | `{"stage": "retrieving"}`                                   | vector node starts                                      |
-| `status`    | `{"stage": "synthesizing"}`                                 | synthesis node starts                                   |
-| `token`     | `{"text": "..."}`                                           | each generated chunk (or one final chunk if no stream)  |
-| `component` | `{"type": "...", ...}`                                      | a synthesis component block's fence closed (whole block) |
-| `done`      | `{"answer": "...", "route": "RAG"\|"WEB"\|"BOTH"\|"DIRECT"}` | stream complete; final answer + flat route enum         |
-| `error`     | `{"detail": "..."}`                                         | any node raises; closes the stream cleanly              |
+| `event:`    | `data:` payload                                              | Emitted when                                             |
+| ----------- | ------------------------------------------------------------ | -------------------------------------------------------- |
+| `status`    | `{"stage": "routing"}`                                       | supervisor node starts                                   |
+| `status`    | `{"stage": "searching web"}`                                 | web node starts                                          |
+| `status`    | `{"stage": "retrieving"}`                                    | vector node starts                                       |
+| `status`    | `{"stage": "synthesizing"}`                                  | synthesis node starts                                    |
+| `token`     | `{"text": "..."}`                                            | each generated chunk (or one final chunk if no stream)   |
+| `component` | `{"type": "...", ...}`                                       | a synthesis component block's fence closed (whole block) |
+| `done`      | `{"answer": "...", "route": "RAG"\|"WEB"\|"BOTH"\|"DIRECT"}` | stream complete; final answer + flat route enum          |
+| `error`     | `{"detail": "..."}`                                          | any node raises; closes the stream cleanly               |
 
 **Notes on the two `09` additions (the part `07` does not cover):**
 
 - **`component` is buffered-until-fence and emitted whole.** Synthesis streams Markdown prose
-  token-by-token (`token` events) **plus** zero-or-more fenced ```` ```json ```` component blocks; the
+  token-by-token (`token` events) **plus** zero-or-more fenced ` ```json ` component blocks; the
   backend **buffers each block until its closing fence**, then emits it as **one** `component` event
   (you can't render half a chart). An invalid/malformed block is **dropped** — the prose still
   renders and the backend **never 500s** (`09` §5; mirrors `07`'s defensive `decide_combined_route`).
@@ -195,7 +195,7 @@ data: {"answer": "Grounded answer.", "route": "RAG"}␊
 ```
 
 Concatenated token texts (`"Grounded " + "answer" + "."`) = `"Grounded answer."` = `done.answer`,
-exactly as Appendix F asserts. The `component` frame is one **whole** ```` ```json ```` block the
+exactly as Appendix F asserts. The `component` frame is one **whole** ` ```json ` block the
 backend buffered until its fence closed (here a `citation`, the sources/provenance channel — `09`
 Appendix C); it may arrive **between `synthesizing` and `done`**, interleaved with `token`s, and is
 emitted atomically (never split). `done.route` is the **flat enum** `"RAG"` (`09` Appendix A), which
@@ -207,15 +207,15 @@ between any two frames and MUST be ignored by the parser.
 
 ## 3. Decisions & Rationale
 
-| Decision | Rationale | Alternatives considered |
-| -------- | --------- | ----------------------- |
-| **POST `fetch` + `ReadableStream`, NOT `EventSource`** | `/api/chat` is a POST with a JSON body (`message`, `session_id`, `web_search_allowed`) and — once Phase 3 lands (M6) — an `Authorization: Bearer` header. The browser `EventSource` API can issue **only GET with no custom headers and no body**. `fetch` + `res.body` (a `ReadableStream<Uint8Array>`) gives us POST, arbitrary headers, and an `AbortController` for the Stop button. | `EventSource` (can't POST, can't send a body, can't set auth header, no abort) — non-starter. WebSockets (bidirectional overhead we don't need; backend chose SSE, Appendix-table line 29). |
-| **Async-generator parser `async function* parseSSE`** | Decouples wire-format parsing from transport and from React. The parser is a pure, synchronously-testable unit: feed it any `ReadableStream`, get back an async iterator of typed `{event,data}` frames. No DOM, no fetch, no store — trivially unit-testable with an in-memory stream. | A callback-based parser (harder to test, inverts control); parsing inside the hook (couples wire format to React, untestable in isolation). |
-| **`TextDecoderStream` for bytes→text** | The network delivers `Uint8Array` chunks that can split a multibyte UTF-8 codepoint across reads. `TextDecoderStream` is a stateful streaming decoder that buffers a partial codepoint internally and only emits complete characters — so we never corrupt a token mid-emoji. | Manual `new TextDecoder().decode(chunk)` per chunk (re-creates state each call → mojibake on split codepoints); `TextDecoder` with `{stream:true}` (works but `TextDecoderStream` composes natively with `pipeThrough`). See §8. |
-| **`onStatus(stage)` → `pushStep`** | The backend `status` stages (`routing`/`retrieving`/`searching web`/`synthesizing`) are exactly the "thinking / agent-steps" feed the UI's ThinkingSteps panel renders. Mapping each stage to a store `step` means the panel animates live in M9 with zero hook changes. | Buffer stages and render at the end (loses the live thinking UX that is the whole point of streaming). |
-| **`onToken(chunk)` → `appendContent`** | Token-by-token append into the in-flight assistant message is the streaming body; the M4 caret rides on the same buffer. `appendContent` is O(1) string concat in Zustand, kept **out of the Query cache** (high-frequency writes; plan "State split", line 70). | Replacing the whole `content` each token (O(n²) re-render churn); storing tokens in TanStack Query (cache thrash on every token). |
-| **Both strategies write the SAME store actions / `Message` shape** | The facade's contract is that the UI never knows which strategy ran. Blocking synthesizes a single `done` step + `context_count` sources; streaming pushes live steps and appends tokens — but **both end at `finalize(id)` with an identical `Message`** (`{id, role, content, route, sources, steps, status, timestamp}`). This is the invariant that makes flipping the flag a no-op for every component. | Two divergent message shapes behind a flag (every consumer would need flag-aware branches — exactly what the facade exists to prevent). |
-| **Dark launch behind `flags.streaming`** | The backend SSE endpoint does not exist in production until Phase 6. Shipping the parser + transport + hook **now** (fully tested) but gated `false` means M9 is a one-line flag flip against a battle-tested data plane, not a big-bang integration. The plan calls this out explicitly (line 31, line 90). | Hold all streaming code until M9 (a giant risky drop landing parser + transport + hook + flag flip + backend integration at once). |
+| Decision                                                           | Rationale                                                                                                                                                                                                                                                                                                                                                                                                    | Alternatives considered                                                                                                                                                                                                          |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **POST `fetch` + `ReadableStream`, NOT `EventSource`**             | `/api/chat` is a POST with a JSON body (`message`, `session_id`, `web_search_allowed`) and — once Phase 3 lands (M6) — an `Authorization: Bearer` header. The browser `EventSource` API can issue **only GET with no custom headers and no body**. `fetch` + `res.body` (a `ReadableStream<Uint8Array>`) gives us POST, arbitrary headers, and an `AbortController` for the Stop button.                     | `EventSource` (can't POST, can't send a body, can't set auth header, no abort) — non-starter. WebSockets (bidirectional overhead we don't need; backend chose SSE, Appendix-table line 29).                                      |
+| **Async-generator parser `async function* parseSSE`**              | Decouples wire-format parsing from transport and from React. The parser is a pure, synchronously-testable unit: feed it any `ReadableStream`, get back an async iterator of typed `{event,data}` frames. No DOM, no fetch, no store — trivially unit-testable with an in-memory stream.                                                                                                                      | A callback-based parser (harder to test, inverts control); parsing inside the hook (couples wire format to React, untestable in isolation).                                                                                      |
+| **`TextDecoderStream` for bytes→text**                             | The network delivers `Uint8Array` chunks that can split a multibyte UTF-8 codepoint across reads. `TextDecoderStream` is a stateful streaming decoder that buffers a partial codepoint internally and only emits complete characters — so we never corrupt a token mid-emoji.                                                                                                                                | Manual `new TextDecoder().decode(chunk)` per chunk (re-creates state each call → mojibake on split codepoints); `TextDecoder` with `{stream:true}` (works but `TextDecoderStream` composes natively with `pipeThrough`). See §8. |
+| **`onStatus(stage)` → `pushStep`**                                 | The backend `status` stages (`routing`/`retrieving`/`searching web`/`synthesizing`) are exactly the "thinking / agent-steps" feed the UI's ThinkingSteps panel renders. Mapping each stage to a store `step` means the panel animates live in M9 with zero hook changes.                                                                                                                                     | Buffer stages and render at the end (loses the live thinking UX that is the whole point of streaming).                                                                                                                           |
+| **`onToken(chunk)` → `appendContent`**                             | Token-by-token append into the in-flight assistant message is the streaming body; the M4 caret rides on the same buffer. `appendContent` is O(1) string concat in Zustand, kept **out of the Query cache** (high-frequency writes; plan "State split", line 70).                                                                                                                                             | Replacing the whole `content` each token (O(n²) re-render churn); storing tokens in TanStack Query (cache thrash on every token).                                                                                                |
+| **Both strategies write the SAME store actions / `Message` shape** | The facade's contract is that the UI never knows which strategy ran. Blocking synthesizes a single `done` step + `context_count` sources; streaming pushes live steps and appends tokens — but **both end at `finalize(id)` with an identical `Message`** (`{id, role, content, route, sources, steps, status, timestamp}`). This is the invariant that makes flipping the flag a no-op for every component. | Two divergent message shapes behind a flag (every consumer would need flag-aware branches — exactly what the facade exists to prevent).                                                                                          |
+| **Dark launch behind `flags.streaming`**                           | The backend SSE endpoint does not exist in production until Phase 6. Shipping the parser + transport + hook **now** (fully tested) but gated `false` means M9 is a one-line flag flip against a battle-tested data plane, not a big-bang integration. The plan calls this out explicitly (line 31, line 90).                                                                                                 | Hold all streaming code until M9 (a giant risky drop landing parser + transport + hook + flag flip + backend integration at once).                                                                                               |
 
 ---
 
@@ -346,7 +346,7 @@ function parseFrame(frame: string): ParsedSseEvent | null {
 }
 
 export async function* parseSSE(
-  stream: ReadableStream<Uint8Array>,
+  stream: ReadableStream<Uint8Array>
 ): AsyncGenerator<ParsedSseEvent, void, unknown> {
   // Stateful streaming UTF-8 decode: a codepoint split across byte-chunks is
   // buffered internally and only emitted once complete.
@@ -447,7 +447,10 @@ export const SseLegacyRouteSchema = z.object({
   destination: z.string(), // legacy 07 form: "vectorstore" | "web_search"
   relevant: z.boolean().optional(),
 });
-export const SseRouteSchema = z.union([SseFlatRouteSchema, SseLegacyRouteSchema]);
+export const SseRouteSchema = z.union([
+  SseFlatRouteSchema,
+  SseLegacyRouteSchema,
+]);
 export type SseRoute = z.infer<typeof SseRouteSchema>;
 
 /** event: done  →  data: {"answer": "...", "route": "RAG"|"WEB"|"BOTH"|"DIRECT"} (flat enum; legacy object tolerated) */
@@ -541,7 +544,7 @@ export interface StreamChatHandlers {
  */
 export async function streamChat(
   payload: StreamChatPayload,
-  handlers: StreamChatHandlers,
+  handlers: StreamChatHandlers
 ): Promise<void> {
   const { onStatus, onToken, onComponent, onDone, onError, signal } = handlers;
 
@@ -606,13 +609,18 @@ export async function streamChat(
         case "done": {
           const parsed = SseDoneSchema.safeParse(safeJson(data));
           if (parsed.success) {
-            onDone?.({ answer: parsed.data.answer, route: parsed.data.route ?? null });
+            onDone?.({
+              answer: parsed.data.answer,
+              route: parsed.data.route ?? null,
+            });
           }
           return; // typed completion terminates the stream
         }
         case "error": {
           const parsed = SseErrorSchema.safeParse(safeJson(data));
-          onError?.(new Error(parsed.success ? parsed.data.detail : "Stream error"));
+          onError?.(
+            new Error(parsed.success ? parsed.data.detail : "Stream error")
+          );
           return; // backend closes the stream cleanly after an error event
         }
         default:
@@ -770,7 +778,7 @@ export function useStreamingChat() {
                 "The AI service returned an error. Please try again later.",
             });
           },
-        },
+        }
       );
 
       abortRef.current = null;
@@ -786,7 +794,7 @@ export function useStreamingChat() {
       setRoute,
       finalize,
       setStreaming,
-    ],
+    ]
   );
 
   const stop = useCallback(() => {
@@ -832,7 +840,10 @@ import { useStreamingChat } from "@/features/chat/hooks/use-streaming-chat";
 export interface UseChatApi {
   messages: ReturnType<typeof useChatStore.getState>["messages"];
   isStreaming: boolean;
-  sendMessage: (text: string, webSearchAllowed: boolean) => Promise<void> | void;
+  sendMessage: (
+    text: string,
+    webSearchAllowed: boolean
+  ) => Promise<void> | void;
   stop: () => void;
   retry: () => void;
 }
@@ -850,7 +861,8 @@ export function useChat(): UseChatApi {
 
   const retry = useCallback(() => {
     const last = lastUserMessage();
-    if (last) strategy.sendMessage(last.content, last.webSearchAllowed ?? false);
+    if (last)
+      strategy.sendMessage(last.content, last.webSearchAllowed ?? false);
   }, [strategy, lastUserMessage]);
 
   return {
@@ -878,17 +890,17 @@ Both strategies write through the **same** `chat.store` (Zustand) actions define
 new store actions beyond what M1 created; it only adds a second **caller** (the streaming hook). The
 action surface:
 
-| Action | Signature | Blocking caller (M1) | Streaming caller (M2) |
-| ------ | --------- | -------------------- | --------------------- |
-| `addMessage` | `(msg: Message) => void` | push user msg; push final assistant msg | push user msg; push **empty** assistant msg |
-| `appendContent` | `(id: string, chunk: string) => void` | — (not used) | per `onToken` chunk (O(1) concat) |
-| `pushStep` | `(id: string, step: Step) => void` | once: synthesized `{stage:"done"}` step | per `onStatus` stage (live) |
-| `setStatus` | `(id: string, status: string) => void` | `"done"` | per stage, then `"done"`/`"error"` |
-| `setSources` | `(id: string, sources: Source[]) => void` | from `context_count` | `[]` in M2; backend metadata in M9 |
-| `addComponent` | `(id, component) => void` | — (not used) | per `onComponent` event (whole block); dark until M10 |
-| `setRoute` | `(id: string, route: RouteType) => void` | from `response.route` | `mapRoute(done.route)` |
-| `finalize` | `(id: string, patch?: Partial<Message>) => void` | flips `status:"done"` | overwrite `content = done.answer`, `status:"done"` |
-| `setStreaming` | `(b: boolean) => void` | true on send, false on settle | true on send, false on settle/stop/error |
+| Action          | Signature                                        | Blocking caller (M1)                    | Streaming caller (M2)                                 |
+| --------------- | ------------------------------------------------ | --------------------------------------- | ----------------------------------------------------- |
+| `addMessage`    | `(msg: Message) => void`                         | push user msg; push final assistant msg | push user msg; push **empty** assistant msg           |
+| `appendContent` | `(id: string, chunk: string) => void`            | — (not used)                            | per `onToken` chunk (O(1) concat)                     |
+| `pushStep`      | `(id: string, step: Step) => void`               | once: synthesized `{stage:"done"}` step | per `onStatus` stage (live)                           |
+| `setStatus`     | `(id: string, status: string) => void`           | `"done"`                                | per stage, then `"done"`/`"error"`                    |
+| `setSources`    | `(id: string, sources: Source[]) => void`        | from `context_count`                    | `[]` in M2; backend metadata in M9                    |
+| `addComponent`  | `(id, component) => void`                        | — (not used)                            | per `onComponent` event (whole block); dark until M10 |
+| `setRoute`      | `(id: string, route: RouteType) => void`         | from `response.route`                   | `mapRoute(done.route)`                                |
+| `finalize`      | `(id: string, patch?: Partial<Message>) => void` | flips `status:"done"`                   | overwrite `content = done.answer`, `status:"done"`    |
+| `setStreaming`  | `(b: boolean) => void`                           | true on send, false on settle           | true on send, false on settle/stop/error              |
 
 **Identical-shape proof.** The unified `Message` (from `types/index.ts`, extended in M1) is:
 
@@ -898,8 +910,8 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   route?: RouteType;
-  sources: Source[];          // [] when none
-  steps: Step[];              // synthesized (blocking) or live (streaming)
+  sources: Source[]; // [] when none
+  steps: Step[]; // synthesized (blocking) or live (streaming)
   status: "streaming" | "done" | "error";
   timestamp: Date;
 }
@@ -940,7 +952,9 @@ export function streamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
 }
 
 /** A ReadableStream that emits raw bytes (to force multibyte splits across reads). */
-export function streamFromByteChunks(byteChunks: Uint8Array[]): ReadableStream<Uint8Array> {
+export function streamFromByteChunks(
+  byteChunks: Uint8Array[]
+): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     start(controller) {
       for (const bytes of byteChunks) controller.enqueue(bytes);
@@ -956,7 +970,10 @@ export function streamFromByteChunks(byteChunks: Uint8Array[]): ReadableStream<U
 // lib/sse/__tests__/parser.test.ts
 import { describe, it, expect } from "vitest";
 import { parseSSE } from "@/lib/sse/parser";
-import { streamFromChunks, streamFromByteChunks } from "@/test/utils/mock-stream";
+import {
+  streamFromChunks,
+  streamFromByteChunks,
+} from "@/test/utils/mock-stream";
 
 async function collect(stream: ReadableStream<Uint8Array>) {
   const out = [];
@@ -971,7 +988,7 @@ describe("parseSSE", () => {
         'event: status\ndata: {"stage": "routing"}\n\n',
         'event: token\ndata: {"text": "Hi"}\n\n',
         'event: done\ndata: {"answer": "Hi", "route": null}\n\n',
-      ]),
+      ])
     );
     expect(events.map((e) => e.event)).toEqual(["status", "token", "done"]);
     expect(events[0].data).toBe('{"stage": "routing"}');
@@ -985,7 +1002,7 @@ describe("parseSSE", () => {
         'event: token\ndata: {"text": "Hi"}\n\n',
         'event: component\ndata: {"type": "citation", "items": [{"label": "doc.pdf · p.4"}]}\n\n',
         'event: done\ndata: {"answer": "Hi", "route": "RAG"}\n\n',
-      ]),
+      ])
     );
     expect(events.map((e) => e.event)).toEqual(["token", "component", "done"]);
     expect(JSON.parse(events[1].data).type).toBe("citation");
@@ -993,14 +1010,14 @@ describe("parseSSE", () => {
 
   it("joins multiple data: lines with \\n", async () => {
     const events = await collect(
-      streamFromChunks(["event: token\ndata: line1\ndata: line2\n\n"]),
+      streamFromChunks(["event: token\ndata: line1\ndata: line2\n\n"])
     );
     expect(events[0].data).toBe("line1\nline2");
   });
 
   it("reassembles a single frame split across two reads (partial buffer)", async () => {
     const events = await collect(
-      streamFromChunks(['event: tok', 'en\ndata: {"text": "x"}', "\n\n"]),
+      streamFromChunks(["event: tok", 'en\ndata: {"text": "x"}', "\n\n"])
     );
     expect(events).toEqual([{ event: "token", data: '{"text": "x"}' }]);
   });
@@ -1011,43 +1028,50 @@ describe("parseSSE", () => {
         'event: token\ndata: {"text": "a"}\n\n',
         "data: [DONE]\n\n",
         'event: token\ndata: {"text": "b"}\n\n', // must NOT be yielded
-      ]),
+      ])
     );
     expect(events).toEqual([{ event: "token", data: '{"text": "a"}' }]);
   });
 
   it("ignores keep-alive comment lines", async () => {
     const events = await collect(
-      streamFromChunks([": keep-alive\n\n", 'event: token\ndata: {"text": "y"}\n\n']),
+      streamFromChunks([
+        ": keep-alive\n\n",
+        'event: token\ndata: {"text": "y"}\n\n',
+      ])
     );
     expect(events.map((e) => e.event)).toEqual(["token"]);
   });
 
   it("tolerates a malformed line without a colon", async () => {
     const events = await collect(
-      streamFromChunks(["garbage-no-colon\nevent: token\ndata: ok\n\n"]),
+      streamFromChunks(["garbage-no-colon\nevent: token\ndata: ok\n\n"])
     );
     expect(events).toEqual([{ event: "token", data: "ok" }]);
   });
 
   it("flushes a trailing frame with no terminating blank line", async () => {
-    const events = await collect(streamFromChunks(['event: token\ndata: {"text": "z"}']));
+    const events = await collect(
+      streamFromChunks(['event: token\ndata: {"text": "z"}'])
+    );
     expect(events).toEqual([{ event: "token", data: '{"text": "z"}' }]);
   });
 
   it("normalises CRLF line endings", async () => {
     const events = await collect(
-      streamFromChunks(['event: token\r\ndata: {"text": "w"}\r\n\r\n']),
+      streamFromChunks(['event: token\r\ndata: {"text": "w"}\r\n\r\n'])
     );
     expect(events).toEqual([{ event: "token", data: '{"text": "w"}' }]);
   });
 
   it("does not corrupt a multibyte codepoint split across byte reads", async () => {
     // "🚀" (U+1F680) is 4 UTF-8 bytes: F0 9F 9A 80. Split it across two reads.
-    const full = new TextEncoder().encode('event: token\ndata: {"text": "🚀"}\n\n');
+    const full = new TextEncoder().encode(
+      'event: token\ndata: {"text": "🚀"}\n\n'
+    );
     const splitAt = full.indexOf(0x80); // mid-emoji byte boundary
     const events = await collect(
-      streamFromByteChunks([full.slice(0, splitAt), full.slice(splitAt)]),
+      streamFromByteChunks([full.slice(0, splitAt), full.slice(splitAt)])
     );
     expect(JSON.parse(events[0].data).text).toBe("🚀");
   });
@@ -1062,10 +1086,17 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { streamChat } from "@/lib/sse/stream-chat";
 import { streamFromChunks } from "@/test/utils/mock-stream";
 
-function mockFetchOnce(body: ReadableStream<Uint8Array> | null, ok = true, status = 200) {
+function mockFetchOnce(
+  body: ReadableStream<Uint8Array> | null,
+  ok = true,
+  status = 200
+) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => ({ ok, status, body, json: async () => ({}) }) as unknown as Response),
+    vi.fn(
+      async () =>
+        ({ ok, status, body, json: async () => ({}) }) as unknown as Response
+    )
   );
 }
 afterEach(() => vi.unstubAllGlobals());
@@ -1078,7 +1109,7 @@ describe("streamChat", () => {
         'event: token\ndata: {"text": "Grounded "}\n\n',
         'event: token\ndata: {"text": "answer."}\n\n',
         'event: done\ndata: {"answer": "Grounded answer.", "route": {"destination": "vectorstore"}}\n\n',
-      ]),
+      ])
     );
     const stages: string[] = [];
     let body = "";
@@ -1086,7 +1117,11 @@ describe("streamChat", () => {
 
     await streamChat(
       { message: "q", session_id: "s", web_search_allowed: false },
-      { onStatus: (s) => stages.push(s), onToken: (t) => (body += t), onDone: (d) => (done = d) },
+      {
+        onStatus: (s) => stages.push(s),
+        onToken: (t) => (body += t),
+        onDone: (d) => (done = d),
+      }
     );
 
     expect(stages).toEqual(["routing"]);
@@ -1102,14 +1137,14 @@ describe("streamChat", () => {
         'event: token\ndata: {"text": "Hi"}\n\n',
         'event: component\ndata: {"type": "citation", "items": [{"label": "doc.pdf · p.4"}]}\n\n',
         'event: done\ndata: {"answer": "Hi", "route": "BOTH"}\n\n',
-      ]),
+      ])
     );
     const components: Array<{ type: string }> = [];
     let done: { answer: string; route: unknown } | null = null;
 
     await streamChat(
       { message: "q", session_id: "s", web_search_allowed: false },
-      { onComponent: (c) => components.push(c), onDone: (d) => (done = d) },
+      { onComponent: (c) => components.push(c), onDone: (d) => (done = d) }
     );
 
     expect(components).toHaveLength(1);
@@ -1122,29 +1157,39 @@ describe("streamChat", () => {
       streamFromChunks([
         'event: component\ndata: {"type": "definitely-not-a-catalog-type"}\n\n',
         'event: done\ndata: {"answer": "Hi", "route": "RAG"}\n\n',
-      ]),
+      ])
     );
     const onComponent = vi.fn();
     let done: { answer: string } | null = null;
     await streamChat(
       { message: "q", session_id: "s", web_search_allowed: false },
-      { onComponent, onDone: (d) => (done = d) },
+      { onComponent, onDone: (d) => (done = d) }
     );
     expect(onComponent).not.toHaveBeenCalled(); // invalid type dropped, never thrown
     expect(done!.answer).toBe("Hi"); // stream still completes cleanly
   });
 
   it("reports a typed error event via onError and stops", async () => {
-    mockFetchOnce(streamFromChunks(['event: error\ndata: {"detail": "boom"}\n\n']));
+    mockFetchOnce(
+      streamFromChunks(['event: error\ndata: {"detail": "boom"}\n\n'])
+    );
     const onError = vi.fn();
-    await streamChat({ message: "q", session_id: "s", web_search_allowed: false }, { onError });
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "boom" }));
+    await streamChat(
+      { message: "q", session_id: "s", web_search_allowed: false },
+      { onError }
+    );
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "boom" })
+    );
   });
 
   it("surfaces a non-ok HTTP response (auth/rate-limit before stream) via onError", async () => {
     mockFetchOnce(null, false, 429);
     const onError = vi.fn();
-    await streamChat({ message: "q", session_id: "s", web_search_allowed: false }, { onError });
+    await streamChat(
+      { message: "q", session_id: "s", web_search_allowed: false },
+      { onError }
+    );
     expect(onError).toHaveBeenCalled();
   });
 
@@ -1153,10 +1198,13 @@ describe("streamChat", () => {
       "fetch",
       vi.fn(async () => {
         throw new DOMException("aborted", "AbortError");
-      }),
+      })
     );
     const onError = vi.fn();
-    await streamChat({ message: "q", session_id: "s", web_search_allowed: false }, { onError });
+    await streamChat(
+      { message: "q", session_id: "s", web_search_allowed: false },
+      { onError }
+    );
     expect(onError).not.toHaveBeenCalled();
   });
 });
@@ -1173,10 +1221,18 @@ const blockingSend = vi.fn();
 const streamingSend = vi.fn();
 
 vi.mock("@/features/chat/hooks/use-blocking-chat", () => ({
-  useBlockingChat: () => ({ sendMessage: blockingSend, stop: vi.fn(), isStreaming: false }),
+  useBlockingChat: () => ({
+    sendMessage: blockingSend,
+    stop: vi.fn(),
+    isStreaming: false,
+  }),
 }));
 vi.mock("@/features/chat/hooks/use-streaming-chat", () => ({
-  useStreamingChat: () => ({ sendMessage: streamingSend, stop: vi.fn(), isStreaming: false }),
+  useStreamingChat: () => ({
+    sendMessage: streamingSend,
+    stop: vi.fn(),
+    isStreaming: false,
+  }),
 }));
 vi.mock("@/lib/flags", () => ({ flags: { streaming: false } }));
 
@@ -1279,12 +1335,15 @@ const SSE_SCRIPT =
   'event: component\ndata: {"type": "citation", "items": [{"label": "doc.pdf · p.4", "source_id": "chunk_8c1f"}]}\n\n' +
   'event: done\ndata: {"answer": "Grounded answer.", "route": "RAG"}\n\n'; // flat enum (09)
 
-export const sseChatHandler = http.post(`${env.NEXT_PUBLIC_API_URL}/chat`, ({ request }) => {
-  if (request.headers.get("accept") !== "text/event-stream") return; // fall through to blocking handler
-  return new HttpResponse(SSE_SCRIPT, {
-    headers: { "Content-Type": "text/event-stream" },
-  });
-});
+export const sseChatHandler = http.post(
+  `${env.NEXT_PUBLIC_API_URL}/chat`,
+  ({ request }) => {
+    if (request.headers.get("accept") !== "text/event-stream") return; // fall through to blocking handler
+    return new HttpResponse(SSE_SCRIPT, {
+      headers: { "Content-Type": "text/event-stream" },
+    });
+  }
+);
 ```
 
 ### 7.7 Flag-off parity check
@@ -1301,7 +1360,7 @@ dark.
 - **Partial UTF-8 multibyte split across chunks.** A 4-byte emoji (e.g. `🚀` = `F0 9F 9A 80`) can
   land with its bytes split across two network reads. Decoding each `Uint8Array` independently with
   a fresh `TextDecoder` corrupts it (`�`). **Resolution:** `parseSSE` pipes through
-  `TextDecoderStream`, a *stateful* streaming decoder that buffers an incomplete codepoint and emits
+  `TextDecoderStream`, a _stateful_ streaming decoder that buffers an incomplete codepoint and emits
   it only once the continuation bytes arrive. Covered by the byte-split test in §7.2.
 - **Frame boundaries split across reads.** A frame's `\n\n` terminator may not have arrived yet on a
   given read. **Resolution:** we accumulate into `buffer` and only emit frames up to the last

@@ -29,7 +29,7 @@ streaming inherits the choreography for free.
 
 - Add `framer-motion` and wire a global `<MotionConfig reducedMotion="user">` (+ `LazyMotion` with
   `domAnimation`) at the provider root.
-- A SSR-safe `hooks/use-reduced-motion.ts` for *conditional logic* (deciding whether to mount a
+- A SSR-safe `hooks/use-reduced-motion.ts` for _conditional logic_ (deciding whether to mount a
   motion wrapper at all), complementing the global `MotionConfig` gate.
 - A `lib/motion.ts` tokens module: shared `variants`, `transition`, and `spring` constants, plus a
   helper that collapses variants to no-ops under reduced motion.
@@ -44,7 +44,7 @@ streaming inherits the choreography for free.
 
 - New features, new components, new routes, or behavioral changes to chat/upload/session logic.
 - Real streaming data or SSE wiring (that is M2 dark / M9 live). M4 exercises the caret against a
-  *simulated* `status: "streaming"` only.
+  _simulated_ `status: "streaming"` only.
 - Restyling / token migration (that was M3). M4 must not touch colors, spacing, or semantics beyond
   wrapping elements in `motion.*` and adding `variants`/`initial`/`animate`/`exit` props.
 - Page-transition / route-level animation, scroll-linked animation, or gesture/drag interactions.
@@ -55,12 +55,12 @@ streaming inherits the choreography for free.
 
 1. **Minimal and tasteful.** Motion communicates state change (a message arrived, a panel opened, a
    token is streaming), never decoration. Durations are short (120–260ms for tweens), distances
-   small (≤ 8px translate), easing calm. If a reviewer notices the animation *as* an animation, it's
+   small (≤ 8px translate), easing calm. If a reviewer notices the animation _as_ an animation, it's
    too much.
 2. **Transform + opacity only.** Every animated property must be GPU-composited: `opacity`,
    `transform` (`x`/`y`/`scale`). Never animate `width`, `height` (raw), `top`, `left`, `margin`, or
    `box-shadow` in a hot path — they trigger layout/paint and blow the 60fps budget. The two places
-   we *appear* to animate size (thinking-steps collapse, sidebar) use framer-motion's `layout`
+   we _appear_ to animate size (thinking-steps collapse, sidebar) use framer-motion's `layout`
    projection (which animates via transform under the hood) or an explicit measured height, with the
    tradeoffs documented in §7.
 3. **Reduced motion is first-class, not an afterthought.** The default contract: when the user
@@ -77,11 +77,11 @@ streaming inherits the choreography for free.
 5. **Memoization protects 60fps.** The in-flight assistant message re-renders on every token append.
    If its `ChatMessage` is not memoized, React reconciles it (and re-evaluates its `variants`) on
    each token, and any ancestor `layout` animation re-measures — instant jank. Messages are wrapped
-   in `React.memo` with a content/status-aware comparator; the *body text* updates, but the motion
+   in `React.memo` with a content/status-aware comparator; the _body text_ updates, but the motion
    wrapper's `initial`/`animate` identity stays stable so the enter animation fires exactly once.
 6. **No layout thrash.** The streaming message must be **excluded from sibling `layout` animation**
    while it streams (its height changes every token; animating that reflow is both pointless and
-   expensive). Only enter/exit and reorder of *settled* messages get `layout`.
+   expensive). Only enter/exit and reorder of _settled_ messages get `layout`.
 
 ---
 
@@ -105,15 +105,15 @@ canonical `transition`/`spring` constants and `*Variants` objects, plus a `reduc
 Every component imports from here. This mirrors the backend's "single Settings source" principle —
 one place to tune, one place to verify.
 
-**D3 — Dual gating: `<MotionConfig reducedMotion="user">` *and* `use-reduced-motion`.** These are
+**D3 — Dual gating: `<MotionConfig reducedMotion="user">` _and_ `use-reduced-motion`.** These are
 complementary, not redundant:
 
 - `<MotionConfig reducedMotion="user">` at the root makes framer-motion **automatically drop
-  transform animations** for *every* `motion`/`m` component when the OS reports reduced motion,
+  transform animations** for _every_ `motion`/`m` component when the OS reports reduced motion,
   keeping opacity. This is the safety net — even a component that forgets to gate is covered.
 - The `use-reduced-motion` hook drives **conditional rendering logic** that `MotionConfig` can't
   reach: "render a static `<span>` instead of a blinking caret," "set `initial={false}` so the first
-  paint isn't animated," "skip `layout` entirely." Use it where we need to *not mount* motion, not
+  paint isn't animated," "skip `layout` entirely." Use it where we need to _not mount_ motion, not
   merely strip its transforms.
 
 **D4 — `LazyMotion` + `domAnimation`, using the `m` component.** `framer-motion`'s full `motion`
@@ -121,7 +121,7 @@ import pulls the entire feature set into the bundle. Wrapping the tree in
 `<LazyMotion features={domAnimation} strict>` and importing the lightweight `m` component (e.g.
 `<m.div>` instead of `<motion.div>`) loads only DOM animation features (~animations, variants,
 `AnimatePresence`, `layout`) and trims the initial JS payload meaningfully. `strict` makes the build
-*fail* if anyone imports the heavy `motion` component, enforcing the convention. `domAnimation`
+_fail_ if anyone imports the heavy `motion` component, enforcing the convention. `domAnimation`
 (not `domMax`) is sufficient — we use no drag/layout-group gestures.
 
 **D5 — Spring for sidebar, tween for everything discrete.** See §2.4. The sidebar is the one
@@ -150,9 +150,9 @@ What exists today (pre-M4), and what M4 changes:
   ```
 
   This animates `width` (a layout property — not compositor-friendly) and uses `transition-all`
-  (animates *every* changed property, a common jank source). M4 replaces this with a spring-driven
+  (animates _every_ changed property, a common jank source). M4 replaces this with a spring-driven
   `m.aside` / `AnimatePresence`. (Note: by M3, `page.tsx` is a thin shell and the sidebar lives in
-  `components/layout/app-sidebar`; M4 targets that component, but the *behavior* to replace is the one
+  `components/layout/app-sidebar`; M4 targets that component, but the _behavior_ to replace is the one
   shown here.)
 
 - **`chat-message` uses `transition-all`, no enter/exit, no caret.**
@@ -174,7 +174,7 @@ What exists today (pre-M4), and what M4 changes:
 
 - **No motion infrastructure.** `framer-motion` is **not** installed (see `package.json`
   dependencies). `app/providers.tsx` **does not exist yet** — it is created in M0 and M4 extends it.
-  `hooks/use-reduced-motion.ts` is *referenced* by the plan but not yet implemented. `globals.css`
+  `hooks/use-reduced-motion.ts` is _referenced_ by the plan but not yet implemented. `globals.css`
   contains **no** `prefers-reduced-motion` media query. M4 builds all of this.
 
 ---
@@ -292,8 +292,8 @@ export function useReducedMotion(): boolean {
 
 **Notes.**
 
-- `getServerSnapshot` returning `false` means the *first* server-rendered HTML assumes motion is
-  allowed. Because reduced-motion never changes *layout* (only whether transforms animate), there is
+- `getServerSnapshot` returning `false` means the _first_ server-rendered HTML assumes motion is
+  allowed. Because reduced-motion never changes _layout_ (only whether transforms animate), there is
   no hydration layout shift — the worst case is one suppressed frame of animation on first paint for
   a reduced-motion user, which is the desired outcome anyway.
 - Tests drive this hook by stubbing `window.matchMedia` (see §8).
@@ -355,7 +355,12 @@ export const layoutSpring: Transition = {
 export const messageVariants: Variants = {
   initial: { opacity: 0, y: 8 },
   animate: { opacity: 1, y: 0, transition: tween },
-  exit: { opacity: 0, y: -4, scale: 0.98, transition: { ...tween, duration: DURATION.fast } },
+  exit: {
+    opacity: 0,
+    y: -4,
+    scale: 0.98,
+    transition: { ...tween, duration: DURATION.fast },
+  },
 };
 
 /** Thinking-steps container: orchestrates a stagger of its step children. */
@@ -370,20 +375,32 @@ export const stepsContainerVariants: Variants = {
 /** Individual thinking step: fades + slides in; honors the container's stagger. */
 export const stepVariants: Variants = {
   initial: { opacity: 0, x: -6 },
-  animate: { opacity: 1, x: 0, transition: { ...tween, duration: DURATION.fast } },
+  animate: {
+    opacity: 1,
+    x: 0,
+    transition: { ...tween, duration: DURATION.fast },
+  },
   exit: { opacity: 0, x: -6, transition: { duration: DURATION.fast } },
 };
 
 /** Expandable region (thinking-steps body) — collapses via height + opacity. */
 export const collapseVariants: Variants = {
-  collapsed: { height: 0, opacity: 0, transition: { ...tween, duration: DURATION.fast } },
+  collapsed: {
+    height: 0,
+    opacity: 0,
+    transition: { ...tween, duration: DURATION.fast },
+  },
   open: { height: "auto", opacity: 1, transition: tween },
 };
 
 /** Route badge: small fade + pop on mount. */
 export const badgeVariants: Variants = {
   initial: { opacity: 0, scale: 0.85 },
-  animate: { opacity: 1, scale: 1, transition: { ...tween, duration: DURATION.fast } },
+  animate: {
+    opacity: 1,
+    scale: 1,
+    transition: { ...tween, duration: DURATION.fast },
+  },
   exit: { opacity: 0, scale: 0.85, transition: { duration: DURATION.fast } },
 };
 
@@ -398,7 +415,12 @@ export const crossfadeVariants: Variants = {
 export const caretVariants: Variants = {
   blink: {
     opacity: [1, 1, 0, 0],
-    transition: { duration: 1, times: [0, 0.5, 0.5, 1], repeat: Infinity, ease: "linear" },
+    transition: {
+      duration: 1,
+      times: [0, 0.5, 0.5, 1],
+      repeat: Infinity,
+      ease: "linear",
+    },
   },
 };
 
@@ -456,9 +478,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     // ...existing providers wrap the tree; insert the motion wrappers innermost-but-around-children:
     <LazyMotion features={domAnimation} strict>
-      <MotionConfig reducedMotion="user">
-        {children}
-      </MotionConfig>
+      <MotionConfig reducedMotion="user">{children}</MotionConfig>
     </LazyMotion>
   );
 }
@@ -475,7 +495,12 @@ component throws at runtime in dev and is flagged. Every animated element uses `
 import { m, AnimatePresence } from "framer-motion";
 
 // ✅ correct
-<m.div initial="initial" animate="animate" exit="exit" variants={messageVariants} />
+<m.div
+  initial="initial"
+  animate="animate"
+  exit="exit"
+  variants={messageVariants}
+/>;
 
 // ❌ forbidden under LazyMotion strict — will throw
 // import { motion } from "framer-motion";
@@ -517,14 +542,16 @@ interface MessageListProps {
 
 export function MessageList({ messages, isLoading }: MessageListProps) {
   return (
-    <div className="max-w-4xl mx-auto space-y-6 pb-10 pt-10">
+    <div className="mx-auto max-w-4xl space-y-6 pt-10 pb-10">
       <AnimatePresence initial={false} mode="popLayout">
         {messages.map((message) => (
           <ChatMessage key={message.id} message={message} />
         ))}
       </AnimatePresence>
 
-      <AnimatePresence>{isLoading && <MessageLoading key="loading" />}</AnimatePresence>
+      <AnimatePresence>
+        {isLoading && <MessageLoading key="loading" />}
+      </AnimatePresence>
     </div>
   );
 }
@@ -533,7 +560,7 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
 - `key={message.id}` is **mandatory** for correct enter/exit — `AnimatePresence` tracks presence by
   key. IDs are stable `uuid`s (`page.tsx:58`), so reordering/insertion is tracked correctly.
 - `initial={false}` suppresses enter animation on the **first mount** of the list (the existing
-  history shouldn't all animate in on page load); only messages added *after* mount animate.
+  history shouldn't all animate in on page load); only messages added _after_ mount animate.
 - `mode="popLayout"` lets exiting items pop out of flow so remaining items reflow smoothly via
   `layout` rather than waiting for the exit to finish.
 
@@ -571,18 +598,23 @@ function ChatMessageImpl({ message }: ChatMessageProps) {
       animate="animate"
       exit="exit"
       className={cn(
-        "flex w-full gap-4 p-5 rounded-xl",
+        "flex w-full gap-4 rounded-xl p-5",
         isUser
           ? "bg-primary/5 flex-row-reverse"
-          : "bg-card border border-border shadow-sm"
+          : "bg-card border-border border shadow-sm"
       )}
     >
       {/* ...avatar + header + badge (Task 8) unchanged from M3... */}
 
-      <div className={cn("flex-1 space-y-2 min-w-0", isUser ? "text-right" : "text-left")}>
+      <div
+        className={cn(
+          "min-w-0 flex-1 space-y-2",
+          isUser ? "text-right" : "text-left"
+        )}
+      >
         {/* ...header... */}
 
-        <div className="text-sm leading-relaxed prose prose-sm max-w-none break-words dark:prose-invert">
+        <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed break-words">
           {/* ...existing ReactMarkdown / user <p> body from M3... */}
           {!isUser && isStreaming && <StreamingCaret reduced={reduced} />}
         </div>
@@ -613,7 +645,7 @@ ChatMessage.displayName = "ChatMessage";
 ```
 
 - **Why memo matters:** while a message streams, the parent re-renders on each token. Without
-  `memo`, *every* `ChatMessage` (including settled ones) reconciles, re-evaluating variants and
+  `memo`, _every_ `ChatMessage` (including settled ones) reconciles, re-evaluating variants and
   re-running `layout` measurement → dropped frames. With `memo`, only the streaming message
   re-renders (its `content` changed); settled siblings are skipped entirely.
 - **`layout="position"` not `layout`:** we animate position changes (insert/reorder) but not size
@@ -654,7 +686,7 @@ export function StreamingCaret({ reduced }: StreamingCaretProps) {
     return (
       <span
         aria-hidden="true"
-        className="ml-0.5 inline-block h-4 w-[2px] translate-y-[2px] bg-foreground/70 align-baseline"
+        className="bg-foreground/70 ml-0.5 inline-block h-4 w-[2px] translate-y-[2px] align-baseline"
       />
     );
   }
@@ -664,7 +696,7 @@ export function StreamingCaret({ reduced }: StreamingCaretProps) {
       aria-hidden="true"
       variants={caretVariants}
       animate="blink"
-      className="ml-0.5 inline-block h-4 w-[2px] translate-y-[2px] bg-foreground/70 align-baseline"
+      className="bg-foreground/70 ml-0.5 inline-block h-4 w-[2px] translate-y-[2px] align-baseline"
     />
   );
 }
@@ -673,7 +705,7 @@ export function StreamingCaret({ reduced }: StreamingCaretProps) {
 - The caret is `aria-hidden` — it is a visual affordance; screen readers announce streamed text via
   the live region the message body already provides (M3). Do not animate it for AT users.
 - Blink is **opacity only** (`caretVariants`), so even without the reduced check it never costs
-  layout/paint. The explicit static branch exists because a *looping* animation is exactly the kind
+  layout/paint. The explicit static branch exists because a _looping_ animation is exactly the kind
   of motion reduced-motion users want stopped entirely.
 
 ---
@@ -711,12 +743,12 @@ export function ThinkingSteps({ steps }: { steps: Step[] }) {
   const [open, setOpen] = useState(true);
 
   return (
-    <div className="rounded-lg border border-border bg-muted/40">
+    <div className="border-border bg-muted/40 rounded-lg border">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground"
+        className="text-muted-foreground flex w-full items-center justify-between px-3 py-2 text-xs font-medium"
       >
         <span>Thinking</span>
         <m.span
@@ -753,7 +785,9 @@ export function ThinkingSteps({ steps }: { steps: Step[] }) {
                     initial="initial"
                     animate="animate"
                     exit="exit"
-                    className={cn("flex items-center gap-2 text-xs text-foreground/80")}
+                    className={cn(
+                      "text-foreground/80 flex items-center gap-2 text-xs"
+                    )}
                   >
                     {step.label}
                   </m.li>
@@ -809,7 +843,10 @@ export function RouteBadge({ route }: { route?: RouteType }) {
           exit="exit"
           className="inline-flex"
         >
-          <Badge variant="outline" className="text-[10px] px-2 h-5 font-normal text-muted-foreground">
+          <Badge
+            variant="outline"
+            className="text-muted-foreground h-5 px-2 text-[10px] font-normal"
+          >
             {route}
           </Badge>
         </m.span>
@@ -843,19 +880,23 @@ import { spring, reduceVariants } from "@/lib/motion";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 
 const sidebarVariants = {
-  open: { width: 256, opacity: 1, transition: spring },     // 256px == w-64
+  open: { width: 256, opacity: 1, transition: spring }, // 256px == w-64
   closed: { width: 0, opacity: 0, transition: spring },
 };
 
-export function AppSidebar({ open, onClearSession, onToggle }: AppSidebarProps) {
+export function AppSidebar({
+  open,
+  onClearSession,
+  onToggle,
+}: AppSidebarProps) {
   const reduced = useReducedMotion();
 
   return (
     <m.aside
-      initial={false}                                    // don't animate width on first paint
+      initial={false} // don't animate width on first paint
       animate={open ? "open" : "closed"}
       variants={reduceVariants(sidebarVariants, reduced)}
-      className="h-full shrink-0 overflow-hidden border-r border-border bg-muted/40"
+      className="border-border bg-muted/40 h-full shrink-0 overflow-hidden border-r"
     >
       {/* Inner content keeps a fixed w-64 so text doesn't reflow while the shell width animates. */}
       <div className="flex h-full w-64 flex-col p-4">
@@ -913,18 +954,33 @@ export function MessageLoading() {
       initial="initial"
       animate="animate"
       exit="exit"
-      className="flex w-full gap-4 p-5 rounded-xl bg-card border border-border shadow-sm"
+      className="bg-card border-border flex w-full gap-4 rounded-xl border p-5 shadow-sm"
     >
-      <Avatar className="h-8 w-8 border shrink-0">
+      <Avatar className="h-8 w-8 shrink-0 border">
         <AvatarFallback className="bg-muted text-foreground">
           <Bot className="h-4 w-4" />
         </AvatarFallback>
       </Avatar>
       <div className="flex-1 space-y-2 pt-1">
         {/* Skeleton bars. Keep the pulse ONLY when motion is allowed; static under reduced motion. */}
-        <div className={cn("h-4 w-24 rounded bg-muted", !reduced && "animate-pulse")} />
-        <div className={cn("h-4 w-3/4 rounded bg-muted/70", !reduced && "animate-pulse")} />
-        <div className={cn("h-4 w-1/2 rounded bg-muted/70", !reduced && "animate-pulse")} />
+        <div
+          className={cn(
+            "bg-muted h-4 w-24 rounded",
+            !reduced && "animate-pulse"
+          )}
+        />
+        <div
+          className={cn(
+            "bg-muted/70 h-4 w-3/4 rounded",
+            !reduced && "animate-pulse"
+          )}
+        />
+        <div
+          className={cn(
+            "bg-muted/70 h-4 w-1/2 rounded",
+            !reduced && "animate-pulse"
+          )}
+        />
       </div>
     </m.div>
   );
@@ -1045,7 +1101,7 @@ reduced-motion branch**, not pixel-level animation:
 **Manual verification (the plan's gate).**
 
 - Toggle OS reduced motion **on** (macOS: Accessibility → Display → Reduce motion; GNOME: `gsettings
-  set org.gnome.desktop.interface enable-animations false`; Windows: Settings → Accessibility → Visual
+set org.gnome.desktop.interface enable-animations false`; Windows: Settings → Accessibility → Visual
   effects → Animation effects off). Reload. Confirm: messages appear instantly, sidebar snaps,
   thinking-steps snap, caret is a static block, skeleton is static, **no transforms** in the
   Performance recording.
@@ -1073,10 +1129,10 @@ reduced-motion branch**, not pixel-level animation:
   `status`), the caret won't appear/disappear correctly; if it's too loose it can show stale content.
   Keep it to exactly the render-affecting fields (Task 5b) and test it (§8).
 - **SSR / hydration.** `m` components render to plain DOM on the server, so no hydration mismatch from
-  framer-motion itself. The risk is the reduced-motion *value*: `getServerSnapshot` returns `false`,
+  framer-motion itself. The risk is the reduced-motion _value_: `getServerSnapshot` returns `false`,
   so server HTML assumes motion. Because reduced-motion gates only animation (not layout/markup
-  difference — note the static caret vs `m.span` *do* differ in markup), ensure any markup that
-  *differs* by reduced-motion (the caret's static `<span>` vs `m.span`) is inside a `"use client"`
+  difference — note the static caret vs `m.span` _do_ differ in markup), ensure any markup that
+  _differs_ by reduced-motion (the caret's static `<span>` vs `m.span`) is inside a `"use client"`
   boundary and only rendered after mount for the streaming case, or accept a one-frame post-hydration
   reconcile (the caret only exists during streaming, which is always post-mount, so this is moot in
   practice). Keep all motion components under `"use client"`.
@@ -1086,7 +1142,7 @@ reduced-motion branch**, not pixel-level animation:
   slipped in (the `strict` flag + optional ESLint rule guard this).
 - **Reduced motion for the caret.** A looping opacity animation is exactly what reduced-motion users
   want stopped. The caret has an explicit static branch (Task 6) — don't rely on `MotionConfig` alone,
-  which only strips *transforms* and would leave the opacity blink running.
+  which only strips _transforms_ and would leave the opacity blink running.
 - **`animate-pulse` is motion too.** The skeleton's Tailwind pulse is a CSS animation that
   `MotionConfig` does **not** touch. Gate it on `!reduced` (Task 10) or it violates the contract.
 - **`overflow: hidden` during collapse.** Without it, `height: auto` collapse flashes overflowing

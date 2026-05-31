@@ -22,6 +22,7 @@ M6–M9 layer on backend-phase features behind their flags.
 ## 1. Objective & Scope
 
 ### In scope
+
 - **Comprehensive unit/component tests (Vitest + RTL):** Zustand `chat.store`, `use-blocking-chat`,
   `parseSSE` (the M1/M2 focused tests are absorbed and extended here), plus component tests for
   `chat-message`, `chat-input`, `thinking-steps`, `sources-panel`, `route-badge`, `message-actions`.
@@ -38,9 +39,10 @@ M6–M9 layer on backend-phase features behind their flags.
   optional docker build.
 
 ### Out of scope (explicitly)
+
 - **No new product features.** No auth (M6), no BYOK/model picker (M7), no presigned uploads (M8), no
   real SSE flip (M9). The streaming MSW handler here is a **mock contract** so the streaming strategy
-  *can* be exercised; `NEXT_PUBLIC_FEATURE_STREAMING` stays `false` for the default E2E run.
+  _can_ be exercised; `NEXT_PUBLIC_FEATURE_STREAMING` stays `false` for the default E2E run.
 - No visual redesign, no new components, no copy changes.
 - No deployment/release automation beyond producing the image (publishing to a registry is M9-adjacent
   and intentionally left as an optional, commented CI job).
@@ -49,15 +51,15 @@ M6–M9 layer on backend-phase features behind their flags.
 
 ## 2. Decisions & Rationale
 
-| Decision | Rationale | Alternatives rejected |
-|---|---|---|
-| **Vitest over Jest** | Native ESM + TS via Vite's transform pipeline (no `babel-jest`/`ts-jest` ceremony), shares the project's resolver/aliases, far faster watch, and is the de-facto choice for Next 16 / React 19 / Tailwind v4 toolchains. `expect` API is Jest-compatible so RTL/`jest-dom` work unchanged. | Jest (slow ESM story, config drift against Vite, awkward with `next/*` ESM). |
-| **React Testing Library, behavior-first** | Tests assert what the **user** sees and does (roles, text, `userEvent`), not component internals or implementation detail. This survives the M4 motion refactor and shadcn/Radix swaps. Query by accessible role/name → also a passive a11y check. | Enzyme (shallow rendering, impl-coupled, no React 19 support). |
-| **MSW for all network mocking** | One handler set is the single source of truth for the API contract and runs in **both** worlds: a Node `setupServer` for Vitest and a **browser** service worker for Playwright. We never hand-roll `fetch` stubs, and unit + E2E can't drift from each other. MSW v2 intercepts at the network layer, so `http-client.ts` is exercised for real. | Per-test `vi.fn()` fetch stubs (drift, no streaming, no browser story); a throwaway Express mock server (duplicate contract). |
-| **Playwright over Cypress** | First-class multi-browser, fast parallel execution, built-in `webServer` orchestration, trace viewer, and a request-interception model that composes cleanly with MSW's browser worker. Native TS, no plugin zoo. | Cypress (slower, heavier, weaker parallelism, awkward TS/ESM, no true multi-tab). |
-| **`output:'standalone'`** | Next traces the **exact** module graph the server needs and emits a self-contained `.next/standalone` (its own minimal `node_modules` + `server.js`). The runtime image no longer ships the full dev/prod `node_modules` — this is the lever that "drops image size sharply." | Shipping full `node_modules` (current Dockerfile — fat); `next start` in the image (needs all deps). |
-| **Multi-stage Docker (deps → builder → runner)** | Build tooling, dev deps, and source never reach the final layer. The runner copies only the standalone bundle + static + public, runs non-root, and is reproducible/cacheable per stage. | Single-stage (leaks toolchain + source, huge). |
-| **Fast-fail CI ordering** | `lint → typecheck → unit+coverage → build → e2e`. Cheap, high-signal checks fail in seconds before we pay for a build or spin up browsers. `build` is a prerequisite of `e2e` (Playwright serves the built app). Jobs share a primed npm cache. | One monolithic job (no parallelism, slow feedback, can't see which stage failed). |
+| Decision                                         | Rationale                                                                                                                                                                                                                                                                                                                                         | Alternatives rejected                                                                                                         |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **Vitest over Jest**                             | Native ESM + TS via Vite's transform pipeline (no `babel-jest`/`ts-jest` ceremony), shares the project's resolver/aliases, far faster watch, and is the de-facto choice for Next 16 / React 19 / Tailwind v4 toolchains. `expect` API is Jest-compatible so RTL/`jest-dom` work unchanged.                                                        | Jest (slow ESM story, config drift against Vite, awkward with `next/*` ESM).                                                  |
+| **React Testing Library, behavior-first**        | Tests assert what the **user** sees and does (roles, text, `userEvent`), not component internals or implementation detail. This survives the M4 motion refactor and shadcn/Radix swaps. Query by accessible role/name → also a passive a11y check.                                                                                                | Enzyme (shallow rendering, impl-coupled, no React 19 support).                                                                |
+| **MSW for all network mocking**                  | One handler set is the single source of truth for the API contract and runs in **both** worlds: a Node `setupServer` for Vitest and a **browser** service worker for Playwright. We never hand-roll `fetch` stubs, and unit + E2E can't drift from each other. MSW v2 intercepts at the network layer, so `http-client.ts` is exercised for real. | Per-test `vi.fn()` fetch stubs (drift, no streaming, no browser story); a throwaway Express mock server (duplicate contract). |
+| **Playwright over Cypress**                      | First-class multi-browser, fast parallel execution, built-in `webServer` orchestration, trace viewer, and a request-interception model that composes cleanly with MSW's browser worker. Native TS, no plugin zoo.                                                                                                                                 | Cypress (slower, heavier, weaker parallelism, awkward TS/ESM, no true multi-tab).                                             |
+| **`output:'standalone'`**                        | Next traces the **exact** module graph the server needs and emits a self-contained `.next/standalone` (its own minimal `node_modules` + `server.js`). The runtime image no longer ships the full dev/prod `node_modules` — this is the lever that "drops image size sharply."                                                                     | Shipping full `node_modules` (current Dockerfile — fat); `next start` in the image (needs all deps).                          |
+| **Multi-stage Docker (deps → builder → runner)** | Build tooling, dev deps, and source never reach the final layer. The runner copies only the standalone bundle + static + public, runs non-root, and is reproducible/cacheable per stage.                                                                                                                                                          | Single-stage (leaks toolchain + source, huge).                                                                                |
+| **Fast-fail CI ordering**                        | `lint → typecheck → unit+coverage → build → e2e`. Cheap, high-signal checks fail in seconds before we pay for a build or spin up browsers. `build` is a prerequisite of `e2e` (Playwright serves the built app). Jobs share a primed npm cache.                                                                                                   | One monolithic job (no parallelism, slow feedback, can't see which stage failed).                                             |
 
 ---
 
@@ -92,6 +94,7 @@ e2e job, plus an optional docker-build job.
 
 **Source contracts to honor (`services/api.ts`, `types/index.ts`).** The backend (today) is **blocking
 JSON**:
+
 - `POST /chat` ← `{ message, session_id, web_search_allowed }` → `{ answer, route, context_count, session_id }`
   where `route: RouteType` is one of `RAG | WEB | DIRECT | WEB+RAG | DIRECT+WEB | DIRECT+RAG | ERROR`.
 - `POST /upload` ← multipart (`file`, `session_id`) → JSON (filename/status).
@@ -175,6 +178,7 @@ npx msw init public/ --save
 ```
 
 Notes:
+
 - `@vitest/coverage-v8` matches the Vitest major. `@testing-library/dom` is a peer of
   `@testing-library/react@16` and must be explicit.
 - `msw init public/ --save` writes `public/mockServiceWorker.js` and records the public dir in
@@ -373,7 +377,13 @@ export const handlers = [
       // 09_Phase6 `component` event — a whole rich-output block (citation = sources channel). M10 renders it.
       `event: component\ndata: ${JSON.stringify({
         type: "citation",
-        items: [{ label: "doc.pdf · p.1", source_id: "chunk_1", snippet: "…relevant excerpt…" }],
+        items: [
+          {
+            label: "doc.pdf · p.1",
+            source_id: "chunk_1",
+            snippet: "…relevant excerpt…",
+          },
+        ],
       })}\n\n`,
       // Typed terminal `done` with the FLAT route enum (09_Phase6); the M2 parser also tolerates a bare [DONE].
       `event: done\ndata: ${JSON.stringify({ answer: "Hello, world.", route: "RAG" })}\n\n`,
@@ -401,7 +411,7 @@ export const handlers = [
 //   server.use(chatError(500))  /  server.use(chatError(403, "Quota exceeded"))
 export function chatError(status: number, detail = "Backend error") {
   return http.post(`${API}/chat`, () =>
-    HttpResponse.json({ detail }, { status }),
+    HttpResponse.json({ detail }, { status })
   );
 }
 ```
@@ -553,14 +563,14 @@ describe("parseSSE", () => {
       streamOf([
         'event: status\ndata: {"stage":"routing"}\n\n',
         'event: token\ndata: {"text":"Hi"}\n\n',
-      ]),
+      ])
     );
     expect(events.map((e) => e.event)).toEqual(["status", "token"]);
   });
 
   it("reassembles a frame split across chunk boundaries", async () => {
     const events = await collect(
-      streamOf(['event: token\ndata: {"text', '":"split"}\n\n']),
+      streamOf(['event: token\ndata: {"text', '":"split"}\n\n'])
     );
     expect(events).toHaveLength(1);
     expect(JSON.parse(events[0].data)).toEqual({ text: "split" });
@@ -568,7 +578,7 @@ describe("parseSSE", () => {
 
   it("handles multi-line data and terminates on [DONE]", async () => {
     const events = await collect(
-      streamOf(["data: line1\ndata: line2\n\n", "data: [DONE]\n\n"]),
+      streamOf(["data: line1\ndata: line2\n\n", "data: [DONE]\n\n"])
     );
     expect(events[0].data).toBe("line1\nline2");
     // [DONE] terminates the generator (no event yielded for the sentinel).
@@ -610,7 +620,7 @@ describe("ChatMessage", () => {
     render(
       <ChatMessage
         message={{ ...base, role: "user", route: undefined, content: "hi" }}
-      />,
+      />
     );
     expect(screen.queryByText(/RAG/)).not.toBeInTheDocument();
   });
@@ -650,6 +660,7 @@ describe("ChatInput", () => {
 ```
 
 **Remaining unit/component tests to author (same patterns):**
+
 - `thinking-steps.test.tsx` — renders synthesized `steps[]`, expand/collapse toggles content
   (`getByRole("button")` → click → assert region visible).
 - `sources-panel.test.tsx` — renders `sourcesCount`/sources, collapsed by default.
@@ -679,8 +690,8 @@ describe("ChatInput", () => {
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test"
-  }
+    "test:e2e": "playwright test",
+  },
 }
 ```
 
@@ -749,7 +760,7 @@ test.describe("core chat flow (MSW-mocked backend)", () => {
     await page.goto("/");
     // Empty state is visible on load.
     await expect(
-      page.getByRole("heading", { name: /agentic rag|start a conversation/i }),
+      page.getByRole("heading", { name: /agentic rag|start a conversation/i })
     ).toBeVisible();
   });
 
@@ -763,12 +774,12 @@ test.describe("core chat flow (MSW-mocked backend)", () => {
 
     // User bubble appears immediately.
     await expect(
-      page.getByText("What is retrieval-augmented generation?"),
+      page.getByText("What is retrieval-augmented generation?")
     ).toBeVisible();
 
     // 2) Assistant reply (MSW echoes) + route badge render.
     await expect(
-      page.getByText(/Echo: What is retrieval-augmented generation\?/),
+      page.getByText(/Echo: What is retrieval-augmented generation\?/)
     ).toBeVisible();
     await expect(page.getByText(/RAG/)).toBeVisible();
 
@@ -797,7 +808,7 @@ test.describe("core chat flow (MSW-mocked backend)", () => {
     // 5) Reset session: messages clear back to empty state.
     await page.getByRole("button", { name: /reset|new chat|clear/i }).click();
     await expect(
-      page.getByText(/Echo: What is retrieval-augmented generation\?/),
+      page.getByText(/Echo: What is retrieval-augmented generation\?/)
     ).toHaveCount(0);
   });
 });
@@ -874,7 +885,7 @@ EXPOSE 3000
 CMD ["node", "server.js"]
 ```
 
-> **Critical:** `output:'standalone'` traces *server* modules only — it does **not** copy `public/` or
+> **Critical:** `output:'standalone'` traces _server_ modules only — it does **not** copy `public/` or
 > `.next/static`. Both copies above are mandatory or you ship an app with no CSS/JS and 404'd assets.
 > `HOSTNAME=0.0.0.0` is required so the standalone server binds outside the container.
 
@@ -1112,6 +1123,7 @@ absolute Render URL, `http://localhost:3000/api`, or a relative `/api`. Tests/CI
 ## 7. Testing & Verification
 
 **Local gate (must all pass):**
+
 ```bash
 npm run lint
 npx prettier --check .
@@ -1126,6 +1138,7 @@ lines 70. Hot modules (`chat.store`, `use-blocking-chat`, `parseSSE`) should sit
 upward as suites grow; never lower to pass.
 
 **Docker — small image that boots via `node server.js`:**
+
 ```bash
 docker build -t rag-frontend:local .
 docker images rag-frontend:local            # confirm the size drop (see note below)
@@ -1135,6 +1148,7 @@ docker run --rm -p 3000:3000 \
 # in another shell:
 curl -fsS http://localhost:3000 >/dev/null && echo "OK: server up"
 ```
+
 The container must serve the homepage and start with `node server.js` (not `npm run start`).
 
 **Image-size expectation (before/after).** The current Dockerfile ships a full production `node_modules`

@@ -11,6 +11,7 @@ Establish the quality, safety, and configuration foundation for the entire front
 **Objective:** make every later commit safe to merge — quality and guardrails built in, not bolted on — and wire the provider/theming/toast infrastructure the rest of the plan depends on, with zero observable UX change beyond a newly-functional theme toggle and the page title/favicon metadata.
 
 **In scope**
+
 - Prettier + `prettier-plugin-tailwindcss` + config + `format` / `format:check` scripts.
 - ESLint flat-config extension: `eslint-plugin-jsx-a11y` (recommended), `eslint-config-prettier` (disable stylistic rules that fight Prettier), and an explicit ban on `any`.
 - `typecheck` npm script (`tsc --noEmit`).
@@ -24,6 +25,7 @@ Establish the quality, safety, and configuration foundation for the entire front
 - `.env.example` documenting every env var.
 
 **Out of scope (explicitly)**
+
 - **No UX/behavior change.** No refactor of `app/page.tsx`, no state-management change (TanStack Query / Zustand land in M1), no API-layer change (`services/api.ts` is replaced in M1), no streaming/SSE, no auth/BYOK/upload work.
 - No design-token migration of hardcoded `slate/blue` classes (that is M3).
 - No new tests / Vitest / Playwright (M5).
@@ -35,21 +37,21 @@ Establish the quality, safety, and configuration foundation for the entire front
 
 ## 2. Decisions & Rationale
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| Formatter | **Prettier** (not Biome) | Plan mandates Prettier; first-class `prettier-plugin-tailwindcss` auto-sorts Tailwind classes (critical for the Tailwind-heavy `page.tsx`); ubiquitous editor/CI support. Biome would mean re-deciding the linter too. |
-| Tailwind class sorting | **`prettier-plugin-tailwindcss`** | Deterministic class order kills "class soup" diffs and enforces the canonical Tailwind order. Tailwind v4 reads config from `globals.css`, so the plugin needs no `tailwind.config` path. |
-| Linter base | **Keep `eslint-config-next` flat config** + layer plugins | Already installed and wired; we extend rather than replace to preserve Next's `core-web-vitals` + TS rules. |
-| a11y | **`eslint-plugin-jsx-a11y` (recommended)** | Catches missing `alt`, label/control associations, role misuse at lint time — cheap insurance before the UX-heavy milestones (M3/M4). |
-| Prettier ↔ ESLint conflict | **`eslint-config-prettier` last** | Turns off ESLint's stylistic rules so ESLint owns correctness and Prettier owns formatting; no rule fights. Must be the final entry so it wins. |
-| Ban `any` | **`@typescript-eslint/no-explicit-any: error`** | `page.tsx:78` (`catch (err: any)`) and `services/api.ts:80` (`Promise<any>`) leak `any`; the plan calls strict TS the standard. Erroring forces typed errors in M1. |
-| Env validation | **Zod** | Plan standardizes on Zod for env + API schemas; one library for runtime validation everywhere. Single typed `env` export means no scattered `process.env.X!` with `!`. |
-| Fail-fast strategy | Parse at module load, `throw` on invalid | A missing/malformed required var should crash the build/boot loudly, not surface as a runtime `undefined` deep in the UI. |
-| Feature flags | **Derived booleans in `lib/flags.ts`** from validated env | Single source of truth, typed, defaults `false` so unfinished backend phases ship dark. Centralizing avoids stringly-typed `process.env.NEXT_PUBLIC_FEATURE_* === "true"` checks scattered across components. |
-| Git hooks | **Husky** (not simple-git-hooks) | Plan mandates Husky; mature, the `prepare` script auto-installs hooks on `npm install`, and it composes cleanly with `lint-staged`. |
-| Staged-file linting | **`lint-staged`** | Runs ESLint/Prettier only on staged files — fast pre-commit, no full-repo scan per commit. |
-| CI | **GitHub Actions** | Plan mandates GitHub Actions on the branch; native to the repo host, zero extra infra. |
-| Package manager | **npm** | Repo ships `package-lock.json` only — stay on npm; CI uses `npm ci`. |
+| Decision                   | Choice                                                    | Rationale                                                                                                                                                                                                              |
+| -------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Formatter                  | **Prettier** (not Biome)                                  | Plan mandates Prettier; first-class `prettier-plugin-tailwindcss` auto-sorts Tailwind classes (critical for the Tailwind-heavy `page.tsx`); ubiquitous editor/CI support. Biome would mean re-deciding the linter too. |
+| Tailwind class sorting     | **`prettier-plugin-tailwindcss`**                         | Deterministic class order kills "class soup" diffs and enforces the canonical Tailwind order. Tailwind v4 reads config from `globals.css`, so the plugin needs no `tailwind.config` path.                              |
+| Linter base                | **Keep `eslint-config-next` flat config** + layer plugins | Already installed and wired; we extend rather than replace to preserve Next's `core-web-vitals` + TS rules.                                                                                                            |
+| a11y                       | **`eslint-plugin-jsx-a11y` (recommended)**                | Catches missing `alt`, label/control associations, role misuse at lint time — cheap insurance before the UX-heavy milestones (M3/M4).                                                                                  |
+| Prettier ↔ ESLint conflict | **`eslint-config-prettier` last**                         | Turns off ESLint's stylistic rules so ESLint owns correctness and Prettier owns formatting; no rule fights. Must be the final entry so it wins.                                                                        |
+| Ban `any`                  | **`@typescript-eslint/no-explicit-any: error`**           | `page.tsx:78` (`catch (err: any)`) and `services/api.ts:80` (`Promise<any>`) leak `any`; the plan calls strict TS the standard. Erroring forces typed errors in M1.                                                    |
+| Env validation             | **Zod**                                                   | Plan standardizes on Zod for env + API schemas; one library for runtime validation everywhere. Single typed `env` export means no scattered `process.env.X!` with `!`.                                                 |
+| Fail-fast strategy         | Parse at module load, `throw` on invalid                  | A missing/malformed required var should crash the build/boot loudly, not surface as a runtime `undefined` deep in the UI.                                                                                              |
+| Feature flags              | **Derived booleans in `lib/flags.ts`** from validated env | Single source of truth, typed, defaults `false` so unfinished backend phases ship dark. Centralizing avoids stringly-typed `process.env.NEXT_PUBLIC_FEATURE_* === "true"` checks scattered across components.          |
+| Git hooks                  | **Husky** (not simple-git-hooks)                          | Plan mandates Husky; mature, the `prepare` script auto-installs hooks on `npm install`, and it composes cleanly with `lint-staged`.                                                                                    |
+| Staged-file linting        | **`lint-staged`**                                         | Runs ESLint/Prettier only on staged files — fast pre-commit, no full-repo scan per commit.                                                                                                                             |
+| CI                         | **GitHub Actions**                                        | Plan mandates GitHub Actions on the branch; native to the repo host, zero extra infra.                                                                                                                                 |
+| Package manager            | **npm**                                                   | Repo ships `package-lock.json` only — stay on npm; CI uses `npm ci`.                                                                                                                                                   |
 
 ---
 
@@ -113,11 +115,13 @@ typescript-agentic-rag-frontend/
 **Goal:** deterministic formatting with auto-sorted Tailwind classes; add `format` / `format:check` scripts.
 
 **Install**
+
 ```bash
 npm i -D prettier prettier-plugin-tailwindcss
 ```
 
 **`.prettierrc`** (new)
+
 ```json
 {
   "semi": true,
@@ -129,9 +133,11 @@ npm i -D prettier prettier-plugin-tailwindcss
   "tailwindFunctions": ["cn", "cva"]
 }
 ```
+
 > `tailwindFunctions` makes the plugin sort classes passed to `cn(...)` (`lib/utils.ts`) and `cva(...)` (used by shadcn variants). With Tailwind v4, config lives in `app/globals.css` (`@import "tailwindcss"`), which the plugin auto-detects — no `tailwindConfig` key needed.
 
 **`.prettierignore`** (new)
+
 ```
 .next
 out
@@ -146,6 +152,7 @@ public
 ```
 
 **`package.json` scripts** (changed) — add `format` and `format:check`:
+
 ```json
 {
   "scripts": {
@@ -168,11 +175,13 @@ public
 **Goal:** add a11y linting, stop ESLint fighting Prettier, and error on `any`.
 
 **Install**
+
 ```bash
 npm i -D eslint-plugin-jsx-a11y eslint-config-prettier
 ```
 
 **`eslint.config.mjs`** (changed — full file)
+
 ```js
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
@@ -198,18 +207,13 @@ const eslintConfig = defineConfig([
   prettier,
 
   // Override default ignores of eslint-config-next.
-  globalIgnores([
-    ".next/**",
-    "out/**",
-    "build/**",
-    "next-env.d.ts",
-  ]),
+  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts"]),
 ]);
 
 export default eslintConfig;
 ```
 
-> **Note on existing `any` usages:** turning `no-explicit-any` to `error` will flag `app/page.tsx:78` and `services/api.ts:80`. Those files are **fully rewritten/replaced in M1** (page gutted to a thin shell; `services/api.ts` → `lib/api/http-client.ts`). To keep M0 self-contained and `lint` green *without* doing M1's refactor, apply the two minimal, behavior-preserving fixes below:
+> **Note on existing `any` usages:** turning `no-explicit-any` to `error` will flag `app/page.tsx:78` and `services/api.ts:80`. Those files are **fully rewritten/replaced in M1** (page gutted to a thin shell; `services/api.ts` → `lib/api/http-client.ts`). To keep M0 self-contained and `lint` green _without_ doing M1's refactor, apply the two minimal, behavior-preserving fixes below:
 >
 > - `app/page.tsx:78` — change `catch (err: any)` to `catch (err: unknown)` and read the message safely:
 >   ```ts
@@ -233,11 +237,13 @@ Verify: `npm run lint` passes.
 **Goal:** one validated, typed `env` object; crash loudly on misconfiguration. Server vars + `NEXT_PUBLIC_*` in one schema.
 
 **Install**
+
 ```bash
 npm i zod
 ```
 
 **`lib/env.ts`** (new)
+
 ```ts
 import { z } from "zod";
 
@@ -258,10 +264,7 @@ const FeatureFlag = z
 
 const envSchema = z.object({
   // --- Public (client-exposed) ---
-  NEXT_PUBLIC_API_URL: z
-    .string()
-    .url()
-    .default("http://localhost:8000/api"),
+  NEXT_PUBLIC_API_URL: z.string().url().default("http://localhost:8000/api"),
 
   // Forward-compat feature flags — default OFF so unfinished phases ship dark.
   NEXT_PUBLIC_FEATURE_STREAMING: FeatureFlag,
@@ -315,6 +318,7 @@ export type Env = typeof env;
 **Goal:** derive booleans from validated `env`; centralize so components never read `process.env` directly. All forward-compat flags default `false` (already enforced in the schema).
 
 **`lib/flags.ts`** (new)
+
 ```ts
 import { env } from "@/lib/env";
 
@@ -348,6 +352,7 @@ export type Flags = typeof flags;
 **Goal:** one `Providers` boundary wrapping the app, with the `ThemeProvider` mounted now and a documented seam for `QueryClientProvider` (M1).
 
 **`app/providers.tsx`** (new)
+
 ```tsx
 "use client";
 
@@ -379,6 +384,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 **Goal:** thin wrapper over `next-themes` so the rest of the app imports a stable internal path.
 
 **`components/theme/theme-provider.tsx`** (new)
+
 ```tsx
 "use client";
 
@@ -402,9 +408,11 @@ export function ThemeProvider({ children, ...props }: ThemeProviderProps) {
 **Goal:** the theme toggle uses a dropdown; `components/ui/dropdown-menu.tsx` is not yet present.
 
 **Command**
+
 ```bash
 npx shadcn@latest add dropdown-menu
 ```
+
 This writes `components/ui/dropdown-menu.tsx` (new-york style, per `components.json`) and adds the `@radix-ui/react-dropdown-menu` dependency to `package.json`. Run `npm run format` afterward so the generated file matches our Prettier config. Commit the generated file.
 
 > If the registry call is unavailable in CI/offline, the file can be vendored manually from the shadcn registry; the toggle below only relies on the standard `DropdownMenu`, `DropdownMenuTrigger`, `DropdownMenuContent`, `DropdownMenuItem` exports.
@@ -416,6 +424,7 @@ This writes `components/ui/dropdown-menu.tsx` (new-york style, per `components.j
 **Goal:** light/dark/system dropdown using lucide icons, accessible, no hydration flash.
 
 **`components/theme/theme-toggle.tsx`** (new)
+
 ```tsx
 "use client";
 
@@ -470,6 +479,7 @@ export function ThemeToggle() {
 **Goal:** real metadata, `suppressHydrationWarning`, mount `<Providers>` + `<Toaster />`.
 
 **`app/layout.tsx`** (changed — full file)
+
 ```tsx
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
@@ -525,19 +535,24 @@ export default function RootLayout({
 **Goal:** auto-run ESLint `--fix` + Prettier on **staged** files before each commit.
 
 **Install**
+
 ```bash
 npm i -D husky lint-staged
 npx husky init
 ```
+
 `npx husky init` creates `.husky/` and adds a `"prepare": "husky"` script to `package.json` (so hooks reinstall on every `npm install`). It also creates a sample `.husky/pre-commit`; replace its contents.
 
 **`.husky/pre-commit`** (new — full file)
+
 ```sh
 npx lint-staged
 ```
+
 > Modern Husky (v9+) does not need the legacy `#!/bin/sh` + `husky.sh` sourcing block — a plain command file is correct.
 
 **`.lintstagedrc.json`** (new)
+
 ```json
 {
   "*.{ts,tsx}": ["eslint --fix", "prettier --write"],
@@ -546,6 +561,7 @@ npx lint-staged
 ```
 
 **Resulting `package.json` scripts block** (after Tasks 1, 11, 10 — for reference):
+
 ```json
 {
   "scripts": {
@@ -568,9 +584,11 @@ npx lint-staged
 **Goal:** dedicated typecheck gate for CI and local use.
 
 Add to `package.json` scripts (shown above):
+
 ```json
 "typecheck": "tsc --noEmit"
 ```
+
 > `tsconfig.json` already has `"strict": true` and `"noEmit": true`, so this is a pure type gate. Verify: `npm run typecheck` exits 0.
 
 ---
@@ -580,6 +598,7 @@ Add to `package.json` scripts (shown above):
 **Goal:** on push/PR to the working branch, run install → lint → format:check → typecheck → build.
 
 **`.github/workflows/ci.yml`** (new)
+
 ```yaml
 name: CI
 
@@ -642,6 +661,7 @@ jobs:
 **Goal:** document every env var so contributors copy → `.env.local`.
 
 **`.env.example`** (new)
+
 ```bash
 # Backend API base URL (must include the /api suffix).
 NEXT_PUBLIC_API_URL=http://localhost:8000/api
@@ -658,6 +678,7 @@ NEXT_PUBLIC_FEATURE_BYOK=false
 NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD=false
 NEXT_PUBLIC_FEATURE_RICH_COMPONENTS=false
 ```
+
 > `.env.example` is committed; real `.env.local` is git-ignored by Next's default `.gitignore`. Note `services/api.ts:6` currently defaults to the Render URL and `app/page.tsx:20` to localhost — both keep working because `env.ts` is not yet consumed by them in M0 (that rewire is M1); `.env.example` documents the intended single value going forward.
 
 ---
@@ -666,15 +687,15 @@ NEXT_PUBLIC_FEATURE_RICH_COMPONENTS=false
 
 All env is validated once in `lib/env.ts` and surfaced via `env` (raw, typed) and `flags` (booleans).
 
-| Env var | Type (post-parse) | Default | Validation | Consumed by |
-|---|---|---|---|---|
-| `NEXT_PUBLIC_API_URL` | `string` (URL) | `http://localhost:8000/api` | `z.string().url()` | M1 `http-client` (today read ad hoc in `page.tsx`/`services/api.ts`) |
-| `NEXT_PUBLIC_FEATURE_STREAMING` | `boolean` | `false` | `"true"|"false"` → bool | M2 (seam), M9 (flip true) |
-| `NEXT_PUBLIC_FEATURE_AUTH` | `boolean` | `false` | `"true"|"false"` → bool | M6 |
-| `NEXT_PUBLIC_FEATURE_BYOK` | `boolean` | `false` | `"true"|"false"` → bool | M7 |
-| `NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD` | `boolean` | `false` | `"true"|"false"` → bool | M8 |
-| `NEXT_PUBLIC_FEATURE_RICH_COMPONENTS` | `boolean` | `false` | `"true"|"false"` → bool | M10 (backend P6 `component` event) |
-| `NODE_ENV` | `"development"|"test"|"production"` | `development` | enum | tooling/build |
+| Env var                                | Type (post-parse) | Default                     | Validation         | Consumed by                                                          |
+| -------------------------------------- | ----------------- | --------------------------- | ------------------ | -------------------------------------------------------------------- | ---------------------------------- | ------------- |
+| `NEXT_PUBLIC_API_URL`                  | `string` (URL)    | `http://localhost:8000/api` | `z.string().url()` | M1 `http-client` (today read ad hoc in `page.tsx`/`services/api.ts`) |
+| `NEXT_PUBLIC_FEATURE_STREAMING`        | `boolean`         | `false`                     | `"true"            | "false"` → bool                                                      | M2 (seam), M9 (flip true)          |
+| `NEXT_PUBLIC_FEATURE_AUTH`             | `boolean`         | `false`                     | `"true"            | "false"` → bool                                                      | M6                                 |
+| `NEXT_PUBLIC_FEATURE_BYOK`             | `boolean`         | `false`                     | `"true"            | "false"` → bool                                                      | M7                                 |
+| `NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD` | `boolean`         | `false`                     | `"true"            | "false"` → bool                                                      | M8                                 |
+| `NEXT_PUBLIC_FEATURE_RICH_COMPONENTS`  | `boolean`         | `false`                     | `"true"            | "false"` → bool                                                      | M10 (backend P6 `component` event) |
+| `NODE_ENV`                             | `"development"    | "test"                      | "production"`      | `development`                                                        | enum                               | tooling/build |
 
 - **`.env.example`** (Task 13) is the canonical list; CI's `build` step pins the same values.
 - **Why string-enum → boolean:** env vars are always strings; an explicit `"true"|"false"` enum rejects typos like `True`/`1`/`yes` at boot instead of silently coercing them.
@@ -685,6 +706,7 @@ All env is validated once in `lib/env.ts` and surfaced via `env` (raw, typed) an
 ## 7. Testing & Verification
 
 **Automated gates (must all pass locally and in CI):**
+
 ```bash
 npm run lint          # ESLint: next + a11y + no-explicit-any, no errors
 npm run format:check  # Prettier: every file already formatted
@@ -697,6 +719,7 @@ npm run build         # next build succeeds with env.ts validation
 **CI:** push the branch → GitHub Actions `CI / quality` job runs and goes **green** (all five steps).
 
 **Manual checks (`npm run dev`):**
+
 - Page `<title>` reads "Agentic RAG" (not "Create Next App"); favicon/metadata correct.
 - **Theme toggle:** open the toggle → Light / Dark / System switch the theme immediately; **reload the page and the chosen theme persists** (next-themes writes `localStorage.theme`) with no flash of the wrong theme.
 - **Toast:** trigger "Clear session" (existing `page.tsx:101` call) → a Sonner toast now **appears** (it previously no-op'd because `<Toaster />` was unmounted), and it is themed to match light/dark.

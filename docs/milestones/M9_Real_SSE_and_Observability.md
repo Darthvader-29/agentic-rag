@@ -1,8 +1,8 @@
 # M9 — Real SSE Activation + Rich Markdown & Observability (Backend Phase P6)
 
-This is the capstone milestone: the dark-launched streaming architecture built in M2 (SSE parser + strategy + `useChat` facade) and animated in M4 (caret + thinking-steps motion) finally **switches on** against the real LangGraph/SSE backend shipped in Phase 6. The only code change required to enable streaming itself is flipping `NEXT_PUBLIC_FEATURE_STREAMING=true` — everything else here is *verification* against the real P6 wire format, the **event plumbing** for the new `component` event (parse → `onComponent` → `addComponent` — **rich rendering is M10**), a `next.config.ts` images allowlist so rich Markdown images render, and *opt-in* observability (Sentry + analytics) that ships dark when env/DSN are unset.
+This is the capstone milestone: the dark-launched streaming architecture built in M2 (SSE parser + strategy + `useChat` facade) and animated in M4 (caret + thinking-steps motion) finally **switches on** against the real LangGraph/SSE backend shipped in Phase 6. The only code change required to enable streaming itself is flipping `NEXT_PUBLIC_FEATURE_STREAMING=true` — everything else here is _verification_ against the real P6 wire format, the **event plumbing** for the new `component` event (parse → `onComponent` → `addComponent` — **rich rendering is M10**), a `next.config.ts` images allowlist so rich Markdown images render, and _opt-in_ observability (Sentry + analytics) that ships dark when env/DSN are unset.
 
-> **Backend design change (09_Phase6 supersedes 07's design).** The route in the `done` event is now a **flat enum** (`RAG | WEB | BOTH | DIRECT`), *not* the old `{destination, relevant}` object; the synthesis node now emits a new **`component`** SSE event (whole fenced-JSON blocks) alongside prose `token`s; and the `citation` component is the real **sources channel**. M2 already designs its SSE core against `09_Phase6` (flat-route union, `SseComponentSchema`, `onComponent`/`addComponent`, `mapRoute` with `BOTH`→`"WEB+RAG"`), so M9 mostly **verifies** against the real backend rather than reconciling a stale shape. See §2.
+> **Backend design change (09_Phase6 supersedes 07's design).** The route in the `done` event is now a **flat enum** (`RAG | WEB | BOTH | DIRECT`), _not_ the old `{destination, relevant}` object; the synthesis node now emits a new **`component`** SSE event (whole fenced-JSON blocks) alongside prose `token`s; and the `citation` component is the real **sources channel**. M2 already designs its SSE core against `09_Phase6` (flat-route union, `SseComponentSchema`, `onComponent`/`addComponent`, `mapRoute` with `BOTH`→`"WEB+RAG"`), so M9 mostly **verifies** against the real backend rather than reconciling a stale shape. See §2.
 
 **Status:** backend-dependent (needs P6 streaming shipped — see `Python-Agentic-RAG-Backend/docs/09_Phase6_Agentic_Architecture.md` (authoritative) + `07_Phase6_LangGraph_and_Streaming.md` (framing/tests)) / depends on (M2 streaming core, M4 motion layer) / capstone of M0–M9.
 
@@ -11,6 +11,7 @@ This is the capstone milestone: the dark-launched streaming architecture built i
 ## 1. Objective & Scope
 
 ### In scope
+
 - **Flip the streaming flag** (`NEXT_PUBLIC_FEATURE_STREAMING=true`) and **verify the dark-launched pipeline end-to-end** against the real P6 SSE backend: `status` events drive live thinking-steps (with M4 stagger), `token` events stream the body with the blinking caret, `done` finalizes route badge + sources.
 - **Verify** `lib/sse/parser.ts` / `lib/sse/types.ts` / `features/chat/api/chat.schemas.ts` against the **exact P6 event shapes** — confirming the schemas M2 already designed against `09_Phase6` hold against the real stream, and tightening only where they differ (status stage strings, the flat-enum `done.route`, the `component` event, the `error` event). Note the `done` event's **`route` is now a flat enum** (`RAG | WEB | BOTH | DIRECT`), not the old `{destination, relevant}` object.
 - **Wire the `component` SSE event end-to-end** — parse → `onComponent` → `addComponent` so component blocks (the new synthesis-emitted fenced-JSON blocks) arrive and are stored on the message. **M9 verifies arrival/storage only; the rich rendering of each component type is M10** (see Task 3a, and cross-ref M10).
@@ -22,11 +23,12 @@ This is the capstone milestone: the dark-launched streaming architecture built i
 - **Env schema additions** for the new optional vars in `lib/env.ts` (Zod, all `.optional()`) + `.env.example`.
 
 ### Out of scope (already delivered — do **not** rebuild)
+
 - **The SSE parser, the streaming strategy, the `useChat` facade switch** — built and unit-tested in **M2** (`lib/sse/parser.ts`, `lib/sse/stream-chat.ts`, `features/chat/hooks/use-streaming-chat.ts`, `use-chat.ts`).
 - **The streaming caret, thinking-steps stagger/expand-collapse, reduced-motion gate** — built in **M4** (`features/chat/components/thinking-steps.tsx`, the caret in `chat-message.tsx`, `hooks/use-reduced-motion.ts`).
-- **The store actions** `appendContent` / `pushStep` / `addComponent` / `finalize` and the unified `Message` shape (`steps`/`sources`/`components`/`status`) — built in **M2/M1** (`features/chat/store/chat.store.ts`). M9 only adds a second *caller* of `addComponent` against the live stream.
-- **The flat-route union + `component` schema + `mapRoute`** — `SseRouteSchema` (flat `RAG | WEB | BOTH | DIRECT`, legacy object tolerated), the loose `SseComponentSchema`, the `onComponent`/`addComponent` wiring, and `mapRoute` (`BOTH`→"WEB+RAG") all landed in **M2** designed against `09_Phase6`. M9 *verifies* them against the real backend; it does not redesign them.
-- **Rendering the `component` blocks** — the strict per-type Zod schemas + renderers (tables/charts/citations/code/callouts/media under `features/chat/components/rich/`) are **M10**, gated by `NEXT_PUBLIC_FEATURE_RICH_COMPONENTS`. M9 only confirms the events *arrive and are stored* (cross-ref **M10**).
+- **The store actions** `appendContent` / `pushStep` / `addComponent` / `finalize` and the unified `Message` shape (`steps`/`sources`/`components`/`status`) — built in **M2/M1** (`features/chat/store/chat.store.ts`). M9 only adds a second _caller_ of `addComponent` against the live stream.
+- **The flat-route union + `component` schema + `mapRoute`** — `SseRouteSchema` (flat `RAG | WEB | BOTH | DIRECT`, legacy object tolerated), the loose `SseComponentSchema`, the `onComponent`/`addComponent` wiring, and `mapRoute` (`BOTH`→"WEB+RAG") all landed in **M2** designed against `09_Phase6`. M9 _verifies_ them against the real backend; it does not redesign them.
+- **Rendering the `component` blocks** — the strict per-type Zod schemas + renderers (tables/charts/citations/code/callouts/media under `features/chat/components/rich/`) are **M10**, gated by `NEXT_PUBLIC_FEATURE_RICH_COMPONENTS`. M9 only confirms the events _arrive and are stored_ (cross-ref **M10**).
 - **Backend SSE itself** — P6 (`09_Phase6...md`, authoritative; `07_Phase6...md` for framing/tests). M9 consumes it; it does not implement it.
 
 This milestone is **mostly activation + verification + observability wiring**, not building streaming from scratch.
@@ -38,6 +40,7 @@ This milestone is **mostly activation + verification + observability wiring**, n
 Source of truth (authoritative): `Python-Agentic-RAG-Backend/docs/09_Phase6_Agentic_Architecture.md` — **§2 the graph**, **§5 the output contract**, **Appendix A `GraphState`/`Route`**, **Appendix C component examples**. This **supersedes the design in `07`**. Framing + tests still come from `07_Phase6_LangGraph_and_Streaming.md` — **Appendix C (SSE framing helper + base event catalog)** and **Appendix F (parity / event-sequence test)**. The two `09` additions over `07` are the **`component` event** and the **flat `route` enum** (both detailed below).
 
 ### Wire format
+
 The backend emits over `Content-Type: text/event-stream` using the hand-rolled framing helper (07_Phase6, Appendix C):
 
 ```python
@@ -49,20 +52,21 @@ So every frame is exactly an `event:` line + a single-line JSON `data:` line, te
 
 ### Event catalog (07_Phase6 Appendix C base catalog + the two 09_Phase6 additions)
 
-| `event:` | `data:` JSON payload | Emitted when |
-|----------|----------------------|--------------|
-| `status` | `{"stage": "routing"}` | supervisor node starts (route + relevance decision) |
-| `status` | `{"stage": "searching web"}` | web node starts |
-| `status` | `{"stage": "retrieving"}` | vector node starts |
-| `status` | `{"stage": "synthesizing"}` | synthesis node starts |
-| `token`  | `{"text": "..."}` | each generated chunk (or one final chunk if the provider can't stream) |
+| `event:`    | `data:` JSON payload                                                      | Emitted when                                                                               |
+| ----------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `status`    | `{"stage": "routing"}`                                                    | supervisor node starts (route + relevance decision)                                        |
+| `status`    | `{"stage": "searching web"}`                                              | web node starts                                                                            |
+| `status`    | `{"stage": "retrieving"}`                                                 | vector node starts                                                                         |
+| `status`    | `{"stage": "synthesizing"}`                                               | synthesis node starts                                                                      |
+| `token`     | `{"text": "..."}`                                                         | each generated chunk (or one final chunk if the provider can't stream)                     |
 | `component` | `{"type": "table"\|"chart"\|"citation"\|"code"\|"callout"\|"media", ...}` | a synthesis fenced-JSON block's fence closed; emitted as one whole block (**09 addition**) |
-| `done`   | `{"answer": "...", "route": "RAG"\|"WEB"\|"BOTH"\|"DIRECT"}` | stream complete; final answer + **flat route enum** (**09 changes the route shape**) |
-| `error`  | `{"detail": "...", "code"?: "..."}` | any node raised, or a guard (e.g. free-tier) tripped; closes the stream cleanly |
+| `done`      | `{"answer": "...", "route": "RAG"\|"WEB"\|"BOTH"\|"DIRECT"}`              | stream complete; final answer + **flat route enum** (**09 changes the route shape**)       |
+| `error`     | `{"detail": "...", "code"?: "..."}`                                       | any node raised, or a guard (e.g. free-tier) tripped; closes the stream cleanly            |
 
-> **The `component` event (09 §5 + Appendix C).** Synthesis streams Markdown prose token-by-token (`token` events) **plus** zero-or-more fenced ```` ```json ```` component blocks. The backend **buffers each block until its closing fence**, validates it, and emits it as **one** `component` event (you can't render half a chart). An invalid/malformed block is **dropped server-side** — the prose still streams and the request **never 500s**. The catalog `type` is one of `table | chart | citation | code | callout | media`. M9 wires this event through to storage (parse → `onComponent` → `addComponent`); **rendering each type is M10**.
+> **The `component` event (09 §5 + Appendix C).** Synthesis streams Markdown prose token-by-token (`token` events) **plus** zero-or-more fenced ` ```json ` component blocks. The backend **buffers each block until its closing fence**, validates it, and emits it as **one** `component` event (you can't render half a chart). An invalid/malformed block is **dropped server-side** — the prose still streams and the request **never 500s**. The catalog `type` is one of `table | chart | citation | code | callout | media`. M9 wires this event through to storage (parse → `onComponent` → `addComponent`); **rendering each type is M10**.
 
 ### Status stage ordering
+
 From Appendix F's event-sequence assertion (`stages == ["routing", "retrieving", "synthesizing"]`) and the endpoint sketch (Appendix C), the observable stage progression is:
 
 ```
@@ -72,22 +76,23 @@ routing → (retrieving | searching web | both)* → synthesizing → [token | c
 - `routing` is always first (supervisor).
 - The middle stage(s) depend on the route decision: `retrieving` (vectorstore), `searching web` (web_search), or **both** on the `BOTH` parallel fan-out (09 §2 / Appendix A — disjoint `web_result`/`vector_result` keys). When both branches run, **both** `status` events arrive (order not guaranteed between them).
 - `synthesizing` precedes the `token`/`component` stream; `component` events are **interleaved with `token`s** (each emitted when its fenced block closes).
-- The stream terminates with **exactly one** `done` *or* one `error`.
+- The stream terminates with **exactly one** `done` _or_ one `error`.
 
 ### Where route + sources are delivered
 
-- **`route` — a FLAT enum.** Route + the final answer arrive in the **`done` event payload** (`{"answer", "route"}`), *not* as standalone events and *not* as a trailing `status`. Per `09` (Appendix A `GraphState.route`), `route` is a **flat string enum** `RAG | WEB | BOTH | DIRECT` — **not** `07`'s `{destination, relevant}` object. The streaming strategy maps it to the frontend's `RouteType` badge label via the shared `mapRoute`: `RAG`→"RAG", `WEB`→"WEB", **`BOTH`→"WEB+RAG"**, `DIRECT`→"DIRECT" (see Task 3). M2 already designs `mapRoute` this way; M9 verifies it against the live `done.route` and keeps a defensive tolerance for the legacy object form.
+- **`route` — a FLAT enum.** Route + the final answer arrive in the **`done` event payload** (`{"answer", "route"}`), _not_ as standalone events and _not_ as a trailing `status`. Per `09` (Appendix A `GraphState.route`), `route` is a **flat string enum** `RAG | WEB | BOTH | DIRECT` — **not** `07`'s `{destination, relevant}` object. The streaming strategy maps it to the frontend's `RouteType` badge label via the shared `mapRoute`: `RAG`→"RAG", `WEB`→"WEB", **`BOTH`→"WEB+RAG"**, `DIRECT`→"DIRECT" (see Task 3). M2 already designs `mapRoute` this way; M9 verifies it against the live `done.route` and keeps a defensive tolerance for the legacy object form.
 - **Sources — from `citation` components (✅ resolved).** Provenance now arrives **in the stream** as `citation`-typed `component` events (`09` §5: the `citation` component is the SOURCES / provenance channel — clickable cards linking to the exact retrieved chunk / web source). This **resolves this milestone's earlier open issue** — previous drafts noted "the P6 SSE catalog doesn't surface sources, so derive a best-effort signal from observed `status` events." That is no longer needed: **feed the sources panel (M4) from the `citation` components** collected during the stream. A precise numeric "sources count" stays **best-effort/optional** (e.g. the number of `citation` items, when present); the UI must still render gracefully when a turn emits no `citation` component at all.
 
 ### Delta vs. the contract M2 designed against
-**M2 already designs against `09_Phase6`**, so there is almost nothing to reconcile — only to *verify* against the real backend. M2 already landed: the flat-route union `SseRouteSchema` (`RAG | WEB | BOTH | DIRECT`, with the legacy `{destination, relevant}` object tolerated in a `z.union`), the loose `SseComponentSchema`, the `onComponent`/`addComponent` wiring, the `component` dispatch `case` in `streamChat`, and `mapRoute` with `BOTH`→"WEB+RAG". `parseSSE` is event-name-agnostic, so `component` already passes through with no parser change. The genuinely-remaining reconciliation is small:
 
-| Concern | M2 (designed against 09) | M9's job (verify against the real backend) |
-|---|---|---|
-| `done.route` shape | `SseRouteSchema` = flat enum, legacy object tolerated | Confirm the live `done.route` is the **flat string**; keep the legacy-object tolerance as a defensive no-op until the backend is confirmed flat-only. |
-| `component` event | Parsed (loose schema), dispatched via `onComponent`, stored via `addComponent` | Confirm real-backend `component` events **arrive and are stored**; malformed/unknown-`type` blocks are dropped, never thrown (rendering verified in **M10**). |
-| Sources | From `citation` components | Confirm `citation` components populate the sources panel against the real stream. |
-| `error` `code` | `SseErrorSchema` carries an optional `code` | Confirm `free_tier_exhausted` surfaces the BYOK CTA (Task 3b); flag the HTTP-status assumption. |
+**M2 already designs against `09_Phase6`**, so there is almost nothing to reconcile — only to _verify_ against the real backend. M2 already landed: the flat-route union `SseRouteSchema` (`RAG | WEB | BOTH | DIRECT`, with the legacy `{destination, relevant}` object tolerated in a `z.union`), the loose `SseComponentSchema`, the `onComponent`/`addComponent` wiring, the `component` dispatch `case` in `streamChat`, and `mapRoute` with `BOTH`→"WEB+RAG". `parseSSE` is event-name-agnostic, so `component` already passes through with no parser change. The genuinely-remaining reconciliation is small:
+
+| Concern            | M2 (designed against 09)                                                       | M9's job (verify against the real backend)                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `done.route` shape | `SseRouteSchema` = flat enum, legacy object tolerated                          | Confirm the live `done.route` is the **flat string**; keep the legacy-object tolerance as a defensive no-op until the backend is confirmed flat-only.         |
+| `component` event  | Parsed (loose schema), dispatched via `onComponent`, stored via `addComponent` | Confirm real-backend `component` events **arrive and are stored**; malformed/unknown-`type` blocks are dropped, never thrown (rendering verified in **M10**). |
+| Sources            | From `citation` components                                                     | Confirm `citation` components populate the sources panel against the real stream.                                                                             |
+| `error` `code`     | `SseErrorSchema` carries an optional `code`                                    | Confirm `free_tier_exhausted` surfaces the BYOK CTA (Task 3b); flag the HTTP-status assumption.                                                               |
 
 No rewrite — M2's multi-line/partial-buffer handling and the schemas all stay; M9 tightens only if the live stream proves a schema too loose.
 
@@ -95,16 +100,16 @@ No rewrite — M2's multi-line/partial-buffer handling and the schemas all stay;
 
 ## 3. Decisions & Rationale
 
-| Decision | Rationale | Alternatives considered |
-|---|---|---|
-| **Flag flip is the only activation** | M2 built the strategy switch (`flags.streaming ? useStreamingChat : useBlockingChat`) and M4 built the motion; both strategies write the same `Message` shape through the same store actions, so flipping `NEXT_PUBLIC_FEATURE_STREAMING=true` lights up streaming with **zero component rewrites**. The architecture pays off here. | Conditionals scattered in components (defeats the facade); a parallel streaming UI (duplicate surface). |
-| **M9 verifies, M10 renders the `component` event** | The `component` plumbing (parse → `onComponent` → `addComponent`) lands here so the data plane is proven against the real backend, but the strict per-type schemas + renderers live in **M10** behind `NEXT_PUBLIC_FEATURE_RICH_COMPONENTS`. Storing whole blocks now means M10 is a render-only add, not a re-integration. | Render rich components in M9 (couples plumbing verification to a much larger UI surface; can't ship streaming until renderers exist). |
-| **`free_tier_exhausted` is surfaced as a BYOK CTA, by `code` not status** | The backend's freemium guard (09 §3) returns a machine-readable `code: "free_tier_exhausted"`; branching on the **code** (not the HTTP status, which is an API-layer detail) lets M9 show M7's "add your own key to continue" upsell distinctly from a generic error. | Treat it as a generic 429/error toast (loses the upsell — the entire point of the freemium ladder). |
-| **Backend-internal cost levers are invisible to the frontend** | Per-node **model tiering** + **prompt caching** (09 §6) change the backend's spend, not the SSE/HTTP contract — so M9 carries **no** frontend change for them. | (n/a — noted only so no one looks for a frontend hook.) |
-| **Observability is opt-in via env/DSN** | Sentry/analytics must **ship dark** when `SENTRY_DSN` / analytics key are unset — no errors, no network calls, no bundle cost beyond a guard. Mirrors the backend's posture (08_Phase7: OTEL/LangSmith gated behind flags, default off in CI; keys as secrets, never logged). | Always-on Sentry (PII risk, noise in dev/CI); build-time-only gating (can't toggle per environment). |
-| **Sentry tunneling + source maps for Next 16** | Next 16 uses the `instrumentation`/`instrumentation-client` model; `withSentryConfig` wraps `next.config.ts`, uploads source maps at build, and a `tunnelRoute` proxies events past ad-blockers. Source-map auth token comes from CI secret `SENTRY_AUTH_TOKEN`, never committed. | Manual `@sentry/browser` (loses Next integration, server/edge spans, tunneling); no source maps (unreadable stack traces). |
-| **Analytics: Vercel Web Analytics (default), PostHog optional** | Vercel `@vercel/analytics` is zero-config, privacy-friendly, and a one-line `<Analytics/>` component gated by an env flag; PostHog is the swap-in when product analytics/funnels are needed. Either is mounted in `providers.tsx` behind an env key so it ships dark. | GA4 (heavier, consent burden); roll-our-own (no value). |
-| **Images allowlist over disabling optimization** | Rich Markdown from the synthesis node contains `![alt](url)` to arbitrary hosts. Use `images.remotePatterns` with an **explicit trusted host allowlist** rather than `unoptimized: true` or a `**` wildcard — keeps optimization + SSRF/abuse surface bounded. | `unoptimized:true` (loses optimization, still no host control); `remotePatterns: [{hostname:'**'}]` (open proxy / SSRF risk — forbidden). |
+| Decision                                                                  | Rationale                                                                                                                                                                                                                                                                                                                            | Alternatives considered                                                                                                                   |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **Flag flip is the only activation**                                      | M2 built the strategy switch (`flags.streaming ? useStreamingChat : useBlockingChat`) and M4 built the motion; both strategies write the same `Message` shape through the same store actions, so flipping `NEXT_PUBLIC_FEATURE_STREAMING=true` lights up streaming with **zero component rewrites**. The architecture pays off here. | Conditionals scattered in components (defeats the facade); a parallel streaming UI (duplicate surface).                                   |
+| **M9 verifies, M10 renders the `component` event**                        | The `component` plumbing (parse → `onComponent` → `addComponent`) lands here so the data plane is proven against the real backend, but the strict per-type schemas + renderers live in **M10** behind `NEXT_PUBLIC_FEATURE_RICH_COMPONENTS`. Storing whole blocks now means M10 is a render-only add, not a re-integration.          | Render rich components in M9 (couples plumbing verification to a much larger UI surface; can't ship streaming until renderers exist).     |
+| **`free_tier_exhausted` is surfaced as a BYOK CTA, by `code` not status** | The backend's freemium guard (09 §3) returns a machine-readable `code: "free_tier_exhausted"`; branching on the **code** (not the HTTP status, which is an API-layer detail) lets M9 show M7's "add your own key to continue" upsell distinctly from a generic error.                                                                | Treat it as a generic 429/error toast (loses the upsell — the entire point of the freemium ladder).                                       |
+| **Backend-internal cost levers are invisible to the frontend**            | Per-node **model tiering** + **prompt caching** (09 §6) change the backend's spend, not the SSE/HTTP contract — so M9 carries **no** frontend change for them.                                                                                                                                                                       | (n/a — noted only so no one looks for a frontend hook.)                                                                                   |
+| **Observability is opt-in via env/DSN**                                   | Sentry/analytics must **ship dark** when `SENTRY_DSN` / analytics key are unset — no errors, no network calls, no bundle cost beyond a guard. Mirrors the backend's posture (08_Phase7: OTEL/LangSmith gated behind flags, default off in CI; keys as secrets, never logged).                                                        | Always-on Sentry (PII risk, noise in dev/CI); build-time-only gating (can't toggle per environment).                                      |
+| **Sentry tunneling + source maps for Next 16**                            | Next 16 uses the `instrumentation`/`instrumentation-client` model; `withSentryConfig` wraps `next.config.ts`, uploads source maps at build, and a `tunnelRoute` proxies events past ad-blockers. Source-map auth token comes from CI secret `SENTRY_AUTH_TOKEN`, never committed.                                                    | Manual `@sentry/browser` (loses Next integration, server/edge spans, tunneling); no source maps (unreadable stack traces).                |
+| **Analytics: Vercel Web Analytics (default), PostHog optional**           | Vercel `@vercel/analytics` is zero-config, privacy-friendly, and a one-line `<Analytics/>` component gated by an env flag; PostHog is the swap-in when product analytics/funnels are needed. Either is mounted in `providers.tsx` behind an env key so it ships dark.                                                                | GA4 (heavier, consent burden); roll-our-own (no value).                                                                                   |
+| **Images allowlist over disabling optimization**                          | Rich Markdown from the synthesis node contains `![alt](url)` to arbitrary hosts. Use `images.remotePatterns` with an **explicit trusted host allowlist** rather than `unoptimized: true` or a `**` wildcard — keeps optimization + SSRF/abuse surface bounded.                                                                       | `unoptimized:true` (loses optimization, still no host control); `remotePatterns: [{hostname:'**'}]` (open proxy / SSRF risk — forbidden). |
 
 ---
 
@@ -168,7 +173,7 @@ No source file outside this list should change. The component **renderers** (`fe
 
 ### Task 1 — Verify the SSE types/schemas against the real stream (tighten only if needed)
 
-**Goal:** confirm the TypeScript event union + Zod schemas **M2 already designed against `09_Phase6`** match the real wire format; tighten only where the live stream differs. M2 landed the flat-route union (`SseFlatRouteSchema`/`SseRouteSchema`), the loose `SseComponentSchema`, and `SseErrorSchema` with an optional `code` — **there is no `{destination, relevant}`-only assumption left to reconcile** (that shape is superseded by `09`; the legacy object is merely *tolerated* in a `z.union`). M9 verifies and keeps the schemas tolerant.
+**Goal:** confirm the TypeScript event union + Zod schemas **M2 already designed against `09_Phase6`** match the real wire format; tighten only where the live stream differs. M2 landed the flat-route union (`SseFlatRouteSchema`/`SseRouteSchema`), the loose `SseComponentSchema`, and `SseErrorSchema` with an optional `code` — **there is no `{destination, relevant}`-only assumption left to reconcile** (that shape is superseded by `09`; the legacy object is merely _tolerated_ in a `z.union`). M9 verifies and keeps the schemas tolerant.
 
 **Files:** `lib/sse/types.ts`, `features/chat/api/chat.schemas.ts` (both already authored in M2 — **confirm**, don't redesign).
 
@@ -180,7 +185,11 @@ No source file outside this list should change. The component **renderers** (`fe
 // + 07_Phase6 Appendix C framing. (Authored in M2; M9 verifies against the live stream.)
 
 /** Backend status stages, verbatim (note the SPACE in "searching web"). */
-export type SseStage = "routing" | "retrieving" | "searching web" | "synthesizing";
+export type SseStage =
+  | "routing"
+  | "retrieving"
+  | "searching web"
+  | "synthesizing";
 
 /** done.route is a FLAT enum (09 Appendix A) — not 07's {destination, relevant}. */
 export type SseFlatRoute = "RAG" | "WEB" | "BOTH" | "DIRECT";
@@ -193,12 +202,20 @@ export type SseRoute = SseFlatRoute | SseLegacyRoute;
 
 /** The component catalog discriminant (loose here; M10 owns the strict per-type shapes). */
 export type SseComponentType =
-  | "table" | "chart" | "citation" | "code" | "callout" | "media";
+  | "table"
+  | "chart"
+  | "citation"
+  | "code"
+  | "callout"
+  | "media";
 
 export type SseEvent =
   | { event: "status"; data: { stage: SseStage } }
   | { event: "token"; data: { text: string } }
-  | { event: "component"; data: { type: SseComponentType; [k: string]: unknown } }
+  | {
+      event: "component";
+      data: { type: SseComponentType; [k: string]: unknown };
+    }
   | { event: "done"; data: { answer: string; route: SseRoute | null } }
   | { event: "error"; data: { detail: string; code?: string } };
 
@@ -222,7 +239,10 @@ export const SseLegacyRouteSchema = z.object({
   destination: z.string(),
   relevant: z.boolean().optional(),
 });
-export const SseRouteSchema = z.union([SseFlatRouteSchema, SseLegacyRouteSchema]);
+export const SseRouteSchema = z.union([
+  SseFlatRouteSchema,
+  SseLegacyRouteSchema,
+]);
 
 export const SseDoneSchema = z.object({
   answer: z.string(),
@@ -299,7 +319,10 @@ import { env } from "@/lib/env";
 
 /** Carries the backend's machine-readable `code` (e.g. "free_tier_exhausted") to the hook. */
 export class StreamError extends Error {
-  constructor(message: string, readonly code?: string) {
+  constructor(
+    message: string,
+    readonly code?: string
+  ) {
     super(message);
     this.name = "StreamError";
   }
@@ -316,7 +339,14 @@ export interface StreamChatHandlers {
 
 export async function streamChat(
   payload: { message: string; session_id: string; web_search_allowed: boolean },
-  { signal, onStatus, onToken, onComponent, onDone, onError }: StreamChatHandlers,
+  {
+    signal,
+    onStatus,
+    onToken,
+    onComponent,
+    onDone,
+    onError,
+  }: StreamChatHandlers
 ): Promise<void> {
   try {
     const res = await fetch(`${env.NEXT_PUBLIC_API_URL}/chat`, {
@@ -517,7 +547,7 @@ function handleStreamFailure(err: Error) {
 }
 ```
 
-> **⚠️ Flag the assumption.** `free_tier_exhausted` may arrive **two ways**: (a) as a **non-stream HTTP failure** (a 4xx with body `{detail, code}`) raised *before* the SSE stream opens — `streamChat` reads the `code` off the JSON body and throws a `StreamError` (Task 2); or (b) as a **terminal `error` SSE event** with `code: "free_tier_exhausted"`. The **exact HTTP status is an API-layer detail** (09 §3) — **branch on the `code`, not the status**, and handle both delivery paths. The BYOK CTA + the free-mode **data-policy disclaimer** are owned by **M7** (09 §4); M9 only triggers them on this code.
+> **⚠️ Flag the assumption.** `free_tier_exhausted` may arrive **two ways**: (a) as a **non-stream HTTP failure** (a 4xx with body `{detail, code}`) raised _before_ the SSE stream opens — `streamChat` reads the `code` off the JSON body and throws a `StreamError` (Task 2); or (b) as a **terminal `error` SSE event** with `code: "free_tier_exhausted"`. The **exact HTTP status is an API-layer detail** (09 §3) — **branch on the `code`, not the status**, and handle both delivery paths. The BYOK CTA + the free-mode **data-policy disclaimer** are owned by **M7** (09 §4); M9 only triggers them on this code.
 
 **Acceptance:** a `free_tier_exhausted` response (whether pre-stream HTTP failure or terminal `error` event) finalizes the message in an error state **and** renders the BYOK "add your own key" CTA; every other error code keeps today's generic error+toast behavior; no branch depends on a specific HTTP status code.
 
@@ -617,7 +647,10 @@ export function buildClientInit(): BrowserOptions {
 ```ts
 // instrumentation-client.ts
 import * as Sentry from "@sentry/nextjs";
-import { buildClientInit, isSentryClientEnabled } from "@/lib/observability/sentry";
+import {
+  buildClientInit,
+  isSentryClientEnabled,
+} from "@/lib/observability/sentry";
 
 if (isSentryClientEnabled) {
   Sentry.init(buildClientInit());
@@ -632,7 +665,10 @@ export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
 ```ts
 // sentry.server.config.ts
 import * as Sentry from "@sentry/nextjs";
-import { buildServerInit, isSentryServerEnabled } from "@/lib/observability/sentry";
+import {
+  buildServerInit,
+  isSentryServerEnabled,
+} from "@/lib/observability/sentry";
 
 if (isSentryServerEnabled) {
   Sentry.init(buildServerInit());
@@ -644,7 +680,10 @@ if (isSentryServerEnabled) {
 ```ts
 // sentry.edge.config.ts
 import * as Sentry from "@sentry/nextjs";
-import { buildServerInit, isSentryServerEnabled } from "@/lib/observability/sentry";
+import {
+  buildServerInit,
+  isSentryServerEnabled,
+} from "@/lib/observability/sentry";
 
 if (isSentryServerEnabled) {
   Sentry.init(buildServerInit());
@@ -682,7 +721,11 @@ export async function onRequestError(...args: unknown[]) {
 import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
 
-export default function GlobalError({ error }: { error: Error & { digest?: string } }) {
+export default function GlobalError({
+  error,
+}: {
+  error: Error & { digest?: string };
+}) {
   useEffect(() => {
     if (process.env.NEXT_PUBLIC_SENTRY_DSN) Sentry.captureException(error);
   }, [error]);
@@ -768,7 +811,7 @@ Rationale + how to extend, document inline in the config as a comment:
 // "**.cdn.example.com" subdomain wildcard tied to a host you control.
 ```
 
-If the Markdown renderer (`react-markdown`) uses plain `<img>` rather than `next/image`, the allowlist still matters for any component that *does* route through `next/image`; either way, keep the host list explicit. For non-`next/image` `<img>`, also ensure the renderer is configured (M3) to only allow `http(s)` URLs and to set `referrerPolicy="no-referrer"`.
+If the Markdown renderer (`react-markdown`) uses plain `<img>` rather than `next/image`, the allowlist still matters for any component that _does_ route through `next/image`; either way, keep the host list explicit. For non-`next/image` `<img>`, also ensure the renderer is configured (M3) to only allow `http(s)` URLs and to set `referrerPolicy="no-referrer"`.
 
 **Acceptance:** a Markdown answer containing `![diagram](https://raw.githubusercontent.com/.../x.png)` renders the image; an image from a non-allowlisted host fails closed (broken image, no crash).
 
@@ -809,7 +852,8 @@ export function AnalyticsProvider() {
   useEffect(() => {
     if (key) {
       posthog.init(key, {
-        api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com",
+        api_host:
+          process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com",
         capture_pageview: true,
         persistence: "memory", // privacy-leaning default; switch to cookies post-consent
       });
@@ -909,35 +953,44 @@ export const env = envSchema.parse({
 Run against the **real P6 streaming backend** (local `:8000/api` or the deployed Render URL once P6 is merged).
 
 ### Streaming happy path
+
 1. `NEXT_PUBLIC_API_URL=http://localhost:8000/api`, `NEXT_PUBLIC_FEATURE_STREAMING=true`, `npm run dev`.
-2. Open the chat, send: *"What does the uploaded document say about X?"*
+2. Open the chat, send: _"What does the uploaded document say about X?"_
 3. **Observe the thinking-steps animate in real order**, driven by real `status` events: `routing` → `retrieving` (and/or `searching web`) → `synthesizing` — each step entering with the M4 stagger.
 4. **Tokens stream into the assistant body** with the **blinking caret** trailing the text (M4), growing chunk by chunk.
 5. On `done`: caret disappears, the **route badge** renders the **flat-enum mapped label** — `RAG`→"RAG", `WEB`→"WEB", `BOTH`→"WEB+RAG", `DIRECT`→"DIRECT". The sources panel renders gracefully (populated from `citation` components when present; hidden/empty otherwise — no fabricated number).
 
 ### Component events arrive + stored (rendering verified in M10)
+
 6. During a turn that emits structured output, confirm `component` events are parsed, flow `onComponent`→`addComponent`, and land on `message.components` (the count matches the events received). **Storage is verified here; the rich rendering of each type is verified in M10** — M9 just confirms the blocks arrive and survive into the message. A malformed block is dropped (no crash, prose still renders).
 
 ### Sources from `citation` components
+
 7. Confirm the sources panel (M4) is populated from `citation`-typed `component` events (clickable cards), and degrades gracefully (empty/hidden) on a turn that emits no `citation` component.
 
 ### Stop mid-stream
+
 8. Send a long query; click **Stop** while tokens stream. The `AbortController` aborts the fetch; the partial message is finalized cleanly; **no error toast, no Sentry event** (AbortError is swallowed per Task 2/5).
 
 ### Reduced-motion
+
 9. Enable OS reduced-motion (`prefers-reduced-motion: reduce`). Resend. **Tokens still stream and steps still appear**, but **no transform/stagger animations fire** — content updates without movement (M4 gate). Caret may render static or omit blink.
 
 ### Error path
+
 10. Force a backend `event: error` (e.g. invalid provider key). The stream closes cleanly: the partial assistant message finalizes in an error state with a toast; the UI does not crash; the next message works.
 
 ### Freemium BYOK CTA
+
 11. Trigger a `free_tier_exhausted` response (exhaust the free allowance, no BYOK key) — whether it arrives as a **pre-stream HTTP failure** or a **terminal `error` event** (branching on `code`, not status). The message finalizes in an error state **and** the BYOK **"add your own key to continue"** CTA renders (M7); the free-mode data-policy disclaimer is shown in free mode (M7).
 
 ### Observability
+
 12. With `NEXT_PUBLIC_SENTRY_DSN`/`SENTRY_DSN` set, visit `/(debug)/sentry-test`, click the button → **a test error appears in the Sentry project** within ~1 min (delivered via the `/monitoring` tunnel).
 13. With the analytics key/flag set, load a page → **a pageview is recorded** in the analytics dashboard.
 
 ### Fallback / regression (BLOCKING)
+
 14. Set `NEXT_PUBLIC_FEATURE_STREAMING=false`, restart. The **blocking path still works** end-to-end (send → full JSON answer renders → synthesized single "done" step + `context_count` sources). This proves the facade switch is intact and M9 didn't regress the blocking strategy.
 15. With **all observability env unset**, confirm zero Sentry/analytics network requests in the Network tab — the app ships fully dark.
 
@@ -950,7 +1003,7 @@ Run against the **real P6 streaming backend** (local `:8000/api` or the deployed
 - **`component` events: buffered-whole, drop-on-invalid.** A `component` arrives only once its fenced block closes (never half a chart), interleaved with `token`s. An invalid/unknown-`type` block is **dropped** in `streamChat` (loose `safeParse`) so the prose still renders and the stream never breaks. M9 only stores them; **rendering robustness is M10's** (`features/chat/components/rich/*`). If components don't appear, confirm storage (`message.components`) before suspecting render.
 - **`free_tier_exhausted` delivery is two-path; branch on `code` not status.** It may be a **pre-stream HTTP failure** (`streamChat` reads `code` off the JSON body → `StreamError`) **or** a **terminal `error` SSE event** with `code`. The exact HTTP status is an API-layer detail (09 §3) — branching on the status alone misses the BYOK CTA. Handle both paths; the CTA + free-mode disclaimer are M7's.
 - **Partial / last token + termination.** Some providers emit the whole answer as one `token` event (07_Phase6: "one final chunk if the provider can't stream"); the UI must render identically whether it's 1 chunk or 500. If zero tokens stream, `onDone.answer` is the fallback content (Task 3) — never show an empty assistant bubble.
-- **Error event mid-stream UX.** An `event: error` after some tokens already streamed must finalize the *partial* message in an error state (not discard it) and surface a toast (or the BYOK CTA for `free_tier_exhausted`) — don't throw past the hook boundary or you lose the partial answer and crash the list.
+- **Error event mid-stream UX.** An `event: error` after some tokens already streamed must finalize the _partial_ message in an error state (not discard it) and surface a toast (or the BYOK CTA for `free_tier_exhausted`) — don't throw past the hook boundary or you lose the partial answer and crash the list.
 - **Proxy / CDN buffering breaks SSE.** Render/NGINX/Cloudflare may buffer `text/event-stream`, delaying or batching events so steps appear all-at-once or tokens arrive in one lump. The backend should set `X-Accel-Buffering: no` and disable proxy buffering; the frontend should not assume timing. If streaming looks "blocking" against the deployed backend, check buffering before suspecting the parser.
 - **Next 16 + Sentry instrumentation API.** Next 16 uses `instrumentation.ts` (`register`/`onRequestError`) and `instrumentation-client.ts` (with `onRouterTransitionStart`) — the older `sentry.client.config.ts` auto-load is gone. Use the files exactly as in Task 5 or client-side navigation traces and RSC errors won't be captured.
 - **Source-map upload secrets in CI.** `SENTRY_AUTH_TOKEN` must come from a CI secret, never committed; `deleteSourcemapsAfterUpload: true` keeps maps out of the public bundle. The build must not fail when the token is absent (dev) — `disableLogger`/`silent` handle that.
@@ -968,7 +1021,7 @@ Run against the **real P6 streaming backend** (local `:8000/api` or the deployed
 - [ ] **`done.route` flat enum maps correctly** via `mapRoute`: `RAG`→"RAG", `WEB`→"WEB", `BOTH`→"WEB+RAG", `DIRECT`→"DIRECT" (legacy object form still tolerated).
 - [ ] **`component` events arrive and are stored**: real-backend `component` events flow `onComponent`→`addComponent` onto `message.components` (count matches); a malformed block is dropped, never thrown. (**Rendering is verified in M10**.)
 - [ ] **Sources come from `citation` components**: the sources panel is populated from `citation` blocks and degrades gracefully (empty/hidden) when a turn emits none — no fabricated count.
-- [ ] **`free_tier_exhausted` shows the BYOK CTA**: a free-tier-exhausted response (pre-stream HTTP failure *or* terminal `error` event, branched on `code`) finalizes in an error state **and** renders M7's "add your own key to continue" CTA; other errors map to generic handling.
+- [ ] **`free_tier_exhausted` shows the BYOK CTA**: a free-tier-exhausted response (pre-stream HTTP failure _or_ terminal `error` event, branched on `code`) finalizes in an error state **and** renders M7's "add your own key to continue" CTA; other errors map to generic handling.
 - [ ] `NEXT_PUBLIC_FEATURE_STREAMING=true` in `.env`/`.env.example`; `flags.streaming` routes `useChat` → `useStreamingChat`.
 - [ ] **Stop mid-stream** aborts cleanly (partial message finalized, no error toast, no Sentry event).
 - [ ] **Reduced-motion clean**: tokens still stream but no transform/stagger animations fire.

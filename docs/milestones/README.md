@@ -12,19 +12,19 @@ The recommended first delivery is **M0 → M5** — all shippable against today'
 **M6 → M10** are backend-dependent and land as the paired backend phases ship; each is dark-launched
 behind a Zod-validated `NEXT_PUBLIC_FEATURE_*` flag so the flag-off path always equals today's behavior.
 
-| Milestone | Title | Backend dep | Flag | UX change |
-|-----------|-------|-------------|------|-----------|
-| [M0](./M0_Tooling_and_Guardrails.md) | Tooling & Guardrails | — | — | none |
-| [M1](./M1_Architecture_Refactor.md) | Architecture Refactor (parity) | — | — | none |
-| [M2](./M2_Streaming_Ready_Core.md) | Streaming-Ready Core (dark) | — | `NEXT_PUBLIC_FEATURE_STREAMING` (off) | none |
-| [M3](./M3_Chat_UX_Polish.md) | Chat UX Polish | — | — | yes |
-| [M4](./M4_Motion_Layer.md) | Motion Layer | — | — | yes |
-| [M5](./M5_Tests_E2E_Docker_CI.md) | Tests + E2E + Docker/CI | — | — | none |
-| [M6](./M6_Auth_Activation.md) | Auth Activation | P3 | `NEXT_PUBLIC_FEATURE_AUTH` | gated |
-| [M7](./M7_Multi_Provider_BYOK.md) | Multi-Provider BYOK | P4 | `NEXT_PUBLIC_FEATURE_BYOK` | gated |
-| [M8](./M8_Presigned_Uploads_and_Status.md) | Presigned Uploads + Status | P5 | `NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD` | gated |
-| [M9](./M9_Real_SSE_and_Observability.md) | Real SSE + Observability | P6 | flips `NEXT_PUBLIC_FEATURE_STREAMING=true` | yes |
-| [M10](./M10_Rich_Component_Rendering.md) | Rich Component Rendering | P6 | `NEXT_PUBLIC_FEATURE_RICH_COMPONENTS` | yes |
+| Milestone                                  | Title                          | Backend dep | Flag                                       | UX change |
+| ------------------------------------------ | ------------------------------ | ----------- | ------------------------------------------ | --------- |
+| [M0](./M0_Tooling_and_Guardrails.md)       | Tooling & Guardrails           | —           | —                                          | none      |
+| [M1](./M1_Architecture_Refactor.md)        | Architecture Refactor (parity) | —           | —                                          | none      |
+| [M2](./M2_Streaming_Ready_Core.md)         | Streaming-Ready Core (dark)    | —           | `NEXT_PUBLIC_FEATURE_STREAMING` (off)      | none      |
+| [M3](./M3_Chat_UX_Polish.md)               | Chat UX Polish                 | —           | —                                          | yes       |
+| [M4](./M4_Motion_Layer.md)                 | Motion Layer                   | —           | —                                          | yes       |
+| [M5](./M5_Tests_E2E_Docker_CI.md)          | Tests + E2E + Docker/CI        | —           | —                                          | none      |
+| [M6](./M6_Auth_Activation.md)              | Auth Activation                | P3          | `NEXT_PUBLIC_FEATURE_AUTH`                 | gated     |
+| [M7](./M7_Multi_Provider_BYOK.md)          | Multi-Provider BYOK            | P4          | `NEXT_PUBLIC_FEATURE_BYOK`                 | gated     |
+| [M8](./M8_Presigned_Uploads_and_Status.md) | Presigned Uploads + Status     | P5          | `NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD`     | gated     |
+| [M9](./M9_Real_SSE_and_Observability.md)   | Real SSE + Observability       | P6          | flips `NEXT_PUBLIC_FEATURE_STREAMING=true` | yes       |
+| [M10](./M10_Rich_Component_Rendering.md)   | Rich Component Rendering       | P6          | `NEXT_PUBLIC_FEATURE_RICH_COMPONENTS`      | yes       |
 
 ## Backend contract cross-references
 

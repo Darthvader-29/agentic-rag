@@ -3,7 +3,8 @@ import { ChatRequest, ChatResponse } from "@/types";
 import { v4 as uuidv4 } from "uuid";
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "https://python-agentic-rag-backend.onrender.com/api";
+  process.env.NEXT_PUBLIC_API_URL ||
+  "https://python-agentic-rag-backend.onrender.com/api";
 
 export const api = {
   getSessionId: (): string => {
@@ -77,7 +78,7 @@ export const api = {
     return data;
   },
 
-  uploadFile: async (file: File): Promise<any> => {
+  uploadFile: async (file: File): Promise<unknown> => {
     const sessionId = api.getSessionId();
     const formData = new FormData();
     formData.append("file", file);

@@ -34,7 +34,7 @@ no rewrites. Full stack freedom approved.
   structured so SSE/auth/BYOK/presigned-upload just "switch on" later.
 - **Zod-validated env feature flags** gate every forward-compatible surface so unfinished
   backend phases ship dark (no broken UI).
-- **One `useChat` facade** delegates to a blocking *or* streaming strategy behind
+- **One `useChat` facade** delegates to a blocking _or_ streaming strategy behind
   `NEXT_PUBLIC_FEATURE_STREAMING`; both write the same `Message` shape, so UI never changes.
 - **Minimal aesthetic, tasteful motion**; every animation honors `prefers-reduced-motion`.
 
@@ -71,8 +71,8 @@ hooks/          use-reduced-motion, use-copy-to-clipboard
 test/ e2e/      setup.ts, msw/handlers.ts, chat.spec.ts
 ```
 
-**State split.** *TanStack Query* owns discrete async resources (blocking `/chat` mutation,
-upload, cleanup; later: sessions, document status polling, provider keys, auth). *Zustand*
+**State split.** _TanStack Query_ owns discrete async resources (blocking `/chat` mutation,
+upload, cleanup; later: sessions, document status polling, provider keys, auth). _Zustand_
 owns live chat (`messages[]`, in-flight stream buffer, per-message `steps[]`/`sources`/`status`,
 `draft`, `webSearchAllowed`), persisted `auth.store` tokens, `session.store`, UI prefs.
 High-frequency token/step accumulation stays in Zustand, not the Query cache. The blocking
@@ -101,7 +101,7 @@ fetches with `Accept: text/event-stream`, iterates events. `useStreamingChat` ma
 powers the Stop button.
 
 The P6 stream carries three payload events plus terminator: `status` (stage), `token` (prose,
-streamed token-by-token), and **`component`** — a *whole-block* event the backend emits only
+streamed token-by-token), and **`component`** — a _whole-block_ event the backend emits only
 once a structured block's fence closes (you can't render half a chart), carrying one item from
 the fixed catalog (`table`/`chart`/`citation`/`code`/`callout`/`media`). `onComponent(block)` →
 `addComponent` appends it to the message's opaque `components[]`; the **`citation`** type is the
@@ -115,31 +115,31 @@ ends the stream (tolerating a `[DONE]` sentinel) and its `done.route` is a **fla
   CI skeleton, `lib/env.ts` Zod env + `lib/flags.ts` (the `NEXT_PUBLIC_FEATURE_*` set —
   `STREAMING`, `AUTH`, `BYOK`, `PRESIGNED_UPLOAD`, `RICH_COMPONENTS` — all default **false**),
   fix `app/layout.tsx` (metadata, mount `Providers`/`ThemeProvider`/`Toaster`,
-  `suppressHydrationWarning`), `theme-provider` + `theme-toggle`. *Verify:* `lint`/`format`/
+  `suppressHydrationWarning`), `theme-provider` + `theme-toggle`. _Verify:_ `lint`/`format`/
   `typecheck` pass, CI green, theme toggle + toasts work.
 - **M1 — Architecture refactor (parity)**: add TanStack Query + Zustand, `http-client`, Zod
   schemas, feature folders; gut `page.tsx` to a thin shell; port `services/api.ts`; delete dead
-  `components/chat/chat-interface.tsx`. Behavior identical (blocking). *Verify:* send/upload/
+  `components/chat/chat-interface.tsx`. Behavior identical (blocking). _Verify:_ send/upload/
   cleanup/reset still work; unit tests for store + `useBlockingChat`.
 - **M2 — Streaming-ready core (dark)**: `useChat` facade, `useStreamingChat`, `lib/sse/*`,
-  unified `Message` shape (`steps`/`sources`/`status`). Streaming behind flag = false. *Verify:*
+  unified `Message` shape (`steps`/`sources`/`status`). Streaming behind flag = false. _Verify:_
   unit tests for `parseSSE` (multi-line/partial/`[DONE]`) + strategy switch; mock SSE server.
 - **M3 — Chat UX polish** (today's backend): `thinking-steps`, `sources-panel`, `message-actions`
   (copy/retry), `code-block` (copy + lazy `react-syntax-highlighter` via `next/dynamic`),
   `route-badge`, autosize input, migrate hardcoded `slate/blue/white` classes → semantic tokens
-  (`bg-card`/`text-muted-foreground`/`border-border`/`bg-primary`), skeleton states. *Verify:*
+  (`bg-card`/`text-muted-foreground`/`border-border`/`bg-primary`), skeleton states. _Verify:_
   component tests; manual dark/light; a11y pass.
 - **M4 — Motion layer**: framer-motion for message enter/exit (`AnimatePresence`+`layout`),
   streaming caret, thinking-steps expand/collapse + stagger, sidebar spring, badge transitions,
   skeleton→content crossfade; `use-reduced-motion` gate; animate only transform/opacity, memoize
-  messages. *Verify:* reduced-motion = no transforms; 60fps during streaming.
+  messages. _Verify:_ reduced-motion = no transforms; 60fps during streaming.
 - **M5 — Tests + E2E + Docker/CI hardening**: Vitest/RTL coverage (hooks/stores/components) + MSW,
   Playwright core flow; `next.config.ts` `output:'standalone'` + slim multi-stage Dockerfile
   (copy `.next/standalone`+`static`+`public`, run `node server.js`); CI runs lint+typecheck+test+
-  build+Playwright. *Verify:* CI green; image size drops sharply; E2E passes against MSW.
+  build+Playwright. _Verify:_ CI green; image size drops sharply; E2E passes against MSW.
 - **M6 — Auth activation [P3]**: `auth/*`, `(auth)/login|register`, persisted token store,
   `http-client` 401→refresh→retry + 403, server-owned `session-list` + resume; flag
-  `NEXT_PUBLIC_FEATURE_AUTH`. *Verify:* flag-off = today's anonymous flow; flag-on (mock) works.
+  `NEXT_PUBLIC_FEATURE_AUTH`. _Verify:_ flag-off = today's anonymous flow; flag-on (mock) works.
 - **M7 — Multi-provider BYOK [P4]**: `settings/page.tsx`, `api-keys-form` (CRUD, GET hides
   secrets), per-conversation `model-picker` (gemini/openai/anthropic); flag `..._BYOK`.
 - **M8 — Presigned uploads + status [P5]**: presigned PUT to S3 + `/upload/status/{task_id}`
@@ -149,13 +149,13 @@ ends the stream (tolerating a `[DONE]` sentinel) and its `done.route` is a **fla
   live thinking-steps + token streaming; wire the **`component`** SSE event end-to-end (parsed +
   stored as `components[]`, `citation` = live sources) and handle the **`free_tier_exhausted`**
   error code (BYOK upsell, not a raw error); `next.config` images allowlist for rich markdown;
-  enable Sentry + analytics via env/DSN. *Verify:* end-to-end streaming vs real backend; steps
+  enable Sentry + analytics via env/DSN. _Verify:_ end-to-end streaming vs real backend; steps
   animate from real `status` events; a `component` event arrives live; freemium error surfaces the
   CTA; reduced-motion clean; Sentry receives a test error.
 - **M10 — Rich Component Rendering [P6]**: render the P6 `component` catalog from the message's
   `components[]` via `features/chat/components/rich/*` (a dispatcher + per-type renderers for
   `table`/`chart`/`citation`/`code`/`callout`/`media`); flag `NEXT_PUBLIC_FEATURE_RICH_COMPONENTS`
-  (default off → blocks stay buffered/hidden). *Verify:* each renderer round-trips its sample
+  (default off → blocks stay buffered/hidden). _Verify:_ each renderer round-trips its sample
   block; unknown/invalid blocks degrade gracefully (prose still renders); a11y + reduced-motion
   pass; flag-off path equals today's prose-only output.
 

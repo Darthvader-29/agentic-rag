@@ -17,6 +17,7 @@ static components built here).
 ## 1. Objective & Scope
 
 ### In scope
+
 - **New / extracted components** under `features/chat/components/`: `code-block`, `route-badge`,
   `thinking-steps`, `sources-panel`, `message-actions`, plus refactored `chat-message`,
   `chat-input`, `empty-state`, `message-loading`.
@@ -36,9 +37,10 @@ static components built here).
 - **shadcn additions**: `dropdown-menu`, `tooltip`, `collapsible`, `skeleton`, `command`.
 
 ### Out of scope (deferred)
+
 - **Animations beyond simple CSS `transition-*`** — `AnimatePresence`, `layout` animation,
   streaming caret, staggered step reveal, spring sidebar are **M4**.
-- **Real token streaming and live `status` events** — the panels consume the *unified shape* but
+- **Real token streaming and live `status` events** — the panels consume the _unified shape_ but
   the data is still synthesized by the blocking path; live wiring is **M9** (flag flip).
 - **`use-reduced-motion`** — referenced by M4; only CSS `motion-reduce:` variants are used here.
 - Auth, BYOK, presigned uploads, session list — later milestones.
@@ -47,19 +49,20 @@ static components built here).
 
 ## 2. Decisions & Rationale
 
-| # | Decision | Rationale |
-|---|----------|-----------|
-| D1 | **Semantic tokens over hardcoded `slate/blue/white`** | `chat-message.tsx:26` hardcodes `bg-white border-slate-100` with a separate `dark:` override on every element — brittle and frequently wrong in dark mode. `globals.css:46-113` already defines a full token set (`--card`, `--muted`, `--primary`, `--border`, `--muted-foreground`) for both `:root` and `.dark`. Using `bg-card`/`text-muted-foreground`/`border-border` makes dark mode correct with **zero** `dark:` overrides. |
-| D2 | **Lazy `react-syntax-highlighter` via `next/dynamic({ ssr:false })`** | `chat-message.tsx:12-13` imports `Prism` + the `oneDark` style **eagerly** at module top. `react-syntax-highlighter` + Prism + theme is ~½ MB of JS pulled into the chat route's first-load bundle even for messages with no code. Wrapping it in `next/dynamic` with `ssr:false` defers the chunk until a code block actually mounts; a `<pre>` fallback renders instantly and during SSR. |
-| D3 | **`React.memo` the message + memoize the ReactMarkdown `components` map** | Today every message re-parses markdown on each parent render. When M9 streams tokens, the assistant message re-renders on every token; an unmemoized `components` object forces ReactMarkdown to rebuild its renderer tree each time. Memoizing the map (module-scope/`useMemo`) and wrapping the message in `React.memo` keyed on stable props keeps re-render cost proportional to the *changed* message only. The `content` prop stays a stable string reference per render (see Risk R2). |
-| D4 | **`react-textarea-autosize`** | The current input (`chat-input.tsx:103-104`) fakes autosize with `min-h/max-h` + an inline `style={{height:"40px"}}` that never grows. `react-textarea-autosize` grows row-by-row between `minRows`/`maxRows`, is SSR-safe, and is already the stack-approved input lib in the plan. |
-| D5 | **Collapsible `thinking-steps` and `sources-panel`** | Today there is a single static sources footer (`chat-message.tsx:111-117`) and no steps panel. shadcn `collapsible` (Radix) gives us accessible `aria-expanded` disclosure now; it renders one synthesized "done" step / N sources today and scales to a live, growing list of streamed steps in M9 without structural change. |
-| D6 | **Panels render synthesized data today** | The M2 `useBlockingChat` path synthesizes a single `{ stage:"done", status:"done" }` step and maps `context_count → sourcesCount`/`sources`. Building the panels now (against the real shape) means M9 is a **flag flip + data source swap**, not a UI rewrite — the plan's core "architect once" principle. |
-| D7 | **`message-actions` retry calls `useChat().retry`** | The facade already exposes `retry`; actions stay presentational and call into the store action, so the same component works for blocking (re-run mutation) and streaming (re-open SSE) without change. |
-| D8 | **`useCopyToClipboard` shared hook** | Copy is needed by both `code-block` (copy snippet) and `message-actions` (copy answer). One hook owns the `navigator.clipboard.writeText` call, the 2s "copied" reset timer, and the toast, avoiding duplicated state machines. |
+| #   | Decision                                                                  | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **Semantic tokens over hardcoded `slate/blue/white`**                     | `chat-message.tsx:26` hardcodes `bg-white border-slate-100` with a separate `dark:` override on every element — brittle and frequently wrong in dark mode. `globals.css:46-113` already defines a full token set (`--card`, `--muted`, `--primary`, `--border`, `--muted-foreground`) for both `:root` and `.dark`. Using `bg-card`/`text-muted-foreground`/`border-border` makes dark mode correct with **zero** `dark:` overrides.                                                          |
+| D2  | **Lazy `react-syntax-highlighter` via `next/dynamic({ ssr:false })`**     | `chat-message.tsx:12-13` imports `Prism` + the `oneDark` style **eagerly** at module top. `react-syntax-highlighter` + Prism + theme is ~½ MB of JS pulled into the chat route's first-load bundle even for messages with no code. Wrapping it in `next/dynamic` with `ssr:false` defers the chunk until a code block actually mounts; a `<pre>` fallback renders instantly and during SSR.                                                                                                   |
+| D3  | **`React.memo` the message + memoize the ReactMarkdown `components` map** | Today every message re-parses markdown on each parent render. When M9 streams tokens, the assistant message re-renders on every token; an unmemoized `components` object forces ReactMarkdown to rebuild its renderer tree each time. Memoizing the map (module-scope/`useMemo`) and wrapping the message in `React.memo` keyed on stable props keeps re-render cost proportional to the _changed_ message only. The `content` prop stays a stable string reference per render (see Risk R2). |
+| D4  | **`react-textarea-autosize`**                                             | The current input (`chat-input.tsx:103-104`) fakes autosize with `min-h/max-h` + an inline `style={{height:"40px"}}` that never grows. `react-textarea-autosize` grows row-by-row between `minRows`/`maxRows`, is SSR-safe, and is already the stack-approved input lib in the plan.                                                                                                                                                                                                          |
+| D5  | **Collapsible `thinking-steps` and `sources-panel`**                      | Today there is a single static sources footer (`chat-message.tsx:111-117`) and no steps panel. shadcn `collapsible` (Radix) gives us accessible `aria-expanded` disclosure now; it renders one synthesized "done" step / N sources today and scales to a live, growing list of streamed steps in M9 without structural change.                                                                                                                                                                |
+| D6  | **Panels render synthesized data today**                                  | The M2 `useBlockingChat` path synthesizes a single `{ stage:"done", status:"done" }` step and maps `context_count → sourcesCount`/`sources`. Building the panels now (against the real shape) means M9 is a **flag flip + data source swap**, not a UI rewrite — the plan's core "architect once" principle.                                                                                                                                                                                  |
+| D7  | **`message-actions` retry calls `useChat().retry`**                       | The facade already exposes `retry`; actions stay presentational and call into the store action, so the same component works for blocking (re-run mutation) and streaming (re-open SSE) without change.                                                                                                                                                                                                                                                                                        |
+| D8  | **`useCopyToClipboard` shared hook**                                      | Copy is needed by both `code-block` (copy snippet) and `message-actions` (copy answer). One hook owns the `navigator.clipboard.writeText` call, the 2s "copied" reset timer, and the toast, avoiding duplicated state machines.                                                                                                                                                                                                                                                               |
 
 > **Forward-compat seams (backend Phase 6 — left here, built later).** M3 builds the static chat
 > surface against the unified `Message` shape so the agentic upgrade is additive, not a rewrite:
+>
 > - **`chat-message.tsx` will render `message.components`** via M10's `<ComponentBlock>` dispatcher
 >   (after the markdown body) — the rich-output catalog (table/chart/citation/code/callout/media) from
 >   the backend `component` SSE event (`09_Phase6` §5). M3 only leaves the seam; **M10** builds the
@@ -116,61 +119,67 @@ Replace every class on the left with the token on the right and **delete the pai
 override** — the token resolves per-theme automatically.
 
 ### `chat-message.tsx`
-| Hardcoded (current) | Semantic replacement |
-|---|---|
-| `bg-white border border-slate-100 shadow-sm dark:bg-slate-900/50 dark:border-slate-800` (assistant bubble) | `bg-card border border-border shadow-sm` |
-| `bg-primary/5` (user bubble) | *keep* (already semantic) |
-| avatar `bg-blue-600 text-white` (user) | `bg-primary text-primary-foreground` |
-| avatar `bg-slate-700 text-white` (assistant) | `bg-muted text-muted-foreground` |
-| name `text-slate-800 dark:text-slate-200` | `text-foreground` |
-| body user `text-slate-700 dark:text-slate-300` | `text-foreground/90` |
-| body assistant `text-slate-600 dark:text-slate-400` | `text-muted-foreground` |
-| inline code `bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200` | `bg-muted text-foreground` |
-| link `text-blue-600` | `text-primary` |
-| sources border `border-slate-100 dark:border-slate-800` | `border-border` |
-| code-block chrome `bg-[#282c34]` / `bg-[#21252b]` / `border-slate-700` / `text-slate-400` | `bg-muted` / `bg-muted/60` / `border-border` / `text-muted-foreground` (highlighter keeps `oneDark` palette inside) |
+
+| Hardcoded (current)                                                                                        | Semantic replacement                                                                                                |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `bg-white border border-slate-100 shadow-sm dark:bg-slate-900/50 dark:border-slate-800` (assistant bubble) | `bg-card border border-border shadow-sm`                                                                            |
+| `bg-primary/5` (user bubble)                                                                               | _keep_ (already semantic)                                                                                           |
+| avatar `bg-blue-600 text-white` (user)                                                                     | `bg-primary text-primary-foreground`                                                                                |
+| avatar `bg-slate-700 text-white` (assistant)                                                               | `bg-muted text-muted-foreground`                                                                                    |
+| name `text-slate-800 dark:text-slate-200`                                                                  | `text-foreground`                                                                                                   |
+| body user `text-slate-700 dark:text-slate-300`                                                             | `text-foreground/90`                                                                                                |
+| body assistant `text-slate-600 dark:text-slate-400`                                                        | `text-muted-foreground`                                                                                             |
+| inline code `bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200`                            | `bg-muted text-foreground`                                                                                          |
+| link `text-blue-600`                                                                                       | `text-primary`                                                                                                      |
+| sources border `border-slate-100 dark:border-slate-800`                                                    | `border-border`                                                                                                     |
+| code-block chrome `bg-[#282c34]` / `bg-[#21252b]` / `border-slate-700` / `text-slate-400`                  | `bg-muted` / `bg-muted/60` / `border-border` / `text-muted-foreground` (highlighter keeps `oneDark` palette inside) |
 
 ### `chat-input.tsx`
-| Hardcoded | Semantic replacement |
-|---|---|
-| `border-t dark:border-slate-800` | `border-t border-border` |
-| pill `dark:border-slate-800` | `border-border` |
+
+| Hardcoded                                                                          | Semantic replacement                             |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `border-t dark:border-slate-800`                                                   | `border-t border-border`                         |
+| pill `dark:border-slate-800`                                                       | `border-border`                                  |
 | web-search active `text-blue-500 bg-blue-50 hover:bg-blue-100 hover:text-blue-600` | `text-primary bg-primary/10 hover:bg-primary/15` |
-| web-search inactive `text-muted-foreground hover:text-foreground` | *keep* |
+| web-search inactive `text-muted-foreground hover:text-foreground`                  | _keep_                                           |
 
 ### `sidebar.tsx`
-| Hardcoded | Semantic replacement |
-|---|---|
-| `bg-slate-50/50 dark:bg-slate-900/50 dark:border-slate-800` | `bg-sidebar border-r border-sidebar-border text-sidebar-foreground` |
-| logo `bg-blue-600 text-white` | `bg-primary text-primary-foreground` |
-| toggle icon `text-slate-500` | `text-muted-foreground` |
-| card `bg-white` | `bg-card` |
-| section label `text-slate-500` | `text-muted-foreground` |
-| reset `text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30` | `text-destructive hover:text-destructive hover:bg-destructive/10` |
+
+| Hardcoded                                                                        | Semantic replacement                                                |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `bg-slate-50/50 dark:bg-slate-900/50 dark:border-slate-800`                      | `bg-sidebar border-r border-sidebar-border text-sidebar-foreground` |
+| logo `bg-blue-600 text-white`                                                    | `bg-primary text-primary-foreground`                                |
+| toggle icon `text-slate-500`                                                     | `text-muted-foreground`                                             |
+| card `bg-white`                                                                  | `bg-card`                                                           |
+| section label `text-slate-500`                                                   | `text-muted-foreground`                                             |
+| reset `text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30` | `text-destructive hover:text-destructive hover:bg-destructive/10`   |
 
 ### `empty-state.tsx`
-| Hardcoded | Semantic replacement |
-|---|---|
-| `bg-slate-100 dark:bg-slate-800` (icon halo) | `bg-muted` |
-| `text-blue-500 fill-blue-500` | `text-primary fill-primary` |
-| card `hover:bg-slate-50 dark:hover:bg-slate-800` | `hover:bg-muted` |
-| `text-blue-600` (Analyze) | `text-primary` |
-| `text-green-600` (Web Search) | `text-chart-2` *(or `text-primary`)* |
+
+| Hardcoded                                        | Semantic replacement                 |
+| ------------------------------------------------ | ------------------------------------ |
+| `bg-slate-100 dark:bg-slate-800` (icon halo)     | `bg-muted`                           |
+| `text-blue-500 fill-blue-500`                    | `text-primary fill-primary`          |
+| card `hover:bg-slate-50 dark:hover:bg-slate-800` | `hover:bg-muted`                     |
+| `text-blue-600` (Analyze)                        | `text-primary`                       |
+| `text-green-600` (Web Search)                    | `text-chart-2` _(or `text-primary`)_ |
 
 ### `message-loading.tsx`
-| Hardcoded | Semantic replacement |
-|---|---|
-| `bg-white border-slate-100 dark:bg-slate-900/50 dark:border-slate-800` | `bg-card border border-border` |
-| avatar `bg-slate-700 text-white` | `bg-muted text-muted-foreground` |
-| fake lines `bg-slate-200/100 dark:bg-slate-800` | shadcn `<Skeleton />` (uses `bg-accent`/`bg-muted`) |
+
+| Hardcoded                                                              | Semantic replacement                                |
+| ---------------------------------------------------------------------- | --------------------------------------------------- |
+| `bg-white border-slate-100 dark:bg-slate-900/50 dark:border-slate-800` | `bg-card border border-border`                      |
+| avatar `bg-slate-700 text-white`                                       | `bg-muted text-muted-foreground`                    |
+| fake lines `bg-slate-200/100 dark:bg-slate-800`                        | shadcn `<Skeleton />` (uses `bg-accent`/`bg-muted`) |
 
 ### `app/page.tsx` (residual only)
-| Hardcoded | Semantic replacement |
-|---|---|
-| `bg-slate-50 dark:bg-slate-950` | `bg-background` |
-| `border-slate-100 dark:border-slate-800` | `border-border` |
-| `hover:bg-slate-100 dark:hover:bg-slate-800` | `hover:bg-accent` |
-| `text-slate-500` (menu icon) | `text-muted-foreground` |
+
+| Hardcoded                                    | Semantic replacement    |
+| -------------------------------------------- | ----------------------- |
+| `bg-slate-50 dark:bg-slate-950`              | `bg-background`         |
+| `border-slate-100 dark:border-slate-800`     | `border-border`         |
+| `hover:bg-slate-100 dark:hover:bg-slate-800` | `hover:bg-accent`       |
+| `text-slate-500` (menu icon)                 | `text-muted-foreground` |
 
 > **Rule of thumb:** surfaces → `bg-card` (raised) / `bg-background` (page) / `bg-muted` (inset);
 > text → `text-foreground` (primary) / `text-muted-foreground` (secondary); lines → `border-border`;
@@ -210,12 +219,14 @@ components/ui/              # shadcn add (generated)
 > palette; it generates the file but is not yet mounted.
 
 **Install commands** (document in PR body):
+
 ```bash
 npx shadcn@latest add dropdown-menu tooltip collapsible skeleton command
 npm i react-textarea-autosize
 # react-markdown, remark-gfm, react-syntax-highlighter already present
 # If prose styling is desired (Risk R4): npm i -D @tailwindcss/typography
 ```
+
 shadcn `tooltip` requires a `<TooltipProvider>` — mount it once in `app/providers.tsx` (created in
 M0/M1) wrapping the tree, alongside the existing `ThemeProvider`/`Toaster`.
 
@@ -227,7 +238,12 @@ M0/M1) wrapping the tree, alongside the existing `ThemeProvider`/`Toaster`.
 
 ```ts
 // types/index.ts (extended in M2 — shown for reference, NOT edited in M3)
-export type StepStage = "routing" | "retrieving" | "searching" | "synthesizing" | "done";
+export type StepStage =
+  | "routing"
+  | "retrieving"
+  | "searching"
+  | "synthesizing"
+  | "done";
 export type StepStatus = "pending" | "active" | "done" | "error";
 
 export interface ThinkingStep {
@@ -250,8 +266,8 @@ export interface Message {
   content: string;
   route?: RouteType;
   sourcesCount?: number;
-  steps?: ThinkingStep[];   // M2: blocking path synthesizes [{stage:"done",status:"done"}]
-  sources?: Source[];       // M2: optional; sourcesCount is the always-present count
+  steps?: ThinkingStep[]; // M2: blocking path synthesizes [{stage:"done",status:"done"}]
+  sources?: Source[]; // M2: optional; sourcesCount is the always-present count
   status?: "streaming" | "done" | "error"; // M2
   timestamp: Date;
 }
@@ -267,6 +283,7 @@ export interface Message {
 ```bash
 npx shadcn@latest add dropdown-menu tooltip collapsible skeleton command
 ```
+
 This writes `dropdown-menu.tsx`, `tooltip.tsx`, `collapsible.tsx`, `skeleton.tsx`, `command.tsx` and
 installs `@radix-ui/react-dropdown-menu`, `@radix-ui/react-tooltip`, `@radix-ui/react-collapsible`,
 and `cmdk`. Then mount the tooltip provider once:
@@ -275,7 +292,7 @@ and `cmdk`. Then mount the tooltip provider once:
 // app/providers.tsx — add to the existing provider stack
 import { TooltipProvider } from "@/components/ui/tooltip";
 // ...
-<TooltipProvider delayDuration={300}>{children}</TooltipProvider>
+<TooltipProvider delayDuration={300}>{children}</TooltipProvider>;
 ```
 
 ---
@@ -390,7 +407,10 @@ interface CodeBlockProps {
 
 export function CodeBlock({ language, value }: CodeBlockProps) {
   const { copied, copy } = useCopyToClipboard({ showToast: false });
-  const [theme, setTheme] = React.useState<Record<string, React.CSSProperties> | null>(null);
+  const [theme, setTheme] = React.useState<Record<
+    string,
+    React.CSSProperties
+  > | null>(null);
 
   React.useEffect(() => {
     let active = true;
@@ -401,9 +421,9 @@ export function CodeBlock({ language, value }: CodeBlockProps) {
   }, []);
 
   return (
-    <div className="my-3 overflow-hidden rounded-md border border-border bg-muted">
-      <div className="flex items-center justify-between border-b border-border bg-muted/60 px-3 py-1.5 select-none">
-        <span className="font-mono text-xs text-muted-foreground">
+    <div className="border-border bg-muted my-3 overflow-hidden rounded-md border">
+      <div className="border-border bg-muted/60 flex items-center justify-between border-b px-3 py-1.5 select-none">
+        <span className="text-muted-foreground font-mono text-xs">
           {language ?? "text"}
         </span>
         <Button
@@ -411,10 +431,14 @@ export function CodeBlock({ language, value }: CodeBlockProps) {
           variant="ghost"
           size="icon-sm"
           aria-label={copied ? "Copied" : "Copy code"}
-          className="h-6 w-6 text-muted-foreground hover:text-foreground"
+          className="text-muted-foreground hover:text-foreground h-6 w-6"
           onClick={() => void copy(value)}
         >
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? (
+            <Check className="h-3.5 w-3.5" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
         </Button>
       </div>
 
@@ -436,7 +460,7 @@ export function CodeBlock({ language, value }: CodeBlockProps) {
       ) : (
         // Instant fallback during SSR + highlighter/theme load.
         <pre className="overflow-x-auto p-4 text-[0.8125rem] leading-relaxed">
-          <code className="font-mono text-foreground">{value}</code>
+          <code className="text-foreground font-mono">{value}</code>
         </pre>
       )}
     </div>
@@ -478,7 +502,7 @@ const markdownComponents: Components = {
     if (isInline) {
       return (
         <code
-          className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground"
+          className="bg-muted text-foreground rounded px-1 py-0.5 font-mono text-xs"
           {...props}
         >
           {children}
@@ -501,7 +525,9 @@ const markdownComponents: Components = {
     />
   ),
   ul: ({ ...props }) => <ul className="list-disc space-y-1 pl-4" {...props} />,
-  ol: ({ ...props }) => <ol className="list-decimal space-y-1 pl-4" {...props} />,
+  ol: ({ ...props }) => (
+    <ol className="list-decimal space-y-1 pl-4" {...props} />
+  ),
 };
 
 interface ChatMessageProps {
@@ -515,22 +541,36 @@ function ChatMessageImpl({ message }: ChatMessageProps) {
     <div
       className={cn(
         "group flex w-full gap-4 rounded-xl p-5 transition-colors",
-        isUser ? "flex-row-reverse bg-primary/5" : "border border-border bg-card shadow-sm"
+        isUser
+          ? "bg-primary/5 flex-row-reverse"
+          : "border-border bg-card border shadow-sm"
       )}
     >
-      <Avatar className="h-8 w-8 shrink-0 border border-border">
+      <Avatar className="border-border h-8 w-8 shrink-0 border">
         <AvatarFallback
           className={cn(
-            isUser ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+            isUser
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-muted-foreground"
           )}
         >
           {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
         </AvatarFallback>
       </Avatar>
 
-      <div className={cn("min-w-0 flex-1 space-y-2", isUser ? "text-right" : "text-left")}>
-        <div className={cn("flex items-center gap-2", isUser ? "justify-end" : "justify-start")}>
-          <span className="text-sm font-semibold text-foreground">
+      <div
+        className={cn(
+          "min-w-0 flex-1 space-y-2",
+          isUser ? "text-right" : "text-left"
+        )}
+      >
+        <div
+          className={cn(
+            "flex items-center gap-2",
+            isUser ? "justify-end" : "justify-start"
+          )}
+        >
+          <span className="text-foreground text-sm font-semibold">
             {isUser ? "You" : "RAG Assistant"}
           </span>
           {!isUser && message.route && <RouteBadge route={message.route} />}
@@ -543,14 +583,17 @@ function ChatMessageImpl({ message }: ChatMessageProps) {
 
         <div
           className={cn(
-            "prose prose-sm max-w-none break-words text-sm leading-relaxed dark:prose-invert",
+            "prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed break-words",
             isUser ? "text-foreground/90" : "text-muted-foreground"
           )}
         >
           {isUser ? (
             <p className="whitespace-pre-wrap">{message.content}</p>
           ) : (
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={markdownComponents}
+            >
               {message.content}
             </ReactMarkdown>
           )}
@@ -605,7 +648,10 @@ import type { RouteType } from "@/types";
 
 type Variant = React.ComponentProps<typeof Badge>["variant"];
 
-const ROUTE_MAP: Record<RouteType, { label: string; variant: Variant; className?: string }> = {
+const ROUTE_MAP: Record<
+  RouteType,
+  { label: string; variant: Variant; className?: string }
+> = {
   RAG: { label: "RAG", variant: "secondary" },
   WEB: { label: "Web", variant: "secondary" },
   DIRECT: { label: "Direct", variant: "outline" },
@@ -625,7 +671,11 @@ export function RouteBadge({ route, className }: RouteBadgeProps) {
   return (
     <Badge
       variant={cfg.variant}
-      className={cn("h-5 px-2 text-[10px] font-normal", cfg.className, className)}
+      className={cn(
+        "h-5 px-2 text-[10px] font-normal",
+        cfg.className,
+        className
+      )}
       aria-label={`Route: ${cfg.label}`}
     >
       {cfg.label}
@@ -669,7 +719,10 @@ import {
 import { cn } from "@/lib/utils";
 import type { StepStage, StepStatus, ThinkingStep } from "@/types";
 
-const STAGE_ICON: Record<StepStage, React.ComponentType<{ className?: string }>> = {
+const STAGE_ICON: Record<
+  StepStage,
+  React.ComponentType<{ className?: string }>
+> = {
   routing: CircleDot,
   retrieving: Database,
   searching: Search,
@@ -678,10 +731,12 @@ const STAGE_ICON: Record<StepStage, React.ComponentType<{ className?: string }>>
 };
 
 function StatusDot({ status }: { status: StepStatus }) {
-  if (status === "active") return <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />;
-  if (status === "done") return <Check className="h-3.5 w-3.5 text-primary" />;
-  if (status === "error") return <AlertCircle className="h-3.5 w-3.5 text-destructive" />;
-  return <CircleDot className="h-3.5 w-3.5 text-muted-foreground/50" />;
+  if (status === "active")
+    return <Loader2 className="text-primary h-3.5 w-3.5 animate-spin" />;
+  if (status === "done") return <Check className="text-primary h-3.5 w-3.5" />;
+  if (status === "error")
+    return <AlertCircle className="text-destructive h-3.5 w-3.5" />;
+  return <CircleDot className="text-muted-foreground/50 h-3.5 w-3.5" />;
 }
 
 interface ThinkingStepsProps {
@@ -693,9 +748,13 @@ export function ThinkingSteps({ steps }: ThinkingStepsProps) {
   const hasActive = steps.some((s) => s.status === "active");
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="rounded-lg border border-border bg-muted/40">
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className="border-border bg-muted/40 rounded-lg border"
+    >
       <CollapsibleTrigger
-        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+        className="text-muted-foreground hover:text-foreground flex w-full items-center gap-2 px-3 py-2 text-xs font-medium transition-colors"
         aria-label="Toggle reasoning steps"
       >
         <Brain className="h-3.5 w-3.5" />
@@ -710,16 +769,18 @@ export function ThinkingSteps({ steps }: ThinkingStepsProps) {
       </CollapsibleTrigger>
 
       <CollapsibleContent className="px-3 pb-3">
-        <ol className="space-y-1.5 border-l border-border pl-3">
+        <ol className="border-border space-y-1.5 border-l pl-3">
           {steps.map((step) => {
             const Icon = STAGE_ICON[step.stage] ?? CircleDot;
             return (
               <li key={step.id} className="flex items-center gap-2 text-xs">
                 <StatusDot status={step.status} />
-                <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                <Icon className="text-muted-foreground h-3.5 w-3.5" />
                 <span
                   className={cn(
-                    step.status === "active" ? "text-foreground" : "text-muted-foreground"
+                    step.status === "active"
+                      ? "text-foreground"
+                      : "text-muted-foreground"
                   )}
                 >
                   {step.label}
@@ -769,21 +830,29 @@ export function SourcesPanel({ sources, count }: SourcesPanelProps) {
   // No structured sources yet (today's backend): show the summary line only.
   if (!sources || sources.length === 0) {
     return (
-      <div className="mt-3 flex items-center gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
+      <div className="border-border text-muted-foreground mt-3 flex items-center gap-2 border-t pt-3 text-xs">
         <Layers className="h-3.5 w-3.5" />
-        <span>Referenced {total} chunk{total === 1 ? "" : "s"} from your documents</span>
+        <span>
+          Referenced {total} chunk{total === 1 ? "" : "s"} from your documents
+        </span>
       </div>
     );
   }
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="mt-3 border-t border-border pt-3">
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className="border-border mt-3 border-t pt-3"
+    >
       <CollapsibleTrigger
-        className="flex w-full items-center gap-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+        className="text-muted-foreground hover:text-foreground flex w-full items-center gap-2 text-xs font-medium transition-colors"
         aria-label="Toggle sources"
       >
         <Layers className="h-3.5 w-3.5" />
-        <span>Referenced {total} chunk{total === 1 ? "" : "s"}</span>
+        <span>
+          Referenced {total} chunk{total === 1 ? "" : "s"}
+        </span>
         <ChevronDown
           className={cn(
             "ml-auto h-4 w-4 transition-transform motion-reduce:transition-none",
@@ -799,14 +868,16 @@ export function SourcesPanel({ sources, count }: SourcesPanelProps) {
             href={s.url ?? "#"}
             target={s.url ? "_blank" : undefined}
             rel="noopener noreferrer"
-            className="flex items-start gap-2 rounded-md bg-muted/40 p-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground flex items-start gap-2 rounded-md p-2 text-xs transition-colors"
           >
             <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 flex-1">
-              <span className="block truncate font-medium text-foreground">
+              <span className="text-foreground block truncate font-medium">
                 {s.title ?? "Untitled source"}
               </span>
-              {s.snippet && <span className="line-clamp-2 block">{s.snippet}</span>}
+              {s.snippet && (
+                <span className="line-clamp-2 block">{s.snippet}</span>
+              )}
             </span>
             {s.url && <ExternalLink className="h-3 w-3 shrink-0" />}
           </a>
@@ -855,10 +926,14 @@ export function MessageActions({ content, messageId }: MessageActionsProps) {
             variant="ghost"
             size="icon-sm"
             aria-label={copied ? "Copied" : "Copy answer"}
-            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground h-7 w-7"
             onClick={() => void copy(content)}
           >
-            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            {copied ? (
+              <Check className="h-3.5 w-3.5" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
           </Button>
         </TooltipTrigger>
         <TooltipContent>{copied ? "Copied" : "Copy answer"}</TooltipContent>
@@ -872,7 +947,7 @@ export function MessageActions({ content, messageId }: MessageActionsProps) {
             size="icon-sm"
             aria-label="Retry"
             disabled={isStreaming}
-            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground h-7 w-7"
             onClick={() => retry(messageId)}
           >
             <RotateCcw className="h-3.5 w-3.5" />
@@ -920,7 +995,11 @@ interface ChatInputProps {
   onFileUploaded?: (fileName: string) => void;
 }
 
-export function ChatInput({ isLoading, onSend, onFileUploaded }: ChatInputProps) {
+export function ChatInput({
+  isLoading,
+  onSend,
+  onFileUploaded,
+}: ChatInputProps) {
   const [input, setInput] = useState("");
   const [webSearch, setWebSearch] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -956,9 +1035,9 @@ export function ChatInput({ isLoading, onSend, onFileUploaded }: ChatInputProps)
   };
 
   return (
-    <div className="border-t border-border bg-background p-4">
+    <div className="border-border bg-background border-t p-4">
       <div className="mx-auto max-w-4xl space-y-2">
-        <div className="relative flex items-end gap-1 rounded-2xl border border-border bg-background p-1 shadow-sm focus-within:ring-1 focus-within:ring-ring">
+        <div className="border-border bg-background focus-within:ring-ring relative flex items-end gap-1 rounded-2xl border p-1 shadow-sm focus-within:ring-1">
           <div className="flex items-center gap-1 pl-1">
             <input
               type="file"
@@ -974,7 +1053,7 @@ export function ChatInput({ isLoading, onSend, onFileUploaded }: ChatInputProps)
                   variant="ghost"
                   size="icon-sm"
                   aria-label="Upload document"
-                  className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
+                  className="text-muted-foreground hover:text-foreground h-8 w-8 rounded-full"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isUploading || isLoading}
                 >
@@ -1022,7 +1101,7 @@ export function ChatInput({ isLoading, onSend, onFileUploaded }: ChatInputProps)
             maxRows={8}
             disabled={isLoading}
             aria-label="Message"
-            className="flex-1 resize-none border-0 bg-transparent px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground disabled:opacity-50"
+            className="placeholder:text-muted-foreground flex-1 resize-none border-0 bg-transparent px-3 py-2 text-sm leading-6 outline-none disabled:opacity-50"
           />
 
           <Button
@@ -1031,13 +1110,13 @@ export function ChatInput({ isLoading, onSend, onFileUploaded }: ChatInputProps)
             aria-label="Send message"
             onClick={handleSend}
             disabled={isLoading || !input.trim()}
-            className="mb-0.5 mr-1 h-8 w-8 shrink-0 rounded-full"
+            className="mr-1 mb-0.5 h-8 w-8 shrink-0 rounded-full"
           >
             <ArrowUp className="h-4 w-4" />
           </Button>
         </div>
 
-        <p className="text-center text-[10px] text-muted-foreground">
+        <p className="text-muted-foreground text-center text-[10px]">
           AI can make mistakes. Check important info.
         </p>
       </div>
@@ -1061,12 +1140,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function MessageLoading() {
   return (
     <div
-      className="flex w-full gap-4 rounded-xl border border-border bg-card p-5 shadow-sm"
+      className="border-border bg-card flex w-full gap-4 rounded-xl border p-5 shadow-sm"
       role="status"
       aria-live="polite"
       aria-label="Assistant is thinking"
     >
-      <Avatar className="h-8 w-8 shrink-0 border border-border">
+      <Avatar className="border-border h-8 w-8 shrink-0 border">
         <AvatarFallback className="bg-muted text-muted-foreground">
           <Bot className="h-4 w-4" />
         </AvatarFallback>
@@ -1095,33 +1174,36 @@ import { FileText, Globe, Zap } from "lucide-react";
 export function EmptyState() {
   return (
     <div className="flex h-full flex-col items-center justify-center space-y-6 p-8 text-center">
-      <div className="rounded-full bg-muted p-4">
-        <Zap className="h-8 w-8 fill-primary text-primary" />
+      <div className="bg-muted rounded-full p-4">
+        <Zap className="fill-primary text-primary h-8 w-8" />
       </div>
       <div className="space-y-2">
-        <h2 className="text-2xl font-bold tracking-tight text-foreground">RAG Assistant</h2>
-        <p className="mx-auto max-w-md text-muted-foreground">
-          Upload documents to chat with them, or enable Web Search for live information.
+        <h2 className="text-foreground text-2xl font-bold tracking-tight">
+          RAG Assistant
+        </h2>
+        <p className="text-muted-foreground mx-auto max-w-md">
+          Upload documents to chat with them, or enable Web Search for live
+          information.
         </p>
       </div>
 
       <div className="mt-8 grid w-full max-w-lg grid-cols-1 gap-4 md:grid-cols-2">
-        <div className="cursor-default rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted motion-reduce:transition-none">
-          <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-primary">
+        <div className="border-border bg-card hover:bg-muted cursor-default rounded-xl border p-4 transition-colors motion-reduce:transition-none">
+          <div className="text-primary mb-2 flex items-center gap-2 text-sm font-semibold">
             <FileText className="h-4 w-4" />
             Analyze Documents
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-muted-foreground text-xs">
             &quot;Summarize the quarterly report PDF I just uploaded.&quot;
           </p>
         </div>
 
-        <div className="cursor-default rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted motion-reduce:transition-none">
-          <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-chart-2">
+        <div className="border-border bg-card hover:bg-muted cursor-default rounded-xl border p-4 transition-colors motion-reduce:transition-none">
+          <div className="text-chart-2 mb-2 flex items-center gap-2 text-sm font-semibold">
             <Globe className="h-4 w-4" />
             Web Search
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-muted-foreground text-xs">
             &quot;What are the latest features in Next.js 15?&quot;
           </p>
         </div>
@@ -1166,6 +1248,7 @@ export function EmptyState() {
 component tests it covers). Mock `useChat` and `navigator.clipboard` per test.
 
 RTL component tests:
+
 - **`chat-message`**: renders "You" + plain text (no markdown parse) for `role:"user"`; renders
   "RAG Assistant" + a `<RouteBadge>` + markdown for assistant; asserts a fenced code block mounts a
   `CodeBlock` (queryByLabelText "Copy code"); asserts `React.memo` prevents re-render when an
@@ -1270,6 +1353,7 @@ Milestone-sized commits on `claude/frontend-improvements-planning-1aX4u`:
 9. `test(chat): RTL coverage for message, code-block, badge, panels, actions, input`
 
 Each commit message ends with:
+
 ```
 https://claude.ai/code/session_01Vf1vzppqBGXAd1k9PPKMAB
 ```

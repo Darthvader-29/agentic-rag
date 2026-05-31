@@ -4,7 +4,7 @@ This milestone moves all chat logic out of `app/page.tsx` into feature-based mod
 (`features/chat/{api,store,hooks,components}`), introduces TanStack Query + Zustand, a typed
 `http-client` with Zod-validated responses, and a `useChat` facade — **without changing a single
 observable behavior**. The blocking `/chat` flow stays blocking; send / upload / cleanup / reset /
-web-search toggle behave byte-for-byte as they do today. We deliberately build the *streaming-shaped*
+web-search toggle behave byte-for-byte as they do today. We deliberately build the _streaming-shaped_
 `Message` type and store now so M2 can flip streaming on with zero UI churn.
 
 **Status:** Not started · **Depends on:** M0 (env/flags/providers: `lib/env.ts`, `lib/flags.ts`,
@@ -33,7 +33,7 @@ sources-panel, message-actions).
   - `features/chat/hooks/use-blocking-chat.ts` — TanStack `useMutation` that writes a unified
     `Message` into the store on success.
   - `features/chat/hooks/use-chat.ts` — the stable facade (`{ messages, isStreaming, sendMessage,
-    stop, retry }`) reading `flags.streaming`; delegates to blocking today.
+stop, retry }`) reading `flags.streaming`; delegates to blocking today.
   - `features/chat/components/chat-screen.tsx` — the entire JSX/layout extracted from `page.tsx`
     (sidebar, scroll area, message list, input, auto-scroll effect, `beforeunload` cleanup beacon).
 - Gut `app/page.tsx` to a thin shell that renders `<ChatScreen />`.
@@ -49,15 +49,15 @@ sources-panel, message-actions).
   M2. `useChat` scaffolds the seam but only the blocking strategy is wired.
 - **No visual / class changes.** `chat-message.tsx`, `chat-input.tsx`, `sidebar.tsx`,
   `empty-state.tsx`, `message-loading.tsx` keep their current markup and hardcoded `slate/blue/white`
-  classes — semantic-token migration is **M3**. We only change *where state lives and how data flows*,
+  classes — semantic-token migration is **M3**. We only change _where state lives and how data flows_,
   never how it looks.
-- **No new API endpoints / contract changes.** We match the *currently deployed* backend exactly
+- **No new API endpoints / contract changes.** We match the _currently deployed_ backend exactly
   (JSON `/cleanup`, multipart `/upload`), not the Phase-2 `Form(...)` variant (see §5.f gotcha).
 - **No auth.** The interceptor seam in `http-client` is present but dormant (`auth: false` default);
   activation is M6.
-- **No `services/api.ts` deletion.** It is *replaced* in usage (nothing imports it after this
+- **No `services/api.ts` deletion.** It is _replaced_ in usage (nothing imports it after this
   milestone), but per "delete dead code only when proven dead" we leave the file untouched unless the
-  reviewer asks; all *new* code imports from `features/chat/api`. (We DO delete `chat-interface.tsx`,
+  reviewer asks; all _new_ code imports from `features/chat/api`. (We DO delete `chat-interface.tsx`,
   which is genuinely empty and unimported.)
 
 **The contract of this milestone: a `git stash` of the diff and a re-run of the app must be
@@ -67,13 +67,13 @@ indistinguishable to a user.** Same requests on the wire, same messages on scree
 
 ## 2. Decisions & Rationale
 
-| Decision | Rationale | Rejected alternative |
-|---|---|---|
-| **TanStack Query** for discrete async resources (`/chat` mutation, upload, cleanup) | First-class mutation lifecycle (`isPending`/`isError`/`onSuccess`), retry/cancellation, and a single place to grow sessions/document-status polling (M8) and auth (M6). The plan's "API layer" section names it explicitly. | **SWR** — excellent for `GET` caching but its mutation story (`useSWRMutation`) is thinner, and the roadmap's polling/refetch-interval needs (M8) and request cancellation map more cleanly onto Query. |
-| **Zustand** owns live chat (`messages[]`, in-flight buffer, per-message `steps[]`/`sources`/`status`, `draft`, `webSearchAllowed`) | Streaming (M2) appends tokens at high frequency (`appendContent` per chunk) and pushes `status` steps. Routing that through the Query cache would mean `setQueryData` churn + structural-sharing comparisons on every token — wrong tool. A plain external store with targeted selectors re-renders only the subscribed message. The blocking mutation writes into this **same** store with the **same** shape, so when streaming flips on the UI is unchanged. | **React Query cache as the message store** — high-frequency mutation of cached data is an anti-pattern; **`useState` in `page.tsx`** (today) — prop-drills, can't be shared by future strategies, and dies on every route change. |
-| **`http-client` wrapper** over raw `fetch` | One choke point for: base-URL prepend (`env.NEXT_PUBLIC_API_URL`), Zod response parsing → typed data, uniform `ApiError` mapping (so callers `catch` one shape), and the dormant `Bearer`/`401-refresh` seam for M6. Today's `services/api.ts` repeats `fetch` + ad-hoc `res.ok` checks + manual `detail` extraction in every method. | **Per-call raw `fetch`** — duplicated error handling, no runtime validation, `any` leakage (`uploadFile: Promise<any>` today, `services/api.ts:80`). |
-| **Unified `Message` shape now** (`steps`/`sources`/`status`/`components`) even though M1 is blocking-only | The plan mandates it: the blocking path synthesizes one `done` step + `context_count` sources, so the M3 thinking-steps/sources panels render today and the M2 streaming path writes the identical shape. We also carry an **opaque `components` field now** (empty on the blocking path) so the backend Phase-6 `component` event — the agentic rich-output upgrade — lands as a **flag-flip + renderer (M10)**, not another `Message` refactor. Adding any of these fields later would force a second `page.tsx`-scale refactor. | **Minimal `Message` now, extend in M2/M10** — guarantees a churn wave through the store, hooks, and `chat-message.tsx` exactly when streaming or rich components land; defeats the "architect once" principle. |
-| **`z.infer` re-exports** in `types/index.ts` | Runtime validation (Zod) and compile-time types stay locked to one source of truth; impossible for the TS type and the parsed shape to drift. | Hand-written `interface`s parallel to schemas — two sources of truth that silently diverge. |
+| Decision                                                                                                                           | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Rejected alternative                                                                                                                                                                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **TanStack Query** for discrete async resources (`/chat` mutation, upload, cleanup)                                                | First-class mutation lifecycle (`isPending`/`isError`/`onSuccess`), retry/cancellation, and a single place to grow sessions/document-status polling (M8) and auth (M6). The plan's "API layer" section names it explicitly.                                                                                                                                                                                                                                                                                                        | **SWR** — excellent for `GET` caching but its mutation story (`useSWRMutation`) is thinner, and the roadmap's polling/refetch-interval needs (M8) and request cancellation map more cleanly onto Query.                           |
+| **Zustand** owns live chat (`messages[]`, in-flight buffer, per-message `steps[]`/`sources`/`status`, `draft`, `webSearchAllowed`) | Streaming (M2) appends tokens at high frequency (`appendContent` per chunk) and pushes `status` steps. Routing that through the Query cache would mean `setQueryData` churn + structural-sharing comparisons on every token — wrong tool. A plain external store with targeted selectors re-renders only the subscribed message. The blocking mutation writes into this **same** store with the **same** shape, so when streaming flips on the UI is unchanged.                                                                    | **React Query cache as the message store** — high-frequency mutation of cached data is an anti-pattern; **`useState` in `page.tsx`** (today) — prop-drills, can't be shared by future strategies, and dies on every route change. |
+| **`http-client` wrapper** over raw `fetch`                                                                                         | One choke point for: base-URL prepend (`env.NEXT_PUBLIC_API_URL`), Zod response parsing → typed data, uniform `ApiError` mapping (so callers `catch` one shape), and the dormant `Bearer`/`401-refresh` seam for M6. Today's `services/api.ts` repeats `fetch` + ad-hoc `res.ok` checks + manual `detail` extraction in every method.                                                                                                                                                                                              | **Per-call raw `fetch`** — duplicated error handling, no runtime validation, `any` leakage (`uploadFile: Promise<any>` today, `services/api.ts:80`).                                                                              |
+| **Unified `Message` shape now** (`steps`/`sources`/`status`/`components`) even though M1 is blocking-only                          | The plan mandates it: the blocking path synthesizes one `done` step + `context_count` sources, so the M3 thinking-steps/sources panels render today and the M2 streaming path writes the identical shape. We also carry an **opaque `components` field now** (empty on the blocking path) so the backend Phase-6 `component` event — the agentic rich-output upgrade — lands as a **flag-flip + renderer (M10)**, not another `Message` refactor. Adding any of these fields later would force a second `page.tsx`-scale refactor. | **Minimal `Message` now, extend in M2/M10** — guarantees a churn wave through the store, hooks, and `chat-message.tsx` exactly when streaming or rich components land; defeats the "architect once" principle.                    |
+| **`z.infer` re-exports** in `types/index.ts`                                                                                       | Runtime validation (Zod) and compile-time types stay locked to one source of truth; impossible for the TS type and the parsed shape to drift.                                                                                                                                                                                                                                                                                                                                                                                      | Hand-written `interface`s parallel to schemas — two sources of truth that silently diverge.                                                                                                                                       |
 
 ---
 
@@ -81,19 +81,19 @@ indistinguishable to a user.** Same requests on the wire, same messages on scree
 
 ### `app/page.tsx` — home of ALL chat logic today (169 lines)
 
-| Concern | Location | Behavior to preserve exactly |
-|---|---|---|
-| `messages` state | `app/page.tsx:23` | `useState<Message[]>([])` |
-| `isLoading` state | `app/page.tsx:24` | toggles the `<MessageLoading />` row + disables input |
-| `isSidebarOpen` state | `app/page.tsx:25` | width/opacity transition of the sidebar shell |
-| `scrollRef` | `app/page.tsx:26` | sentinel `<div ref={scrollRef} />` at list end (`:149`) |
-| **Auto-scroll effect** | `app/page.tsx:29-33` | `scrollRef.current?.scrollIntoView({ behavior: "smooth" })` on `[messages, isLoading]` |
-| **`beforeunload` cleanup beacon** | `app/page.tsx:36-54` | on tab close, if `api.getSessionId()` truthy, `navigator.sendBeacon(\`${API_BASE_URL}/cleanup\`, Blob<JSON {session_id, file_keys: []}>)` |
-| **`handleSendMessage(text, webSearch)`** | `app/page.tsx:56-96` | push user `Message` (`uuidv4`, `role:"user"`, `timestamp: new Date()`); `setIsLoading(true)`; `await api.sendMessage`; push assistant `Message` with `content: response.answer`, `route: response.route`, `sourcesCount: response.context_count`; on error push assistant `Message` with `route: "ERROR"` and `content = err?.message ?? fallback`; `finally setIsLoading(false)` |
-| **`handleClearSession()`** | `app/page.tsx:98-102` | `await api.clearSession()`; `setMessages([])`; `toast.success("Chat history cleared")` |
-| **File-upload callback** | `app/page.tsx:156-164` | on `onFileUploaded(fileName)`, push assistant `Message` with `content: \`📄 "${fileName}" uploaded and queued for ingestion.\`` |
-| Local module const | `app/page.tsx:19-20` | `API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api"` (note: **differs** from the `services/api.ts:5-6` default of the Render URL — preserve both call sites' current behavior; new code uses `env.NEXT_PUBLIC_API_URL` from M0) |
-| Layout JSX | `app/page.tsx:104-168` | sidebar shell + main column + scroll area + `<EmptyState/>` / list / `<MessageLoading/>` + `<ChatInput/>` |
+| Concern                                  | Location               | Behavior to preserve exactly                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `messages` state                         | `app/page.tsx:23`      | `useState<Message[]>([])`                                                                                                                                                                                                                                                                                                                                                         |
+| `isLoading` state                        | `app/page.tsx:24`      | toggles the `<MessageLoading />` row + disables input                                                                                                                                                                                                                                                                                                                             |
+| `isSidebarOpen` state                    | `app/page.tsx:25`      | width/opacity transition of the sidebar shell                                                                                                                                                                                                                                                                                                                                     |
+| `scrollRef`                              | `app/page.tsx:26`      | sentinel `<div ref={scrollRef} />` at list end (`:149`)                                                                                                                                                                                                                                                                                                                           |
+| **Auto-scroll effect**                   | `app/page.tsx:29-33`   | `scrollRef.current?.scrollIntoView({ behavior: "smooth" })` on `[messages, isLoading]`                                                                                                                                                                                                                                                                                            |
+| **`beforeunload` cleanup beacon**        | `app/page.tsx:36-54`   | on tab close, if `api.getSessionId()` truthy, `navigator.sendBeacon(\`${API_BASE_URL}/cleanup\`, Blob<JSON {session_id, file_keys: []}>)`                                                                                                                                                                                                                                         |
+| **`handleSendMessage(text, webSearch)`** | `app/page.tsx:56-96`   | push user `Message` (`uuidv4`, `role:"user"`, `timestamp: new Date()`); `setIsLoading(true)`; `await api.sendMessage`; push assistant `Message` with `content: response.answer`, `route: response.route`, `sourcesCount: response.context_count`; on error push assistant `Message` with `route: "ERROR"` and `content = err?.message ?? fallback`; `finally setIsLoading(false)` |
+| **`handleClearSession()`**               | `app/page.tsx:98-102`  | `await api.clearSession()`; `setMessages([])`; `toast.success("Chat history cleared")`                                                                                                                                                                                                                                                                                            |
+| **File-upload callback**                 | `app/page.tsx:156-164` | on `onFileUploaded(fileName)`, push assistant `Message` with `content: \`📄 "${fileName}" uploaded and queued for ingestion.\``                                                                                                                                                                                                                                                   |
+| Local module const                       | `app/page.tsx:19-20`   | `API_BASE_URL = process.env.NEXT_PUBLIC_API_URL                                                                                                                                                                                                                                                                                                                                   |     | "http://localhost:8000/api"`(note: **differs** from the`services/api.ts:5-6`default of the Render URL — preserve both call sites' current behavior; new code uses`env.NEXT_PUBLIC_API_URL` from M0) |
+| Layout JSX                               | `app/page.tsx:104-168` | sidebar shell + main column + scroll area + `<EmptyState/>` / list / `<MessageLoading/>` + `<ChatInput/>`                                                                                                                                                                                                                                                                         |
 
 ### `services/api.ts` — methods to port (96 lines)
 
@@ -107,8 +107,8 @@ indistinguishable to a user.** Same requests on the wire, same messages on scree
   `data.detail` (backend `AppException.detail`) else `Backend error: ${status}` and `throw new Error`;
   on success, if `data.session_id` present, persists it to `localStorage`.
 - `uploadFile(file): Promise<any>` — `services/api.ts:80-95`. `FormData` (`file` + `session_id`);
-  `POST /upload`; `throw new Error(\`Upload failed: ${status}\`)` on `!res.ok`; returns `res.json()`.
-  **`any` return type is a defect we fix** by typing it through a Zod schema.
+  `POST /upload`; `throw new Error(\`Upload failed: ${status}\`)`on`!res.ok`; returns `res.json()`.
+**`any` return type is a defect we fix\*\* by typing it through a Zod schema.
 
 ### `types/index.ts` (33 lines)
 
@@ -254,7 +254,7 @@ export function isApiError(e: unknown): e is ApiError {
 
 ### 5.c — `lib/api/http-client.ts` (generic `request<T>`)
 
-**Goal:** the single networking primitive. Prepends the env base URL, serializes JSON *or* passes a
+**Goal:** the single networking primitive. Prepends the env base URL, serializes JSON _or_ passes a
 `FormData` through untouched (multipart upload), Zod-parses successful responses, maps every failure
 to `ApiError`, threads an `AbortSignal`, and exposes a **dormant** auth seam.
 
@@ -288,7 +288,7 @@ const BASE_URL = env.NEXT_PUBLIC_API_URL;
  */
 async function applyAuth(
   headers: Headers,
-  _auth: boolean | undefined,
+  _auth: boolean | undefined
 ): Promise<Headers> {
   // M6: if (_auth && flags.auth) headers.set("Authorization", `Bearer ${token}`);
   return headers;
@@ -296,13 +296,14 @@ async function applyAuth(
 
 export async function request<T = void>(
   path: string,
-  opts: RequestOptions<T> = {},
+  opts: RequestOptions<T> = {}
 ): Promise<T> {
   const { method = "GET", body, schema, auth, signal, headers: extra } = opts;
 
   const isForm = typeof FormData !== "undefined" && body instanceof FormData;
   const headers = new Headers(extra);
-  if (!isForm && body !== undefined) headers.set("Content-Type", "application/json");
+  if (!isForm && body !== undefined)
+    headers.set("Content-Type", "application/json");
   await applyAuth(headers, auth);
 
   const url = `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
@@ -312,7 +313,12 @@ export async function request<T = void>(
     res = await fetch(url, {
       method,
       headers,
-      body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
+      body:
+        body === undefined
+          ? undefined
+          : isForm
+            ? (body as FormData)
+            : JSON.stringify(body),
       signal,
     });
   } catch (e) {
@@ -558,7 +564,7 @@ function persistSessionId(id: string): void {
 export async function sendMessage(
   message: string,
   webSearchAllowed: boolean,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<ChatResponse> {
   const payload = chatRequestSchema.parse({
     message,
@@ -649,7 +655,14 @@ inside `useBlockingChat`.
 // features/chat/store/chat.store.ts
 import { create } from "zustand";
 import { v4 as uuidv4 } from "uuid";
-import type { Message, Step, Source, RichComponent, MessageStatus, RouteType } from "@/types";
+import type {
+  Message,
+  Step,
+  Source,
+  RichComponent,
+  MessageStatus,
+  RouteType,
+} from "@/types";
 
 interface ChatState {
   messages: Message[];
@@ -679,10 +692,12 @@ interface ChatState {
 }
 
 /** Convenience used by hooks to seed user/assistant messages. */
-export function createMessage(partial: Omit<Message, "id" | "timestamp"> & {
-  id?: string;
-  timestamp?: number;
-}): Message {
+export function createMessage(
+  partial: Omit<Message, "id" | "timestamp"> & {
+    id?: string;
+    timestamp?: number;
+  }
+): Message {
   return {
     id: partial.id ?? uuidv4(),
     timestamp: partial.timestamp ?? Date.now(),
@@ -696,7 +711,7 @@ export function createMessage(partial: Omit<Message, "id" | "timestamp"> & {
 const updateMessage = (
   messages: Message[],
   id: string,
-  fn: (m: Message) => Message,
+  fn: (m: Message) => Message
 ): Message[] => messages.map((m) => (m.id === id ? fn(m) : m));
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -819,9 +834,15 @@ export function useBlockingChat() {
 
     onMutate: ({ text }) => {
       // User bubble (page.tsx:57-63).
-      addMessage(createMessage({ role: "user", content: text, status: "done" }));
+      addMessage(
+        createMessage({ role: "user", content: text, status: "done" })
+      );
       // Assistant placeholder we fill on success/error (drives <MessageLoading/> parity via isLoading).
-      const assistant = createMessage({ role: "assistant", content: "", status: "streaming" });
+      const assistant = createMessage({
+        role: "assistant",
+        content: "",
+        status: "streaming",
+      });
       addMessage(assistant);
       setLoading(true);
       return { assistantId: assistant.id };
@@ -830,11 +851,11 @@ export function useBlockingChat() {
     onSuccess: (res, _vars, ctx) => {
       if (!ctx) return;
       const { assistantId } = ctx;
-      appendContent(assistantId, res.answer);     // full answer in one write
+      appendContent(assistantId, res.answer); // full answer in one write
       setRoute(assistantId, res.route);
       setSources(assistantId, synthSources(res.context_count));
       pushStep(assistantId, { label: "done", state: "complete" }); // single synthetic step
-      finalize(assistantId);                        // status -> "done"
+      finalize(assistantId); // status -> "done"
     },
 
     onError: (err, _vars, ctx) => {
@@ -862,7 +883,7 @@ export function useBlockingChat() {
 }
 ```
 
-> Parity detail: today the assistant bubble appears *after* the await resolves. Here we add an empty
+> Parity detail: today the assistant bubble appears _after_ the await resolves. Here we add an empty
 > assistant placeholder on `onMutate` and fill it on success. Visually identical because `isLoading`
 > drives `<MessageLoading/>` while content is empty, and the placeholder renders no visible body until
 > `appendContent` fills it. If pixel-exact ordering matters, the placeholder can instead be added in
@@ -976,7 +997,7 @@ export function ChatScreen() {
       const payload = JSON.stringify({ session_id: sessionId, file_keys: [] });
       navigator.sendBeacon(
         `${env.NEXT_PUBLIC_API_URL}/cleanup`,
-        new Blob([payload], { type: "application/json" }),
+        new Blob([payload], { type: "application/json" })
       );
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
@@ -989,11 +1010,11 @@ export function ChatScreen() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 overflow-hidden dark:bg-slate-950">
+    <div className="flex h-screen w-full overflow-hidden bg-slate-50 dark:bg-slate-950">
       <div
         className={cn(
-          "transition-all duration-300 ease-in-out overflow-hidden",
-          isSidebarOpen ? "w-64 opacity-100" : "w-0 opacity-0",
+          "overflow-hidden transition-all duration-300 ease-in-out",
+          isSidebarOpen ? "w-64 opacity-100" : "w-0 opacity-0"
         )}
       >
         <Sidebar
@@ -1002,7 +1023,7 @@ export function ChatScreen() {
         />
       </div>
 
-      <div className="flex flex-col flex-1 h-full relative bg-background shadow-xl rounded-l-2xl border-l border-slate-100 overflow-hidden my-0 mr-0 dark:border-slate-800 dark:shadow-none">
+      <div className="bg-background relative my-0 mr-0 flex h-full flex-1 flex-col overflow-hidden rounded-l-2xl border-l border-slate-100 shadow-xl dark:border-slate-800 dark:shadow-none">
         {!isSidebarOpen && (
           <div className="absolute top-4 left-4 z-10">
             <Button
@@ -1016,8 +1037,8 @@ export function ChatScreen() {
           </div>
         )}
 
-        <ScrollArea className="flex-1 p-4 max-h-[calc(100vh-80px)]">
-          <div className="max-w-4xl mx-auto space-y-6 pb-10 pt-10">
+        <ScrollArea className="max-h-[calc(100vh-80px)] flex-1 p-4">
+          <div className="mx-auto max-w-4xl space-y-6 pt-10 pb-10">
             {messages.length === 0 ? (
               <div className="mt-10">
                 <EmptyState />
@@ -1043,7 +1064,7 @@ export function ChatScreen() {
                 role: "assistant",
                 content: `📄 "${fileName}" uploaded and queued for ingestion.`,
                 status: "done",
-              }),
+              })
             );
           }}
         />
@@ -1187,7 +1208,7 @@ The final types (authored in §5.l):
 export type MessageStatus = "pending" | "streaming" | "done" | "error";
 
 export interface Step {
-  label: string;                                  // "routing" | "retrieving" | "searching web" | "synthesizing" | "done"
+  label: string; // "routing" | "retrieving" | "searching web" | "synthesizing" | "done"
   state: "active" | "complete" | "error";
   detail?: string;
 }
@@ -1203,13 +1224,13 @@ export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
-  timestamp: number;          // epoch ms (serializable)
+  timestamp: number; // epoch ms (serializable)
   status: MessageStatus;
   steps: Step[];
   sources: Source[];
   route?: RouteType;
   components?: RichComponent[]; // backend P6 `component` event; empty on the blocking path; rendered by M10
-  sourcesCount?: number;      // legacy alias for the unmodified chat-message.tsx (M1 only)
+  sourcesCount?: number; // legacy alias for the unmodified chat-message.tsx (M1 only)
 }
 ```
 
@@ -1228,7 +1249,7 @@ export interface Message {
 5. `finalize(id)` — `status: "done"`.
 
 Because both strategies write the **same** five fields through the **same** store actions, flipping
-`flags.streaming` in M9 changes *which hook calls them and how often* — never the `Message` shape, the
+`flags.streaming` in M9 changes _which hook calls them and how often_ — never the `Message` shape, the
 store, or any panel/component. That is the entire point of building the shape now.
 
 ---
@@ -1268,7 +1289,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { useChatStore, createMessage } from "./chat.store";
 
 const reset = () =>
-  useChatStore.setState({ messages: [], draft: "", webSearchAllowed: false, isLoading: false });
+  useChatStore.setState({
+    messages: [],
+    draft: "",
+    webSearchAllowed: false,
+    isLoading: false,
+  });
 
 describe("chat.store", () => {
   beforeEach(reset);
@@ -1367,20 +1393,22 @@ describe("useBlockingChat", () => {
 
     await waitFor(() => {
       const msgs = useChatStore.getState().messages;
-      expect(msgs).toHaveLength(2);                 // user + assistant
+      expect(msgs).toHaveLength(2); // user + assistant
       const assistant = msgs[1];
       expect(assistant.role).toBe("assistant");
       expect(assistant.content).toBe("The answer.");
       expect(assistant.route).toBe("RAG");
       expect(assistant.status).toBe("done");
-      expect(assistant.sources).toHaveLength(2);    // context_count synthesized
+      expect(assistant.sources).toHaveLength(2); // context_count synthesized
       expect(assistant.steps).toEqual([{ label: "done", state: "complete" }]);
     });
     expect(useChatStore.getState().isLoading).toBe(false);
   });
 
   it("on error writes an ERROR assistant bubble with the backend detail", async () => {
-    (sendMessage as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Gemini 429"));
+    (sendMessage as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Gemini 429")
+    );
     const { result } = renderHook(() => useBlockingChat(), { wrapper });
     act(() => result.current.sendMessage("q", true));
 
@@ -1422,7 +1450,7 @@ describe("useBlockingChat", () => {
    (`isServer`) and a singleton in the browser. A module-level `new QueryClient()` would leak state
    across requests/users in RSC.
 3. **Do NOT put `messages` in the Query cache.** They live only in Zustand. Mixing them invites
-   `setQueryData` churn on every token in M2 and double-source-of-truth bugs. The mutation's *result*
+   `setQueryData` churn on every token in M2 and double-source-of-truth bugs. The mutation's _result_
    is written to the store in `onSuccess`; the Query cache holds nothing chat-message-shaped.
 4. **`timestamp` must be serializable.** We switched `Date` → `number` (epoch ms). A `Date` object in a
    store that may later be persisted/hydrated (auth/session stores in M6) or serialized for tests/SSR
@@ -1434,7 +1462,7 @@ describe("useBlockingChat", () => {
    client API calls only. Hydration mismatch risk is nil because no server-rendered markup depends on
    it.
 6. **Empty-assistant-placeholder ordering (see §5.h note).** Adding the placeholder on `onMutate`
-   changes *when* the assistant DOM node is created (immediately vs. after await). Verify §7's "send
+   changes _when_ the assistant DOM node is created (immediately vs. after await). Verify §7's "send
    message" item to confirm no visible difference (the body is empty until `appendContent`, and
    `<MessageLoading/>` covers the in-flight state exactly as today).
 7. **`chat-input.tsx` import swap is the only allowed edit to an existing chat component.** It must be a
@@ -1447,7 +1475,7 @@ describe("useBlockingChat", () => {
 9. **Zod strictness vs. real payloads.** `uploadResponseSchema`/`cleanupResponseSchema` use
    `.passthrough()` and optional fields so older/newer backend deploys with extra fields don't throw and
    break the toast/reset flow. `chatResponseSchema` is strict on the four known fields; if the deployed
-   backend omits `context_count`, that's a real contract break we *want* surfaced as an `ApiError`.
+   backend omits `context_count`, that's a real contract break we _want_ surfaced as an `ApiError`.
 10. **`sourcesCount` legacy alias.** Kept on `Message` only so the unmodified `chat-message.tsx:112`
     footer renders in M1. M3 migrates that component to read `sources.length` and the alias is dropped.
     Track it as M3 cleanup; don't let it ossify.

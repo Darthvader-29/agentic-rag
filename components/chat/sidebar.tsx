@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Trash2, FileText } from "lucide-react";
 
 interface SidebarProps {
@@ -10,11 +11,11 @@ interface SidebarProps {
 
 export function Sidebar({ onClearSession, onToggle }: SidebarProps) {
   return (
-    <div className="w-64 border-r h-full bg-slate-50/50 flex flex-col p-4 dark:bg-slate-900/50 dark:border-slate-800">
+    <div className="flex h-full w-64 flex-col border-r bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-900/50">
       {/* Header with toggle */}
-      <div className="flex items-center justify-between mb-8 px-2">
-        <div className="flex items-center gap-2 font-bold text-lg">
-          <div className="bg-blue-600 p-1 rounded text-white">
+      <div className="mb-8 flex items-center justify-between px-2">
+        <div className="flex items-center gap-2 text-lg font-bold">
+          <div className="rounded bg-blue-600 p-1 text-white">
             <FileText className="h-4 w-4" />
           </div>
           RAG Chat
@@ -46,11 +47,11 @@ export function Sidebar({ onClearSession, onToggle }: SidebarProps) {
       </div>
 
       {/* Main Content centered */}
-      <div className="flex-1 flex flex-col items-center justify-center overflow-y-auto">
-        <div className="space-y-4 w-full flex flex-col items-center">
+      <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto">
+        <div className="flex w-full flex-col items-center space-y-4">
           {/* Source Code Card */}
-          <div className="w-full max-w-[210px] rounded-lg border bg-white shadow-sm p-3">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 text-center">
+          <div className="w-full max-w-[210px] rounded-lg border bg-white p-3 shadow-sm">
+            <p className="mb-2 text-center text-xs font-semibold tracking-wider text-slate-500 uppercase">
               Source Code
             </p>
 
@@ -85,7 +86,7 @@ export function Sidebar({ onClearSession, onToggle }: SidebarProps) {
 
           {/* About / Contact Message */}
           <div className="w-full px-2">
-            <p className="mt-2 text-xs text-muted-foreground leading-relaxed text-center">
+            <p className="text-muted-foreground mt-2 text-center text-xs leading-relaxed">
               Hello this is my RAG chatbot. This web application has been
               deployed using free available resources so the performance might
               not be at par with enterprise benchmarks. If encountered any
@@ -103,10 +104,13 @@ export function Sidebar({ onClearSession, onToggle }: SidebarProps) {
       </div>
 
       {/* Footer Actions */}
-      <div className="border-t pt-4 dark:border-slate-800 flex justify-center">
+      <div className="flex flex-col gap-2 border-t pt-4 dark:border-slate-800">
+        <div className="flex justify-end px-1">
+          <ThemeToggle />
+        </div>
         <Button
           variant="ghost"
-          className="w-full justify-center gap-2 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+          className="w-full justify-center gap-2 text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
           onClick={onClearSession}
         >
           <Trash2 className="h-4 w-4" />

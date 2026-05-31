@@ -14,7 +14,11 @@ interface ChatInputProps {
   onFileUploaded?: (fileName: string) => void; // NEW
 }
 
-export function ChatInput({ isLoading, onSend, onFileUploaded }: ChatInputProps) {
+export function ChatInput({
+  isLoading,
+  onSend,
+  onFileUploaded,
+}: ChatInputProps) {
   const [input, setInput] = useState("");
   const [webSearch, setWebSearch] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -51,9 +55,9 @@ export function ChatInput({ isLoading, onSend, onFileUploaded }: ChatInputProps)
   };
 
   return (
-    <div className="p-4 bg-background border-t dark:border-slate-800">
-      <div className="max-w-4xl mx-auto space-y-2">
-        <div className="relative flex items-center p-1 border rounded-full bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring dark:border-slate-800">
+    <div className="bg-background border-t p-4 dark:border-slate-800">
+      <div className="mx-auto max-w-4xl space-y-2">
+        <div className="bg-background focus-within:ring-ring relative flex items-center rounded-full border p-1 shadow-sm focus-within:ring-1 dark:border-slate-800">
           {/* Left buttons */}
           <div className="flex items-center gap-1 pl-1">
             <input
@@ -66,7 +70,7 @@ export function ChatInput({ isLoading, onSend, onFileUploaded }: ChatInputProps)
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-foreground rounded-full"
+              className="text-muted-foreground hover:text-foreground h-8 w-8 rounded-full"
               onClick={() => fileInputRef.current?.click()}
               disabled={isUploading || isLoading}
               title="Upload document"
@@ -82,9 +86,9 @@ export function ChatInput({ isLoading, onSend, onFileUploaded }: ChatInputProps)
               variant="ghost"
               size="icon"
               className={cn(
-                "h-8 w-8 transition-colors rounded-full",
+                "h-8 w-8 rounded-full transition-colors",
                 webSearch
-                  ? "text-blue-500 bg-blue-50 hover:bg-blue-100 hover:text-blue-600"
+                  ? "bg-blue-50 text-blue-500 hover:bg-blue-100 hover:text-blue-600"
                   : "text-muted-foreground hover:text-foreground"
               )}
               onClick={() => setWebSearch(!webSearch)}
@@ -100,7 +104,7 @@ export function ChatInput({ isLoading, onSend, onFileUploaded }: ChatInputProps)
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask anything..."
-            className="min-h-[40px] max-h-[200px] resize-none border-0 shadow-none focus-visible:ring-0 px-3 py-2 bg-transparent flex-1 leading-6"
+            className="max-h-[200px] min-h-[40px] flex-1 resize-none border-0 bg-transparent px-3 py-2 leading-6 shadow-none focus-visible:ring-0"
             style={{ height: "40px" }}
             disabled={isLoading}
           />
@@ -110,13 +114,13 @@ export function ChatInput({ isLoading, onSend, onFileUploaded }: ChatInputProps)
             size="icon"
             onClick={handleSend}
             disabled={isLoading || !input.trim()}
-            className="h-8 w-8 rounded-full shrink-0 mr-1"
+            className="mr-1 h-8 w-8 shrink-0 rounded-full"
           >
             <ArrowUp className="h-4 w-4" />
           </Button>
         </div>
 
-        <div className="text-[10px] text-center text-muted-foreground">
+        <div className="text-muted-foreground text-center text-[10px]">
           AI can make mistakes. Check important info.
         </div>
       </div>

@@ -26,8 +26,7 @@ export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
-  route?: RouteType;      // Only assistant messages have this
-  sourcesCount?: number;  // Only RAG messages have this
+  route?: RouteType; // Only assistant messages have this
+  sourcesCount?: number; // Only RAG messages have this
   timestamp: Date;
 }
-

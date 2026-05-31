@@ -9,6 +9,7 @@ Replace today's fire-and-forget multipart upload with a **presigned-PUT, direct-
 ## 1. Objective & Scope
 
 ### In scope
+
 - **Presigned PUT flow** — request a presigned S3 URL from the backend (`POST /api/upload`), receive `{ document_id, upload_url, s3_key }`.
 - **Direct-to-S3 upload with progress** — `PUT` the raw file bytes straight to S3/MinIO at `upload_url`, surfacing **upload percentage** via `XMLHttpRequest.upload.onprogress` (the API process never touches the bytes).
 - **Ingestion task kickoff** — confirm the object landed (`POST /api/upload/confirm` with `{ document_id, s3_key }`), which `head_object`-verifies and enqueues the Celery ingestion task.
@@ -17,6 +18,7 @@ Replace today's fire-and-forget multipart upload with a **presigned-PUT, direct-
 - **Flag gating + multipart fallback** — `NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD`; OFF → today's multipart `/upload` FormData path, fire-and-forget, no polling, no document-manager.
 
 ### Out of scope
+
 - Chat streaming / SSE (`NEXT_PUBLIC_FEATURE_STREAMING`, M2/M9).
 - Provider keys / BYOK / model picker (M7).
 - Resumable / multipart-chunked S3 uploads, pause/resume, client-side retry of S3 PUT (noted as future work in §9).
@@ -34,32 +36,36 @@ Replace today's fire-and-forget multipart upload with a **presigned-PUT, direct-
 
 ### 2.0 Plan-vs-backend reconciliation (READ THIS FIRST)
 
-The frontend improvement plan (M8 line) describes the target as *"presigned PUT to S3 + `/upload/status/{task_id}` polling"* with status enum *`pending|processing|done|failed`*. The **actual backend Phase 5 doc does not implement a `/upload/status/{task_id}` endpoint and does not return a `task_id` to the client.** Reconciling the two:
+The frontend improvement plan (M8 line) describes the target as _"presigned PUT to S3 + `/upload/status/{task_id}` polling"_ with status enum _`pending|processing|done|failed`_. The **actual backend Phase 5 doc does not implement a `/upload/status/{task_id}` endpoint and does not return a `task_id` to the client.** Reconciling the two:
 
-| Plan wording | Actual backend (P5/P2 docs) | Decision for this milestone |
-|---|---|---|
-| `POST /upload` → presigned URL | `POST /api/upload` body `{ filename, content_type? }` → `{ document_id, upload_url, s3_key }` (`06...md:463-473`) | Use the real two-field request + 3-field response. |
-| "ingest-start call returning `task_id`" | `POST /api/upload/confirm` body `{ document_id, s3_key }` → `{ document_id, status: "queued" }`. Celery's task id is **server-internal**, never returned (`06...md:475-490`). | The client's polling key is **`document_id`**, not a `task_id`. |
-| `GET /upload/status/{task_id}` | **No such route.** Status lives on the `documents` row and is read via `GET /api/documents/{document_id}` (referenced at `06...md:63`, `:517`, `:634`). | Poll `GET /api/documents/{document_id}`. |
+| Plan wording                                    | Actual backend (P5/P2 docs)                                                                                                                                                                                                                      | Decision for this milestone                                                                                                                                                                                             |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /upload` → presigned URL                  | `POST /api/upload` body `{ filename, content_type? }` → `{ document_id, upload_url, s3_key }` (`06...md:463-473`)                                                                                                                                | Use the real two-field request + 3-field response.                                                                                                                                                                      |
+| "ingest-start call returning `task_id`"         | `POST /api/upload/confirm` body `{ document_id, s3_key }` → `{ document_id, status: "queued" }`. Celery's task id is **server-internal**, never returned (`06...md:475-490`).                                                                    | The client's polling key is **`document_id`**, not a `task_id`.                                                                                                                                                         |
+| `GET /upload/status/{task_id}`                  | **No such route.** Status lives on the `documents` row and is read via `GET /api/documents/{document_id}` (referenced at `06...md:63`, `:517`, `:634`).                                                                                          | Poll `GET /api/documents/{document_id}`.                                                                                                                                                                                |
 | status enum `pending\|processing\|done\|failed` | `DocumentStatus = pending \| processing \| ready \| failed` (`03...md:263,717,728`). Note `06...md:392` uses `"complete"` in the Celery task body — an **inconsistency in the backend docs**; the enum of record (Phase 2 migration) is `ready`. | Treat **`ready`** as the success terminal. The Zod schema **accepts both `ready` and `complete`** and normalizes to `ready`, so we are robust to whichever the deployed backend emits. `done` is a UI-layer alias only. |
 
 **Assumptions (explicitly flagged — backend doc is silent):**
+
 - **(A1)** `GET /api/documents/{id}` returns at least `{ id, filename, status, s3_key, session_id }`. The doc references this poll route (`06...md:517`) but never prints its response body. We **assume** the shape below and Zod-parse defensively (`.passthrough()` not used; unknown keys ignored by object parse).
 - **(A2)** Listing a session's documents (`GET /api/documents?session_id=...`) exists for the `document-manager`. The doc implies per-session document tracking (`session_has_documents`, `list_s3_keys_for_session`, `03...md:36`) but does not print a list route. We design `document-manager` to render whatever the store already holds (uploads performed this session) and to **optionally** hydrate from a list endpoint if present; if the list 404s the manager simply shows session-local uploads. This keeps M8 shippable without the list route.
-- **(A3)** The presigned URL is a plain **PUT** URL (not presigned-POST form fields). Confirmed: `06...md:62` — *"Presigned **POST** adds form-field surface we do not need."* So the client does a single `PUT upload_url` with the file as the raw body and `Content-Type` matching what was presigned.
+- **(A3)** The presigned URL is a plain **PUT** URL (not presigned-POST form fields). Confirmed: `06...md:62` — _"Presigned **POST** adds form-field surface we do not need."_ So the client does a single `PUT upload_url` with the file as the raw body and `Content-Type` matching what was presigned.
 - **(A4)** Auth: after M6, `/api/upload` and `/api/upload/confirm` require `Authorization: Bearer <token>` (`06...md:81`). The S3 `PUT` is **unauthenticated** (the signature is in the URL). Our `http-client` already attaches the bearer for backend calls; the S3 PUT must go through a **raw XHR that does NOT attach the bearer** (sending `Authorization` to S3 can break the signature — see §9).
 
 ### 2.1 Today (flag OFF) — multipart passthrough
+
 ```
 POST /api/upload                         Content-Type: multipart/form-data
   form fields: file=<binary>, session_id=<uuid>
 → 200 { "status": "processing", "s3_key": "uploads/<...>" }     // 03...md:544
 ```
+
 This is exactly what `services/api.ts uploadFile` does today (FormData, fire-and-forget). **Preserved verbatim** as the fallback.
 
 ### 2.2 Presigned flow (flag ON)
 
 **Step 1 — request presigned URL** (`06...md:463-473`)
+
 ```http
 POST /api/upload
 Authorization: Bearer <token>        # M6
@@ -67,28 +73,33 @@ Content-Type: application/json
 
 { "filename": "report.pdf", "content_type": "application/pdf" }
 ```
+
 ```jsonc
 // 200
 {
   "document_id": "doc_01HZ...",
   "upload_url": "https://bucket.s3.amazonaws.com/uploads/u1/uuid_report.pdf?X-Amz-Signature=...",
-  "s3_key": "uploads/u1/uuid_report.pdf"
+  "s3_key": "uploads/u1/uuid_report.pdf",
 }
 ```
+
 > Server side: `key = uploads/{user.id}/{uuid}_{filename}`; `repo.create_document(status="pending")`; presign expires in `900s` (`06...md:439,469-473`).
 
 **Step 2 — PUT bytes directly to S3** (no API involvement, `06...md:625`)
+
 ```http
 PUT <upload_url>
 Content-Type: application/pdf        # MUST match the content_type used at presign time (§9)
 
 <raw file bytes>
 ```
+
 ```
 → 200 / 204 (empty body) on success. Progress observed via XHR upload events.
 ```
 
 **Step 3 — confirm + enqueue ingestion** (`06...md:475-490`)
+
 ```http
 POST /api/upload/confirm
 Authorization: Bearer <token>
@@ -96,6 +107,7 @@ Content-Type: application/json
 
 { "document_id": "doc_01HZ...", "s3_key": "uploads/u1/uuid_report.pdf" }
 ```
+
 ```jsonc
 // 200  -> ingestion enqueued (Celery)
 { "document_id": "doc_01HZ...", "status": "queued" }
@@ -108,45 +120,48 @@ Content-Type: application/json
 ```
 
 **Step 4 — poll ingestion status** (assumption A1; route ref `06...md:517,634`)
+
 ```http
 GET /api/documents/doc_01HZ...
 Authorization: Bearer <token>
 ```
+
 ```jsonc
 // 200
 {
   "id": "doc_01HZ...",
   "filename": "report.pdf",
-  "status": "processing",          // pending | processing | ready | failed   (03...md:717)
+  "status": "processing", // pending | processing | ready | failed   (03...md:717)
   "s3_key": "uploads/u1/uuid_report.pdf",
   "session_id": "sess_...",
-  "error": null                     // assumed; may be absent. Present on failed.
+  "error": null, // assumed; may be absent. Present on failed.
 }
 ```
+
 **Status lifecycle** (`03...md:728`): `pending → processing → ready | failed`. Terminal states: `ready` (success), `failed` (error). After `confirm` returns `queued`, the document is still `pending`/`processing` until the worker finishes; `ready`/`failed` is durable in Postgres and readable from any instance.
 
 ---
 
 ## 3. Decisions & Rationale
 
-| Decision | Rationale |
-|---|---|
-| **Direct-to-S3 presigned PUT** (not multipart-through-API) when flag ON | Offloads file bytes and bandwidth/memory from the API process (`06...md:39-40,62,625`); supports large files; the API only issues a URL and later verifies + enqueues. Multipart-through-API streams the whole file through FastAPI and is what we are replacing. |
-| **Single PUT, not presigned-POST** | Backend chose presigned **PUT** (`06...md:62`): no form-field surface. Client does one `PUT` with the raw body. |
-| **`XMLHttpRequest` for the S3 PUT** (not `fetch`) | `fetch()` has **no upload-progress** API (no `ReadableStream` request-progress in browsers today; `ReadableStream` request bodies are not broadly supported and don't give byte counts). `XMLHttpRequest.upload.onprogress` gives `loaded/total` for a real progress bar. We isolate XHR to exactly one function (`putToS3`) and keep everything else on the typed `http-client`. |
-| **Two-step confirm (presign → PUT → confirm)** | Mirrors the backend's race-closing design (`06...md:62,116-119`): the client must finish the PUT before the server `head_object`-verifies and enqueues. The client orchestrates all three steps in order. |
-| **Poll `GET /api/documents/{id}` keyed on `document_id`** (not a `task_id`) | The backend never returns the Celery task id (§2.0); status of record lives on the `documents` row (`06...md:63`, *"Ingestion status in Postgres… any instance can poll `/api/documents/{id}`"*). |
-| **TanStack Query `refetchInterval` with stop-on-terminal** | Query's `refetchInterval: (query) => isTerminal ? false : intervalMs` is the idiomatic self-terminating poll; it auto-pauses on tab blur (`refetchIntervalInBackground: false`) and auto-cancels on unmount, preventing the "polling never stops" leak (§9). Linear `2s` interval (backoff capped) — ingestion is seconds-to-minutes, not sub-second. |
-| **Accept both `ready` and `complete`** in the status schema | The backend docs disagree (`ready` in P2 enum vs `complete` in P5 task body). Normalizing both to `ready` makes the client correct against whichever the deployed server emits, with zero risk. |
-| **`document-manager` backed by Query + a Zustand `upload.store`** | Query owns server truth (per-doc status polls); Zustand owns the **in-flight** client phases (requesting/uploading%/ingesting) that have no server representation yet (the S3 PUT % is purely client-side). The manager renders the union. |
-| **Flag-gated fallback so flag-off == today** | `use-upload` reads `flags.presignedUpload`; OFF → `multipartUpload` (the literal port of today's `uploadFile`) + a single success toast, **no** store entry, **no** polling, **no** document-manager. Proven in §7. |
+| Decision                                                                    | Rationale                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Direct-to-S3 presigned PUT** (not multipart-through-API) when flag ON     | Offloads file bytes and bandwidth/memory from the API process (`06...md:39-40,62,625`); supports large files; the API only issues a URL and later verifies + enqueues. Multipart-through-API streams the whole file through FastAPI and is what we are replacing.                                                                                                                 |
+| **Single PUT, not presigned-POST**                                          | Backend chose presigned **PUT** (`06...md:62`): no form-field surface. Client does one `PUT` with the raw body.                                                                                                                                                                                                                                                                   |
+| **`XMLHttpRequest` for the S3 PUT** (not `fetch`)                           | `fetch()` has **no upload-progress** API (no `ReadableStream` request-progress in browsers today; `ReadableStream` request bodies are not broadly supported and don't give byte counts). `XMLHttpRequest.upload.onprogress` gives `loaded/total` for a real progress bar. We isolate XHR to exactly one function (`putToS3`) and keep everything else on the typed `http-client`. |
+| **Two-step confirm (presign → PUT → confirm)**                              | Mirrors the backend's race-closing design (`06...md:62,116-119`): the client must finish the PUT before the server `head_object`-verifies and enqueues. The client orchestrates all three steps in order.                                                                                                                                                                         |
+| **Poll `GET /api/documents/{id}` keyed on `document_id`** (not a `task_id`) | The backend never returns the Celery task id (§2.0); status of record lives on the `documents` row (`06...md:63`, _"Ingestion status in Postgres… any instance can poll `/api/documents/{id}`"_).                                                                                                                                                                                 |
+| **TanStack Query `refetchInterval` with stop-on-terminal**                  | Query's `refetchInterval: (query) => isTerminal ? false : intervalMs` is the idiomatic self-terminating poll; it auto-pauses on tab blur (`refetchIntervalInBackground: false`) and auto-cancels on unmount, preventing the "polling never stops" leak (§9). Linear `2s` interval (backoff capped) — ingestion is seconds-to-minutes, not sub-second.                             |
+| **Accept both `ready` and `complete`** in the status schema                 | The backend docs disagree (`ready` in P2 enum vs `complete` in P5 task body). Normalizing both to `ready` makes the client correct against whichever the deployed server emits, with zero risk.                                                                                                                                                                                   |
+| **`document-manager` backed by Query + a Zustand `upload.store`**           | Query owns server truth (per-doc status polls); Zustand owns the **in-flight** client phases (requesting/uploading%/ingesting) that have no server representation yet (the S3 PUT % is purely client-side). The manager renders the union.                                                                                                                                        |
+| **Flag-gated fallback so flag-off == today**                                | `use-upload` reads `flags.presignedUpload`; OFF → `multipartUpload` (the literal port of today's `uploadFile`) + a single success toast, **no** store entry, **no** polling, **no** document-manager. Proven in §7.                                                                                                                                                               |
 
 ---
 
 ## 4. Current-State Snapshot
 
 - **`services/api.ts` → `uploadFile(file)`** (`services/api.ts:80-95`): builds `FormData` with `file` + `session_id`, `POST`s multipart to `${API_BASE_URL}/upload`, throws on `!res.ok`, returns `res.json()` typed `Promise<any>`. **No progress, no polling, fire-and-forget.** `API_BASE_URL` already includes `/api` (`:6`).
-- **`components/chat/chat-input.tsx` → `handleFileUpload`** (`:36-51`): on `<input type="file" accept=".pdf,.docx,.txt">` change, sets `isUploading`, `await api.uploadFile(file)`, then `toast.success(\`${file.name} uploaded\`)` and `onFileUploaded?.(file.name)`; `toast.error("Upload failed")` on throw; clears the input. The paperclip button shows a `Loader2` spinner while `isUploading`.
+- **`components/chat/chat-input.tsx` → `handleFileUpload`** (`:36-51`): on `<input type="file" accept=".pdf,.docx,.txt">` change, sets `isUploading`, `await api.uploadFile(file)`, then `toast.success(\`${file.name} uploaded\`)`and`onFileUploaded?.(file.name)`; `toast.error("Upload failed")`on throw; clears the input. The paperclip button shows a`Loader2`spinner while`isUploading`.
 - **`app/page.tsx` → `onFileUploaded`** callback: injects a synthetic chat message noting the file was uploaded (the "fire-and-forget toast/message injected today"). This is the UX M8 replaces (flag ON) with real progress + status.
 - **Architecture (post-M1):** `lib/api/http-client.ts` (typed `request<T>(path,{method,body,schema,auth,signal})`, prepends `env.NEXT_PUBLIC_API_URL`, Zod-parses, throws `ApiError`); `lib/flags.ts` (Zod env flags); TanStack Query provider mounted in `app/providers.tsx`; feature folders under `features/`. `features/upload` does not exist yet — created here.
 
@@ -191,6 +206,7 @@ test/msw/handlers.ts                      # add presign + S3 PUT + confirm + sta
 > Each task: **goal · files · full copy-pasteable code.** TS strict; no `any`. Assumes M1's `http-client`, `env`, `flags`, and the Query provider exist.
 
 ### Task 6.1 — `upload.schemas.ts` (Zod contracts)
+
 **Goal:** runtime-validated request/response shapes for every step, plus the status enum normalized across the backend-doc inconsistency.
 **Files:** `features/upload/api/upload.schemas.ts`
 
@@ -216,8 +232,12 @@ export function normalizeStatus(raw: RawDocumentStatus): DocumentStatus {
   return raw === "complete" ? "ready" : raw;
 }
 
-export const TERMINAL_STATUSES: ReadonlySet<DocumentStatus> = new Set(["ready", "failed"]);
-export const isTerminalStatus = (s: DocumentStatus): boolean => TERMINAL_STATUSES.has(s);
+export const TERMINAL_STATUSES: ReadonlySet<DocumentStatus> = new Set([
+  "ready",
+  "failed",
+]);
+export const isTerminalStatus = (s: DocumentStatus): boolean =>
+  TERMINAL_STATUSES.has(s);
 
 /** Step 1 request/response — POST /api/upload (06...md:463-473) */
 export const PresignRequestSchema = z.object({
@@ -285,10 +305,13 @@ export const MultipartUploadResponseSchema = z.object({
   status: z.string(),
   s3_key: z.string().optional(),
 });
-export type MultipartUploadResponse = z.infer<typeof MultipartUploadResponseSchema>;
+export type MultipartUploadResponse = z.infer<
+  typeof MultipartUploadResponseSchema
+>;
 ```
 
 ### Task 6.2 — `upload.api.ts` (network layer; XHR for S3 PUT)
+
 **Goal:** one function per backend step; the S3 PUT uses `XMLHttpRequest` for progress; legacy multipart preserved.
 **Files:** `features/upload/api/upload.api.ts`
 
@@ -310,15 +333,19 @@ import {
 } from "./upload.schemas";
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "https://python-agentic-rag-backend.onrender.com/api";
+  process.env.NEXT_PUBLIC_API_URL ??
+  "https://python-agentic-rag-backend.onrender.com/api";
 
 /** Step 1: ask the backend for a presigned PUT URL. Auth attached by http-client. */
 export async function getPresignedUrl(
   filename: string,
   contentType: string | undefined,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<PresignResponse> {
-  const body = PresignRequestSchema.parse({ filename, content_type: contentType });
+  const body = PresignRequestSchema.parse({
+    filename,
+    content_type: contentType,
+  });
   return httpClient.request<PresignResponse>("/upload", {
     method: "POST",
     body,
@@ -339,13 +366,20 @@ export interface PutToS3Options {
  * IMPORTANT: do NOT send an Authorization header to S3 — the signature is in the URL (A4, §9).
  * Content-Type MUST match the content_type used at presign time (§9).
  */
-export function putToS3(uploadUrl: string, file: File, opts: PutToS3Options = {}): Promise<void> {
+export function putToS3(
+  uploadUrl: string,
+  file: File,
+  opts: PutToS3Options = {}
+): Promise<void> {
   const { onProgress, signal } = opts;
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl, true);
     // Match the presigned content-type; falls back to a generic type if the browser gave none.
-    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    xhr.setRequestHeader(
+      "Content-Type",
+      file.type || "application/octet-stream"
+    );
 
     xhr.upload.onprogress = (e: ProgressEvent) => {
       if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total);
@@ -354,8 +388,10 @@ export function putToS3(uploadUrl: string, file: File, opts: PutToS3Options = {}
       if (xhr.status >= 200 && xhr.status < 300) resolve();
       else reject(new Error(`S3 PUT failed: ${xhr.status} ${xhr.statusText}`));
     };
-    xhr.onerror = () => reject(new Error("S3 PUT network error (check CORS — §9)"));
-    xhr.onabort = () => reject(new DOMException("S3 PUT aborted", "AbortError"));
+    xhr.onerror = () =>
+      reject(new Error("S3 PUT network error (check CORS — §9)"));
+    xhr.onabort = () =>
+      reject(new DOMException("S3 PUT aborted", "AbortError"));
 
     if (signal) {
       if (signal.aborted) {
@@ -372,9 +408,12 @@ export function putToS3(uploadUrl: string, file: File, opts: PutToS3Options = {}
 export async function confirmIngestion(
   documentId: string,
   s3Key: string,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<ConfirmResponse> {
-  const body = ConfirmRequestSchema.parse({ document_id: documentId, s3_key: s3Key });
+  const body = ConfirmRequestSchema.parse({
+    document_id: documentId,
+    s3_key: s3Key,
+  });
   return httpClient.request<ConfirmResponse>("/upload/confirm", {
     method: "POST",
     body,
@@ -387,14 +426,17 @@ export async function confirmIngestion(
 /** Step 4: read current ingestion status for a document. Normalized for the UI. */
 export async function getDocumentStatus(
   documentId: string,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<DocumentRecord> {
-  const raw = await httpClient.request("/documents/" + encodeURIComponent(documentId), {
-    method: "GET",
-    schema: DocumentRecordSchema,
-    auth: true,
-    signal,
-  });
+  const raw = await httpClient.request(
+    "/documents/" + encodeURIComponent(documentId),
+    {
+      method: "GET",
+      schema: DocumentRecordSchema,
+      auth: true,
+      signal,
+    }
+  );
   return toDocumentRecord(raw);
 }
 
@@ -417,6 +459,7 @@ export async function multipartUpload(file: File): Promise<void> {
 ```
 
 ### Task 6.3 — `upload.store.ts` (Zustand: in-flight client phases)
+
 **Goal:** track active uploads that have **no** server representation yet (the S3 PUT %), plus the `documentId` once known so polling can attach.
 **Files:** `features/upload/store/upload.store.ts`
 
@@ -471,24 +514,51 @@ export const useUploadStore = create<UploadState>((set) => ({
       },
     })),
   setPhase: (id, phase) =>
-    set((s) => (s.uploads[id] ? { uploads: { ...s.uploads, [id]: { ...s.uploads[id], phase } } } : s)),
+    set((s) =>
+      s.uploads[id]
+        ? { uploads: { ...s.uploads, [id]: { ...s.uploads[id], phase } } }
+        : s
+    ),
   setProgress: (id, progress) =>
     set((s) =>
       s.uploads[id]
-        ? { uploads: { ...s.uploads, [id]: { ...s.uploads[id], progress, phase: "uploading" } } }
-        : s,
+        ? {
+            uploads: {
+              ...s.uploads,
+              [id]: { ...s.uploads[id], progress, phase: "uploading" },
+            },
+          }
+        : s
     ),
   setDocumentId: (id, documentId) =>
-    set((s) => (s.uploads[id] ? { uploads: { ...s.uploads, [id]: { ...s.uploads[id], documentId } } } : s)),
+    set((s) =>
+      s.uploads[id]
+        ? { uploads: { ...s.uploads, [id]: { ...s.uploads[id], documentId } } }
+        : s
+    ),
   setStatus: (id, status) =>
     set((s) => {
       const u = s.uploads[id];
       if (!u) return s;
-      const phase: UploadPhase = status === "ready" ? "ready" : status === "failed" ? "failed" : "ingesting";
+      const phase: UploadPhase =
+        status === "ready"
+          ? "ready"
+          : status === "failed"
+            ? "failed"
+            : "ingesting";
       return { uploads: { ...s.uploads, [id]: { ...u, status, phase } } };
     }),
   fail: (id, error) =>
-    set((s) => (s.uploads[id] ? { uploads: { ...s.uploads, [id]: { ...s.uploads[id], phase: "failed", error } } } : s)),
+    set((s) =>
+      s.uploads[id]
+        ? {
+            uploads: {
+              ...s.uploads,
+              [id]: { ...s.uploads[id], phase: "failed", error },
+            },
+          }
+        : s
+    ),
   remove: (id) =>
     set((s) => {
       const next = { ...s.uploads };
@@ -499,6 +569,7 @@ export const useUploadStore = create<UploadState>((set) => ({
 ```
 
 ### Task 6.4 — `use-upload.ts` (orchestration + flag branch)
+
 **Goal:** flag ON → presign → PUT(progress) → confirm, writing phases into the store; flag OFF → `multipartUpload` + a single toast (today's behavior, **no** store entry).
 **Files:** `features/upload/hooks/use-upload.ts`
 
@@ -560,19 +631,28 @@ export function useUpload(): UseUploadResult {
 
       try {
         // Step 1
-        const presign = await getPresignedUrl(file.name, file.type || undefined, controller.signal);
+        const presign = await getPresignedUrl(
+          file.name,
+          file.type || undefined,
+          controller.signal
+        );
         setDocumentId(id, presign.document_id);
 
         // Step 2 (progress)
         setPhase(id, "uploading");
         await putToS3(presign.upload_url, file, {
           signal: controller.signal,
-          onProgress: (loaded, total) => setProgress(id, Math.round((loaded / total) * 100)),
+          onProgress: (loaded, total) =>
+            setProgress(id, Math.round((loaded / total) * 100)),
         });
 
         // Step 3
         setPhase(id, "ingesting");
-        await confirmIngestion(presign.document_id, presign.s3_key, controller.signal);
+        await confirmIngestion(
+          presign.document_id,
+          presign.s3_key,
+          controller.signal
+        );
         // Polling now begins in use-upload-status (keyed by document_id). Terminal toast fires there.
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
@@ -587,7 +667,7 @@ export function useUpload(): UseUploadResult {
         controllers.current.delete(id);
       }
     },
-    [presignedEnabled, start, setPhase, setProgress, setDocumentId, fail],
+    [presignedEnabled, start, setPhase, setProgress, setDocumentId, fail]
   );
 
   return { upload, abort, presignedEnabled };
@@ -595,6 +675,7 @@ export function useUpload(): UseUploadResult {
 ```
 
 ### Task 6.5 — `use-upload-status.ts` (Query polling, stop-on-terminal)
+
 **Goal:** poll `GET /api/documents/{id}` with `refetchInterval` that returns `false` on terminal status; sync into the store; toast once on `ready`/`failed`.
 **Files:** `features/upload/hooks/use-upload-status.ts`
 
@@ -618,7 +699,10 @@ const POLL_INTERVAL_MS = 2000;
  * - Query auto-cancels on unmount (no leaked timers — §9).
  * Pass `clientUploadId` to mirror status back into the in-flight store entry.
  */
-export function useUploadStatus(documentId: string | null, clientUploadId?: string) {
+export function useUploadStatus(
+  documentId: string | null,
+  clientUploadId?: string
+) {
   const setStatus = useUploadStore((s) => s.setStatus);
   const toasted = useRef(false);
 
@@ -643,7 +727,10 @@ export function useUploadStatus(documentId: string | null, clientUploadId?: stri
     if (!toasted.current && isTerminalStatus(data.status)) {
       toasted.current = true;
       if (data.status === "ready") toast.success(`${data.filename} ready`);
-      else toast.error(`${data.filename} failed to ingest${data.error ? `: ${data.error}` : ""}`);
+      else
+        toast.error(
+          `${data.filename} failed to ingest${data.error ? `: ${data.error}` : ""}`
+        );
     }
   }, [query.data, clientUploadId, setStatus]);
 
@@ -652,6 +739,7 @@ export function useUploadStatus(documentId: string | null, clientUploadId?: stri
 ```
 
 ### Task 6.6 — `upload-progress.tsx` (per-file progress → ingestion status)
+
 **Goal:** a `<Progress/>` bar driven by the S3 PUT %, then an ingestion spinner/badge once confirmed. Activates polling via `useUploadStatus`.
 **Files:** `features/upload/components/upload-progress.tsx`
 
@@ -673,44 +761,55 @@ interface UploadProgressProps {
 
 export function UploadProgress({ upload, onCancel }: UploadProgressProps) {
   // Poll only once we have a documentId and aren't terminal yet.
-  const isPolling = !!upload.documentId && (upload.phase === "ingesting" || upload.phase === "uploading");
+  const isPolling =
+    !!upload.documentId &&
+    (upload.phase === "ingesting" || upload.phase === "uploading");
   useUploadStatus(isPolling ? upload.documentId : null, upload.id);
 
   return (
-    <div className="flex flex-col gap-1 rounded-md border border-border bg-card p-2 text-sm">
+    <div className="border-border bg-card flex flex-col gap-1 rounded-md border p-2 text-sm">
       <div className="flex items-center justify-between gap-2">
         <span className="truncate font-medium">{upload.filename}</span>
-        {(upload.phase === "requesting" || upload.phase === "uploading") && onCancel && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 text-muted-foreground"
-            onClick={() => onCancel(upload.id)}
-            title="Cancel upload"
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        )}
+        {(upload.phase === "requesting" || upload.phase === "uploading") &&
+          onCancel && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground h-6 w-6"
+              onClick={() => onCancel(upload.id)}
+              title="Cancel upload"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          )}
       </div>
 
       {upload.phase === "uploading" && (
         <div className="flex items-center gap-2">
           <Progress value={upload.progress} className="h-1.5 flex-1" />
-          <span className="w-9 text-right text-xs text-muted-foreground">{upload.progress}%</span>
+          <span className="text-muted-foreground w-9 text-right text-xs">
+            {upload.progress}%
+          </span>
         </div>
       )}
 
       {upload.phase === "requesting" && (
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span className="text-muted-foreground flex items-center gap-1.5 text-xs">
           <Loader2 className="h-3 w-3 animate-spin" /> preparing upload…
         </span>
       )}
 
-      {(upload.phase === "ingesting" || upload.phase === "ready" || upload.phase === "failed") && (
+      {(upload.phase === "ingesting" ||
+        upload.phase === "ready" ||
+        upload.phase === "failed") && (
         <div className="flex items-center gap-2 text-xs">
-          {upload.phase === "ingesting" && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          {upload.phase === "ingesting" && (
+            <Loader2 className="text-muted-foreground h-3 w-3 animate-spin" />
+          )}
           <IngestionStatusBadge status={upload.status ?? "processing"} />
-          {upload.error && <span className="truncate text-destructive">{upload.error}</span>}
+          {upload.error && (
+            <span className="text-destructive truncate">{upload.error}</span>
+          )}
         </div>
       )}
     </div>
@@ -719,6 +818,7 @@ export function UploadProgress({ upload, onCancel }: UploadProgressProps) {
 ```
 
 ### Task 6.7 — `ingestion-status-badge.tsx`, `document-row.tsx`, `document-manager.tsx`
+
 **Goal:** the document list with live status badges. The manager renders in-flight uploads (from the store) and, where available, server-side documents (assumption A2).
 **Files:** three components below.
 
@@ -746,7 +846,10 @@ const CLASS: Record<DocumentStatus, string> = {
 
 export function IngestionStatusBadge({ status }: { status: DocumentStatus }) {
   return (
-    <Badge variant="outline" className={cn("border-transparent text-xs font-medium", CLASS[status])}>
+    <Badge
+      variant="outline"
+      className={cn("border-transparent text-xs font-medium", CLASS[status])}
+    >
       {LABEL[status]}
     </Badge>
   );
@@ -769,9 +872,9 @@ export interface DocumentRowModel {
 
 export function DocumentRow({ doc }: { doc: DocumentRowModel }) {
   return (
-    <div className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-accent/50">
+    <div className="hover:bg-accent/50 flex items-center justify-between gap-2 rounded-md px-2 py-1.5">
       <div className="flex min-w-0 items-center gap-2">
-        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <FileText className="text-muted-foreground h-4 w-4 shrink-0" />
         <span className="truncate text-sm">{doc.filename}</span>
       </div>
       <IngestionStatusBadge status={doc.status} />
@@ -808,17 +911,29 @@ function DocumentManagerInner() {
   const list = useMemo(() => Object.values(uploads), [uploads]);
 
   if (list.length === 0) {
-    return <p className="px-2 py-3 text-xs text-muted-foreground">No documents uploaded this session.</p>;
+    return (
+      <p className="text-muted-foreground px-2 py-3 text-xs">
+        No documents uploaded this session.
+      </p>
+    );
   }
 
-  const active = list.filter((u) => u.phase !== "ready" && u.phase !== "failed");
+  const active = list.filter(
+    (u) => u.phase !== "ready" && u.phase !== "failed"
+  );
   const settled: DocumentRowModel[] = list
     .filter((u) => u.phase === "ready" || u.phase === "failed")
-    .map((u) => ({ id: u.id, filename: u.filename, status: (u.status ?? (u.phase as DocumentStatus)) }));
+    .map((u) => ({
+      id: u.id,
+      filename: u.filename,
+      status: u.status ?? (u.phase as DocumentStatus),
+    }));
 
   return (
     <div className="flex flex-col gap-2 p-2">
-      <h3 className="px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Documents</h3>
+      <h3 className="text-muted-foreground px-2 text-xs font-semibold tracking-wide uppercase">
+        Documents
+      </h3>
       {active.map((u) => (
         <UploadProgress key={u.id} upload={u} />
       ))}
@@ -831,6 +946,7 @@ function DocumentManagerInner() {
 ```
 
 ### Task 6.8 — `upload-button.tsx` + wire into `chat-input.tsx`
+
 **Goal:** replace the fire-and-forget `handleFileUpload` with `<UploadButton/>` that calls `useUpload`. Flag OFF → identical toast + (optional) `onFileUploaded`; flag ON → store-driven progress UI takes over (no synthetic chat message).
 **Files:** `features/upload/components/upload-button.tsx`, edit `chat-input.tsx`.
 
@@ -875,16 +991,26 @@ export function UploadButton({
 
   return (
     <>
-      <input type="file" ref={inputRef} className="hidden" onChange={onChange} accept={accept} />
+      <input
+        type="file"
+        ref={inputRef}
+        className="hidden"
+        onChange={onChange}
+        accept={accept}
+      />
       <Button
         variant="ghost"
         size="icon"
-        className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
+        className="text-muted-foreground hover:text-foreground h-8 w-8 rounded-full"
         onClick={() => inputRef.current?.click()}
         disabled={disabled || busy}
         title="Upload document"
       >
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+        {busy ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Paperclip className="h-4 w-4" />
+        )}
       </Button>
     </>
   );
@@ -899,12 +1025,13 @@ import { UploadButton } from "@/features/upload/components/upload-button";
 // remove: import { api } from "@/services/api";  and  the handleFileUpload + fileInputRef + isUploading state
 
 // inside the left-buttons cluster, replace the <input type="file"> + paperclip <Button> with:
-<UploadButton disabled={isLoading} onLegacyUploaded={onFileUploaded} />
+<UploadButton disabled={isLoading} onLegacyUploaded={onFileUploaded} />;
 ```
 
 > `onFileUploaded` (today's `app/page.tsx` callback that injects the synthetic "file uploaded" chat message) is passed straight through as `onLegacyUploaded`, so with the flag OFF the chat-message behavior is byte-for-byte today's. With the flag ON, `UploadButton` does **not** call it; the `document-manager` + `upload-progress` own the UX.
 
 ### Task 6.9 — Flag + env wiring
+
 **Goal:** add the flag to the Zod env + `flags` object.
 **Files:** `lib/env.ts`, `lib/flags.ts`, `.env.example`.
 
@@ -915,6 +1042,7 @@ NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD: z
   .default("false")
   .transform((v) => v === "true"),
 ```
+
 ```ts
 // lib/flags.ts (delta)
 export const flags = {
@@ -922,6 +1050,7 @@ export const flags = {
   presignedUpload: env.NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD,
 } as const;
 ```
+
 ```dotenv
 # .env.example (delta)
 # M8 / backend P5 — presigned S3 uploads + ingestion-status polling. OFF = today's multipart upload.
@@ -934,18 +1063,18 @@ NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD=false
 
 ## 7. Feature-Flag Behavior Matrix
 
-| Surface | `NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD=false` (default) | `=true` |
-|---|---|---|
-| Upload transport | `multipartUpload(file)` → `POST /api/upload` FormData (`file`,`session_id`) | presign → `PUT` direct-to-S3 → confirm |
-| API touches bytes? | Yes (passthrough, today) | No (direct-to-S3) |
-| Progress UI | None (paperclip spinner only, today) | Real S3 PUT % bar via XHR |
-| Ingestion kickoff | Implicit server-side (today) | Explicit `POST /api/upload/confirm` → Celery enqueue |
-| Status polling | None | `GET /api/documents/{id}` via Query `refetchInterval`, stop-on-terminal |
-| Toasts | `success("{file} uploaded")` / `error("Upload failed")` (today) | progress UI + terminal toast `"{file} ready"` / `"{file} failed…"` |
-| `onFileUploaded` synthetic chat message | Fired (today) | Not fired (manager owns UX) |
-| `document-manager` in sidebar | Not rendered (`return null`) | Rendered with live rows |
-| `upload.store` entries | None created | One per upload (phase/progress/status) |
-| Auth header on backend calls | as today | bearer attached by `http-client` (M6) |
+| Surface                                 | `NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD=false` (default)                      | `=true`                                                                 |
+| --------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Upload transport                        | `multipartUpload(file)` → `POST /api/upload` FormData (`file`,`session_id`) | presign → `PUT` direct-to-S3 → confirm                                  |
+| API touches bytes?                      | Yes (passthrough, today)                                                    | No (direct-to-S3)                                                       |
+| Progress UI                             | None (paperclip spinner only, today)                                        | Real S3 PUT % bar via XHR                                               |
+| Ingestion kickoff                       | Implicit server-side (today)                                                | Explicit `POST /api/upload/confirm` → Celery enqueue                    |
+| Status polling                          | None                                                                        | `GET /api/documents/{id}` via Query `refetchInterval`, stop-on-terminal |
+| Toasts                                  | `success("{file} uploaded")` / `error("Upload failed")` (today)             | progress UI + terminal toast `"{file} ready"` / `"{file} failed…"`      |
+| `onFileUploaded` synthetic chat message | Fired (today)                                                               | Not fired (manager owns UX)                                             |
+| `document-manager` in sidebar           | Not rendered (`return null`)                                                | Rendered with live rows                                                 |
+| `upload.store` entries                  | None created                                                                | One per upload (phase/progress/status)                                  |
+| Auth header on backend calls            | as today                                                                    | bearer attached by `http-client` (M6)                                   |
 
 **Proof that flag-off == today:** the only OFF-path code is `multipartUpload` (a literal port of `services/api.ts:80-95` — same endpoint, same fields, same `!res.ok` throw, fire-and-forget) plus the same two toasts and the same `onFileUploaded` callback. No store entry, no Query, no polling, no `document-manager` (it returns `null`). UX and network are identical to the current build.
 
@@ -954,6 +1083,7 @@ NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD=false
 ## 8. Testing & Verification
 
 ### MSW handlers (`test/msw/handlers.ts`)
+
 ```ts
 import { http, HttpResponse } from "msw";
 
@@ -969,7 +1099,10 @@ export const uploadHandlers = [
     const ct = request.headers.get("content-type") ?? "";
     if (ct.includes("multipart/form-data")) {
       // Flag-OFF legacy path
-      return HttpResponse.json({ status: "processing", s3_key: "uploads/legacy.pdf" });
+      return HttpResponse.json({
+        status: "processing",
+        s3_key: "uploads/legacy.pdf",
+      });
     }
     const docId = "doc_test_1";
     statusScript.set(docId, ["pending", "processing", "ready"]);
@@ -986,7 +1119,10 @@ export const uploadHandlers = [
   // Step 3 — confirm
   http.post(`${API}/upload/confirm`, async ({ request }) => {
     const body = (await request.json()) as { document_id: string };
-    return HttpResponse.json({ document_id: body.document_id, status: "queued" });
+    return HttpResponse.json({
+      document_id: body.document_id,
+      status: "queued",
+    });
   }),
 
   // Step 4 — status poll, advancing the script each call
@@ -994,12 +1130,19 @@ export const uploadHandlers = [
     const id = params.id as string;
     const q = statusScript.get(id) ?? ["ready"];
     const status = q.length > 1 ? q.shift()! : q[0];
-    return HttpResponse.json({ id, filename: "report.pdf", status, s3_key: `uploads/${id}`, session_id: "s1" });
+    return HttpResponse.json({
+      id,
+      filename: "report.pdf",
+      status,
+      s3_key: `uploads/${id}`,
+      session_id: "s1",
+    });
   }),
 ];
 ```
 
 ### Unit tests
+
 - **`use-upload` (flag ON):** mock the three api functions; assert order presign → putToS3(progress) → confirm; assert `upload.store` transitions `requesting → uploading(progress) → ingesting`; assert `documentId` set after presign.
 - **`use-upload` (flag OFF):** with flag stubbed false, assert `multipartUpload` called, `getPresignedUrl`/`putToS3`/`confirmIngestion` **not** called, success toast fired, **no** store entry created. (Flag-off parity gate.)
 - **`use-upload-status`:** with the scripted MSW status handler, render the hook; assert it polls and that `refetchInterval` returns `false` once `ready` (poll count stops increasing); assert store `status`/`phase` becomes `ready`; assert exactly **one** terminal toast.
@@ -1007,15 +1150,18 @@ export const uploadHandlers = [
 - **`upload.schemas`:** `normalizeStatus("complete") === "ready"`; `isTerminalStatus("ready"|"failed") === true`, `("processing") === false`.
 
 ### Component tests
+
 - **`upload-progress`:** phase `uploading` renders a `<Progress value=…/>` + `%`; phase `ingesting` renders spinner + `IngestionStatusBadge`; phase `failed` renders error text.
 - **`ingestion-status-badge`:** each status renders its label + class.
 - **`document-manager`:** flag OFF → renders `null`; flag ON + store entries → active uploads render `<UploadProgress/>`, settled render `<DocumentRow/>`; empty → "No documents…".
 
 ### Manual
+
 - **Flag ON against MSW (or MinIO):** pick a file → progress bar climbs → badge goes Processing → Ready; `document-manager` row appears; cancel mid-upload aborts.
 - **Flag OFF parity:** pick a file → single "uploaded" toast, synthetic chat message, no progress UI, no manager — identical to current build.
 
 ### Gates
+
 `npm run lint`, `prettier --check`, `tsc --noEmit`, `vitest run`, `next build` all pass.
 
 ---

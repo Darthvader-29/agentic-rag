@@ -13,16 +13,18 @@ Activate the dormant authentication seam built into the API layer: add a self-co
 **Objective:** turn the prototype's forgeable, anonymous `session_id` model into a real multi-tenant identity model that matches backend P3, **without breaking the flag-off path**. After M6, flipping `NEXT_PUBLIC_FEATURE_AUTH=true` (and pointing at a P3 backend) gives: register → login → persisted access+refresh tokens → every protected request carries `Authorization: Bearer <access>` → transparent `401`→refresh→retry → user-scoped server-owned sessions in the sidebar with resume. Flipping it back `false` restores today's exact behavior.
 
 **In scope**
+
 - `features/auth/*` module: API client + Zod schemas matching P3 contracts, persisted token store, hooks, login/register/user-menu/auth-guard components.
 - `app/(auth)/login/page.tsx` and `app/(auth)/register/page.tsx` route group (unauthenticated, no app chrome).
 - **Activation** of the dormant interceptor in `lib/api/http-client.ts`: read flag + token, attach `Bearer`, single-flight `401`→`POST /auth/refresh`→retry-once, on refresh failure clear store + redirect `/login`, on `403` throw a typed `ApiError` with `kind: "forbidden"`.
 - `features/sessions/*`: server-owned session list (TanStack Query), `session.store` for the current session, `session-list.tsx` in the sidebar with resume + new-session.
 - Make `chat.api` (and upload/cleanup) send the **user-owned** session id + `Bearer` when the flag is on; fall back to the anonymous client-generated id when off.
 - `auth-guard` gating the chat route when the flag is on; passthrough when off.
-- Flag wiring in `lib/flags.ts` (`flags.auth`) — assumed added by M0 with default `false`; M6 *consumes* it.
+- Flag wiring in `lib/flags.ts` (`flags.auth`) — assumed added by M0 with default `false`; M6 _consumes_ it.
 
 **Out of scope (explicitly)**
-- **BYOK key management UI** (the `settings/` route, `api-keys-form`, add/rotate/delete against `/api/keys`) → **M7**. P3 *ships* the encrypted `user_llm_keys` CRUD endpoints, but M6 only obtains and attaches the token that gates them; it renders **no** key UI.
+
+- **BYOK key management UI** (the `settings/` route, `api-keys-form`, add/rotate/delete against `/api/keys`) → **M7**. P3 _ships_ the encrypted `user_llm_keys` CRUD endpoints, but M6 only obtains and attaches the token that gates them; it renders **no** key UI.
 - **Provider/model picker** (gemini/openai/anthropic) → M7 (consumes P4).
 - Streaming, presigned uploads, document-status polling — unrelated phases.
 - Email verification, password reset, OAuth, refresh-token rotation/reuse detection, token revocation/blocklist, rate limiting, account lockout — **all out of scope on the backend too** (P3 Appendix B "Known gaps (deferred)"; §1 "Explicitly deferred"). The frontend must not pretend these exist (e.g. no "forgot password" link that 404s).
@@ -46,15 +48,15 @@ Source of truth: [`Python-Agentic-RAG-Backend/docs/04_Phase3_User_Accounts_and_A
 
 All under the API origin `env.NEXT_PUBLIC_API_URL`. Note the **prefix split**: auth router is mounted at `/auth` (Task 4, `APIRouter(prefix="/auth")`, line 308) and the chat/upload/cleanup routes live under `/api` (current-state §3 lines 81–82, `app.py:172/140/250`). Since `NEXT_PUBLIC_API_URL` already ends in `/api` today (`services/api.ts:5-6`), the auth endpoints are **siblings of** `/api`, i.e. at `<origin>/auth/*`, **not** `<base>/auth/*`. **This is a real path gotcha** (see Risk §11 and Task 2 `AUTH_BASE`).
 
-| # | Route | Method | Auth | Request body | Success | Errors |
-|---|---|---|---|---|---|---|
-| 1 | `/auth/register` | POST | none | `{ email, username, password }` (`RegisterIn`, Task 4 line 305/334) | `201` + `UserOut` `{ id, email, username }` (router lines 310–317; `UserOut` "never `hashed_password`", line 335) | `409` duplicate email/username (line 313; Appendix B line 605) |
-| 2 | `/auth/login` | POST | none | `{ email, password }` (`LoginIn`) | `200` + `TokenPair` `{ access_token, refresh_token }` (lines 319–325) | `401` invalid credentials, **generic message** (line 323; Appendix B line 606) |
-| 3 | `/auth/refresh` | POST | refresh token in **body** | `{ refresh_token }` (`RefreshIn`) | `200` + `TokenPair` (fresh pair, lines 327–332) | `401`/`400` if an **access** token (wrong `type`) is sent (line 339; Appendix B line 607) |
-| 4 | `/api/chat` | POST | **yes (access)** | `{ message, session_id, web_search_allowed }` | `200` `ChatResponse` | `401` unauth · `403` other user's session (Appendix B line 608; isolation Task 6 lines 400–405) |
-| 5 | `/api/upload` | POST | **yes (access)** | multipart `file` + `session_id` | `200` | `401` · `403` other user's session (line 609) |
-| 6 | `/api/cleanup` | POST | **yes (access)** | `{ session_id, file_keys }` | `200` | `401` · `403` other user's doc (line 610) |
-| 7 | `/api/keys*` | POST/PUT/DELETE | **yes (access)** | — | — | M7 consumes; out of scope here (lines 611–613) |
+| #   | Route            | Method          | Auth                      | Request body                                                        | Success                                                                                                           | Errors                                                                                          |
+| --- | ---------------- | --------------- | ------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| 1   | `/auth/register` | POST            | none                      | `{ email, username, password }` (`RegisterIn`, Task 4 line 305/334) | `201` + `UserOut` `{ id, email, username }` (router lines 310–317; `UserOut` "never `hashed_password`", line 335) | `409` duplicate email/username (line 313; Appendix B line 605)                                  |
+| 2   | `/auth/login`    | POST            | none                      | `{ email, password }` (`LoginIn`)                                   | `200` + `TokenPair` `{ access_token, refresh_token }` (lines 319–325)                                             | `401` invalid credentials, **generic message** (line 323; Appendix B line 606)                  |
+| 3   | `/auth/refresh`  | POST            | refresh token in **body** | `{ refresh_token }` (`RefreshIn`)                                   | `200` + `TokenPair` (fresh pair, lines 327–332)                                                                   | `401`/`400` if an **access** token (wrong `type`) is sent (line 339; Appendix B line 607)       |
+| 4   | `/api/chat`      | POST            | **yes (access)**          | `{ message, session_id, web_search_allowed }`                       | `200` `ChatResponse`                                                                                              | `401` unauth · `403` other user's session (Appendix B line 608; isolation Task 6 lines 400–405) |
+| 5   | `/api/upload`    | POST            | **yes (access)**          | multipart `file` + `session_id`                                     | `200`                                                                                                             | `401` · `403` other user's session (line 609)                                                   |
+| 6   | `/api/cleanup`   | POST            | **yes (access)**          | `{ session_id, file_keys }`                                         | `200`                                                                                                             | `401` · `403` other user's doc (line 610)                                                       |
+| 7   | `/api/keys*`     | POST/PUT/DELETE | **yes (access)**          | —                                                                   | —                                                                                                                 | M7 consumes; out of scope here (lines 611–613)                                                  |
 
 > **There is no `GET /auth/me` in the P3 doc.** Task 4 implements only `register`/`login`/`refresh` (lines 294–340); the `get_current_user` dependency (Task 5) is server-internal and is **not exposed as an endpoint**. `/auth/register` returns the `UserOut` shape, and `/auth/login` returns only the `TokenPair` — **login does not echo the user object** (line 324 returns `TokenPair` only). **Consequence for the frontend:** we obtain the `User` object at **register** time; at **login** time we do not get a user object back, only tokens. Therefore the auth store derives a minimal identity from what is available — see Decision §3 and the `auth.store` note. We keep a typed `User` shape and populate it from `/auth/register`; on a login-only flow we store the email the user typed (it is the login key) and treat the user object as `null`-able. **Do not** invent a `/auth/me` call — it does not exist. (If the backend later adds one, wire `auth.api.me()` then; the seam is left in place but unused.)
 
@@ -65,6 +67,7 @@ From Appendix B (lines 601–613) and §2 decision row (line 64): **`401` = "who
 ### 2.4 How `/chat` / `/upload` / `/cleanup` change
 
 Today they are wide open (current-state §3, lines 81–82). After P3:
+
 - Each requires `Authorization: Bearer <access>` (Task 5 lines 373–374). **`401` without it.**
 - `session_id` becomes **owned**: on first use the backend binds the supplied `session_id` to `current_user` (`session_repo.create(id=session_id, user_id=user.id)`); a `session_id` owned by another user → **`403`** (Task 6 lines 400–405). A non-existent id → **`404`** (line 410).
 - The wire shape of `ChatRequest`/`ChatResponse` is **unchanged** — `session_id` is still a field in the body; what changes is that the server now enforces ownership of it and the request must be authenticated. So the frontend's `chat.schemas` need not change; only the **source** of `session_id` (server-owned vs client-generated) and the **headers** (Bearer attached) change, both flag-gated.
@@ -101,15 +104,15 @@ Today they are wide open (current-state §3, lines 81–82). After P3:
 
 ## 3. Decisions & Rationale
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| **Token storage** | **Persisted Zustand (`persist` → `localStorage`)**, *not* httpOnly cookies | The backend is a **separate, stateless JWT API** (§2 line 58) that issues tokens in a JSON `TokenPair` body and expects `Authorization: Bearer` (Task 5, `HTTPBearer`), **not** a cookie. There is no same-site cookie session and no CSRF-token endpoint. httpOnly cookies would require the backend to set `Set-Cookie` + a CSRF strategy + same-site config — none of which P3 provides. For this SPA-against-a-separate-API topology, the Bearer-from-`localStorage` model is what the contract dictates. **Tradeoff acknowledged:** `localStorage` tokens are readable by any XSS-injected script (Risk §1). Mitigations: strict CSP, no untrusted HTML injection (we already render markdown via `react-markdown` with no `dangerouslyAllowHtml`), short access TTL (15 min), refresh-token clears on logout, and a documented upgrade path to a BFF/httpOnly-cookie proxy if/when the backend supports it. We adopt persisted Zustand because it matches the contract and the plan's stated "persisted `auth.store` tokens" (plan line 68). |
-| **Refresh strategy** | **Refresh ONCE, then retry the original request once; single-flight** | A naive "refresh on every 401" loops forever if the refresh itself 401s, and N concurrent 401s would fire N parallel refreshes (a stampede) that race to overwrite each other's tokens. We use a **module-level in-flight promise**: the first 401 starts the refresh; concurrent 401s `await` the same promise; on success all retry once with the new token; on failure all reject, the store is cleared, and we redirect to `/login`. A request is retried **at most once** (a `__retried` marker prevents a second refresh on the retry's own 401). |
-| **Dark-launch via flag** | **`NEXT_PUBLIC_FEATURE_AUTH`, default `false`** | First backend-dependent milestone — must ship before/independently of a deployed P3 backend without breaking today's anonymous UX (plan M6 verify line: "flag-off = today's anonymous flow"). The interceptor, guard, session-list, and Bearer-attach all branch on `flags.auth`; off ⇒ identical to today. |
-| **Route group `(auth)`** | **`app/(auth)/login` + `app/(auth)/register`** | The `(auth)` group renders **without** the app sidebar/chat chrome (a dedicated minimal layout) — login/register are full-screen, no auth needed to view them. The parenthesized segment is URL-invisible: the routes are `/login` and `/register`. Matches the plan's route-group plan (plan line 51). |
-| **Protecting `/chat` when flag on** | **Client-side `auth-guard`** wrapping the chat screen, **not** Next middleware | Tokens live in `localStorage`, which **middleware (edge runtime) cannot read** — middleware only sees cookies/headers. A redirect decision based on a `localStorage` token must happen client-side after hydration. So `auth-guard` is a client component that, when `flags.auth` is on, waits for store hydration, then redirects unauthenticated users to `/login`. When the flag is off it is a transparent passthrough. (We deliberately avoid middleware to prevent a hydration/edge split-brain; documented in Risk §10.) |
-| **Identity source** | **`User` from `/auth/register`; email-only identity after login** | The P3 contract returns no user object from `/auth/login` and exposes no `/auth/me` (see 2.2 note). We store the `User` when registering; for a returning login we store the typed email as a lightweight identity for the user-menu avatar/initials, and leave `user` `null`-able. No fabricated `/auth/me` call. |
-| **Logout** | **Clear store + clear TanStack Query cache + redirect** | Since JWT is stateless there is no server logout endpoint (none in P3). Logout is purely client-side: `auth.clear()`, `queryClient.clear()` (drop user-scoped session lists/histories so the next user can't see them), redirect to `/login`. |
+| Decision                            | Choice                                                                         | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Token storage**                   | **Persisted Zustand (`persist` → `localStorage`)**, _not_ httpOnly cookies     | The backend is a **separate, stateless JWT API** (§2 line 58) that issues tokens in a JSON `TokenPair` body and expects `Authorization: Bearer` (Task 5, `HTTPBearer`), **not** a cookie. There is no same-site cookie session and no CSRF-token endpoint. httpOnly cookies would require the backend to set `Set-Cookie` + a CSRF strategy + same-site config — none of which P3 provides. For this SPA-against-a-separate-API topology, the Bearer-from-`localStorage` model is what the contract dictates. **Tradeoff acknowledged:** `localStorage` tokens are readable by any XSS-injected script (Risk §1). Mitigations: strict CSP, no untrusted HTML injection (we already render markdown via `react-markdown` with no `dangerouslyAllowHtml`), short access TTL (15 min), refresh-token clears on logout, and a documented upgrade path to a BFF/httpOnly-cookie proxy if/when the backend supports it. We adopt persisted Zustand because it matches the contract and the plan's stated "persisted `auth.store` tokens" (plan line 68). |
+| **Refresh strategy**                | **Refresh ONCE, then retry the original request once; single-flight**          | A naive "refresh on every 401" loops forever if the refresh itself 401s, and N concurrent 401s would fire N parallel refreshes (a stampede) that race to overwrite each other's tokens. We use a **module-level in-flight promise**: the first 401 starts the refresh; concurrent 401s `await` the same promise; on success all retry once with the new token; on failure all reject, the store is cleared, and we redirect to `/login`. A request is retried **at most once** (a `__retried` marker prevents a second refresh on the retry's own 401).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **Dark-launch via flag**            | **`NEXT_PUBLIC_FEATURE_AUTH`, default `false`**                                | First backend-dependent milestone — must ship before/independently of a deployed P3 backend without breaking today's anonymous UX (plan M6 verify line: "flag-off = today's anonymous flow"). The interceptor, guard, session-list, and Bearer-attach all branch on `flags.auth`; off ⇒ identical to today.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Route group `(auth)`**            | **`app/(auth)/login` + `app/(auth)/register`**                                 | The `(auth)` group renders **without** the app sidebar/chat chrome (a dedicated minimal layout) — login/register are full-screen, no auth needed to view them. The parenthesized segment is URL-invisible: the routes are `/login` and `/register`. Matches the plan's route-group plan (plan line 51).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **Protecting `/chat` when flag on** | **Client-side `auth-guard`** wrapping the chat screen, **not** Next middleware | Tokens live in `localStorage`, which **middleware (edge runtime) cannot read** — middleware only sees cookies/headers. A redirect decision based on a `localStorage` token must happen client-side after hydration. So `auth-guard` is a client component that, when `flags.auth` is on, waits for store hydration, then redirects unauthenticated users to `/login`. When the flag is off it is a transparent passthrough. (We deliberately avoid middleware to prevent a hydration/edge split-brain; documented in Risk §10.)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Identity source**                 | **`User` from `/auth/register`; email-only identity after login**              | The P3 contract returns no user object from `/auth/login` and exposes no `/auth/me` (see 2.2 note). We store the `User` when registering; for a returning login we store the typed email as a lightweight identity for the user-menu avatar/initials, and leave `user` `null`-able. No fabricated `/auth/me` call.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **Logout**                          | **Clear store + clear TanStack Query cache + redirect**                        | Since JWT is stateless there is no server logout endpoint (none in P3). Logout is purely client-side: `auth.clear()`, `queryClient.clear()` (drop user-scoped session lists/histories so the next user can't see them), redirect to `/login`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ---
 
@@ -228,7 +231,7 @@ export type TokenPair = z.infer<typeof TokenPairSchema>;
 
 ### Task 2 — `auth.api.ts`: register / login / refresh via http-client
 
-**Goal:** typed auth calls. Note the **prefix split** (backend §2.2): auth lives at `<origin>/auth/*`, a *sibling* of `/api`, while `NEXT_PUBLIC_API_URL` ends in `/api`. We derive `AUTH_BASE` by stripping a trailing `/api`.
+**Goal:** typed auth calls. Note the **prefix split** (backend §2.2): auth lives at `<origin>/auth/*`, a _sibling_ of `/api`, while `NEXT_PUBLIC_API_URL` ends in `/api`. We derive `AUTH_BASE` by stripping a trailing `/api`.
 **Files:** `features/auth/api/auth.api.ts`
 
 ```ts
@@ -353,8 +356,8 @@ export const useAuthStore = create<AuthState>()(
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);
       },
-    },
-  ),
+    }
+  )
 );
 
 // Non-React accessors for the interceptor (Task 4), which runs outside React.
@@ -375,17 +378,17 @@ export const authStore = {
 // lib/api/api-error.ts (additions)
 export type ApiErrorKind =
   | "unauthorized" // 401, refresh exhausted
-  | "forbidden"    // 403, cross-user (terminal — never retried)
-  | "http"         // other non-2xx
-  | "network"      // fetch threw
-  | "parse";       // Zod parse failed
+  | "forbidden" // 403, cross-user (terminal — never retried)
+  | "http" // other non-2xx
+  | "network" // fetch threw
+  | "parse"; // Zod parse failed
 
 export class ApiError extends Error {
   constructor(
     public readonly kind: ApiErrorKind,
     public readonly status: number | null,
     message: string,
-    public readonly detail?: unknown,
+    public readonly detail?: unknown
   ) {
     super(message);
     this.name = "ApiError";
@@ -409,10 +412,10 @@ export interface RequestOptions<T> {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   schema?: z.ZodType<T>;
-  auth?: boolean;        // attach Bearer when flags.auth && token present
+  auth?: boolean; // attach Bearer when flags.auth && token present
   absoluteUrl?: boolean; // skip base-URL prepend (Task 2)
   signal?: AbortSignal;
-  __retried?: boolean;   // internal: guards against a second refresh on the retry
+  __retried?: boolean; // internal: guards against a second refresh on the retry
 }
 
 // ---- single-flight refresh ----
@@ -425,7 +428,7 @@ async function refreshAccessToken(): Promise<string> {
   if (!refreshToken) {
     // no refresh token ⇒ cannot recover
     return Promise.reject(
-      new ApiError("unauthorized", 401, "no refresh token"),
+      new ApiError("unauthorized", 401, "no refresh token")
     );
   }
 
@@ -455,12 +458,13 @@ function buildUrl(path: string, absolute?: boolean): string {
 
 export async function request<T>(
   path: string,
-  opts: RequestOptions<T> = {},
+  opts: RequestOptions<T> = {}
 ): Promise<T> {
   const { method = "GET", body, schema, auth, absoluteUrl, signal } = opts;
   const headers: Record<string, string> = {};
   const isForm = typeof FormData !== "undefined" && body instanceof FormData;
-  if (body !== undefined && !isForm) headers["Content-Type"] = "application/json";
+  if (body !== undefined && !isForm)
+    headers["Content-Type"] = "application/json";
 
   // Attach Bearer ONLY when the auth feature is on. Flag off ⇒ exactly today's request.
   if (flags.auth && auth) {
@@ -473,16 +477,29 @@ export async function request<T>(
     res = await fetch(buildUrl(path, absoluteUrl), {
       method,
       headers,
-      body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
+      body:
+        body === undefined
+          ? undefined
+          : isForm
+            ? (body as FormData)
+            : JSON.stringify(body),
       signal,
     });
   } catch (e) {
-    throw new ApiError("network", null, (e as Error).message ?? "network error");
+    throw new ApiError(
+      "network",
+      null,
+      (e as Error).message ?? "network error"
+    );
   }
 
   // ---- 403: terminal (refreshing won't change ownership) ----
   if (res.status === 403) {
-    throw new ApiError("forbidden", 403, "You do not have access to this resource.");
+    throw new ApiError(
+      "forbidden",
+      403,
+      "You do not have access to this resource."
+    );
   }
 
   // ---- 401: single-flight refresh-once-and-retry (only when auth is live) ----
@@ -492,7 +509,11 @@ export async function request<T>(
     } catch {
       authStore.clear();
       redirectToLogin();
-      throw new ApiError("unauthorized", 401, "Session expired. Please sign in again.");
+      throw new ApiError(
+        "unauthorized",
+        401,
+        "Session expired. Please sign in again."
+      );
     }
     // retry ONCE with the refreshed token; __retried prevents a refresh loop
     return request<T>(path, { ...opts, __retried: true });
@@ -508,16 +529,31 @@ export async function request<T>(
     if (res.status === 401) {
       authStore.clear();
       redirectToLogin();
-      throw new ApiError("unauthorized", 401, "Session expired. Please sign in again.", detail);
+      throw new ApiError(
+        "unauthorized",
+        401,
+        "Session expired. Please sign in again.",
+        detail
+      );
     }
-    throw new ApiError("http", res.status, `Request failed: ${res.status}`, detail);
+    throw new ApiError(
+      "http",
+      res.status,
+      `Request failed: ${res.status}`,
+      detail
+    );
   }
 
   const data = res.status === 204 ? undefined : await res.json();
   if (schema) {
     const parsed = schema.safeParse(data);
     if (!parsed.success) {
-      throw new ApiError("parse", res.status, "Response failed validation", parsed.error.format());
+      throw new ApiError(
+        "parse",
+        res.status,
+        "Response failed validation",
+        parsed.error.format()
+      );
     }
     return parsed.data;
   }
@@ -616,7 +652,10 @@ export function useRegister() {
     mutationFn: async (body: RegisterRequest) => {
       const user = await authApi.register(body); // 201 → UserOut
       // register does NOT return tokens; immediately log in to obtain them.
-      const tokens = await authApi.login({ email: body.email, password: body.password });
+      const tokens = await authApi.login({
+        email: body.email,
+        password: body.password,
+      });
       return { user, tokens, email: body.email };
     },
     onSuccess: ({ user, tokens, email }) => {
@@ -644,9 +683,13 @@ export function useRegister() {
 
 ```tsx
 // app/(auth)/layout.tsx
-export default function AuthLayout({ children }: { children: React.ReactNode }) {
+export default function AuthLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+    <div className="bg-background flex min-h-screen items-center justify-center p-4">
       <div className="w-full max-w-sm">{children}</div>
     </div>
   );
@@ -717,11 +760,11 @@ export function LoginForm() {
           aria-label="Password"
         />
       </div>
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-destructive text-sm">{error}</p>}
       <Button type="submit" className="w-full" disabled={login.isPending}>
         {login.isPending ? "Signing in…" : "Sign in"}
       </Button>
-      <p className="text-center text-sm text-muted-foreground">
+      <p className="text-muted-foreground text-center text-sm">
         No account?{" "}
         <Link href="/register" className="underline">
           Create one
@@ -751,7 +794,11 @@ export function RegisterForm() {
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const parsed = RegisterRequestSchema.safeParse({ email, username, password });
+    const parsed = RegisterRequestSchema.safeParse({
+      email,
+      username,
+      password,
+    });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Check your details.");
       return;
@@ -764,18 +811,35 @@ export function RegisterForm() {
     <form onSubmit={onSubmit} className="space-y-4" noValidate>
       <h1 className="text-xl font-semibold">Create account</h1>
       <div className="space-y-2">
-        <Input placeholder="Email" type="email" autoComplete="email"
-          value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Email" />
-        <Input placeholder="Username" autoComplete="username"
-          value={username} onChange={(e) => setUsername(e.target.value)} aria-label="Username" />
-        <Input placeholder="Password (min 8)" type="password" autoComplete="new-password"
-          value={password} onChange={(e) => setPassword(e.target.value)} aria-label="Password" />
+        <Input
+          placeholder="Email"
+          type="email"
+          autoComplete="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          aria-label="Email"
+        />
+        <Input
+          placeholder="Username"
+          autoComplete="username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          aria-label="Username"
+        />
+        <Input
+          placeholder="Password (min 8)"
+          type="password"
+          autoComplete="new-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          aria-label="Password"
+        />
       </div>
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-destructive text-sm">{error}</p>}
       <Button type="submit" className="w-full" disabled={register.isPending}>
         {register.isPending ? "Creating…" : "Create account"}
       </Button>
-      <p className="text-center text-sm text-muted-foreground">
+      <p className="text-muted-foreground text-center text-sm">
         Have an account?{" "}
         <Link href="/login" className="underline">
           Sign in
@@ -827,11 +891,7 @@ Wire it in `app/page.tsx` around the chat screen:
 // app/page.tsx (delta)
 import { AuthGuard } from "@/features/auth/components/auth-guard";
 // ...
-return (
-  <AuthGuard>
-    {/* existing chat screen JSX */}
-  </AuthGuard>
-);
+return <AuthGuard>{/* existing chat screen JSX */}</AuthGuard>;
 ```
 
 ### Task 8 — Sessions: server-owned list + resume
@@ -862,9 +922,17 @@ const SessionHistorySchema = z.object({
 
 export const sessionsApi = {
   list: () =>
-    request("/sessions", { method: "GET", schema: SessionListSchema, auth: true }),
+    request("/sessions", {
+      method: "GET",
+      schema: SessionListSchema,
+      auth: true,
+    }),
   create: () =>
-    request("/sessions", { method: "POST", schema: SessionSummarySchema, auth: true }),
+    request("/sessions", {
+      method: "POST",
+      schema: SessionSummarySchema,
+      auth: true,
+    }),
   history: (id: string) =>
     request(`/sessions/${id}/history`, {
       method: "GET",
@@ -944,17 +1012,23 @@ export function SessionList() {
 
   return (
     <div className="flex flex-col gap-1">
-      <Button variant="ghost" className="justify-start" onClick={() => create.mutate()}>
+      <Button
+        variant="ghost"
+        className="justify-start"
+        onClick={() => create.mutate()}
+      >
         <Plus className="mr-2 h-4 w-4" /> New chat
       </Button>
-      {list.isLoading && <p className="px-2 text-sm text-muted-foreground">Loading…</p>}
+      {list.isLoading && (
+        <p className="text-muted-foreground px-2 text-sm">Loading…</p>
+      )}
       {list.data?.map((s) => (
         <button
           key={s.id}
           onClick={() => resume.mutate(s.id)}
           className={cn(
-            "truncate rounded px-2 py-1.5 text-left text-sm hover:bg-accent",
-            current === s.id && "bg-accent font-medium",
+            "hover:bg-accent truncate rounded px-2 py-1.5 text-left text-sm",
+            current === s.id && "bg-accent font-medium"
           )}
         >
           {s.title ?? "Untitled chat"}
@@ -998,7 +1072,7 @@ function resolveSessionId(): string {
 
 export async function sendMessage(
   message: string,
-  webSearchAllowed: boolean,
+  webSearchAllowed: boolean
 ): Promise<ChatResponse> {
   const res = await request<ChatResponse>("/chat", {
     method: "POST",
@@ -1045,7 +1119,7 @@ export function UserMenu() {
   const initial = (user?.username ?? email ?? "?").charAt(0).toUpperCase();
 
   return (
-    <div className="flex items-center gap-2 border-t border-border p-2">
+    <div className="border-border flex items-center gap-2 border-t p-2">
       <Avatar className="h-7 w-7">
         <AvatarFallback>{initial}</AvatarFallback>
       </Avatar>
@@ -1064,9 +1138,15 @@ import { flags } from "@/lib/flags";
 import { SessionList } from "@/features/sessions/components/session-list";
 import { UserMenu } from "@/features/auth/components/user-menu";
 // ... inside the sidebar body:
-{flags.auth && <SessionList />}
-{/* existing "clear session" controls stay for the flag-off path */}
-{flags.auth && <UserMenu />}
+{
+  flags.auth && <SessionList />;
+}
+{
+  /* existing "clear session" controls stay for the flag-off path */
+}
+{
+  flags.auth && <UserMenu />;
+}
 ```
 
 ---
@@ -1075,18 +1155,18 @@ import { UserMenu } from "@/features/auth/components/user-menu";
 
 `NEXT_PUBLIC_FEATURE_AUTH` controls every auth surface. The OFF column **must equal today's behavior** (current-state §4).
 
-| Surface | Flag **OFF** (default — today) | Flag **ON** |
-|---|---|---|
-| Routing to `/` (chat) | Open; no guard; `<AuthGuard>` is a passthrough | `<AuthGuard>` redirects unauthenticated → `/login?next=/` after hydration |
-| `/login`, `/register` routes | Exist but unused on the happy path; nothing redirects there | Entry points; successful auth redirects to `next` or `/` |
-| `session_id` source | Client-generated `uuid` in `localStorage` (`rag_session_id`) — anonymous | Server-owned, user-scoped; from `session.store.currentSessionId` (backend mints+binds on first use) |
-| `Authorization` header | **Never attached** (`auth: flags.auth` ⇒ `false`) | `Bearer <access>` attached to `auth:true` requests by the interceptor |
-| `401` handling | Surfaced as an ordinary HTTP error (today's `Backend error: 401`) | Single-flight refresh → retry once; on failure clear store + redirect `/login` |
-| `403` handling | Ordinary HTTP error | Typed `ApiError{kind:"forbidden"}`; surfaced as "no access"; never retried |
-| Sidebar | "Clear session" only (today) | `<SessionList>` (server sessions + resume + new) and `<UserMenu>` (avatar + logout); legacy clear-session may remain |
-| `/chat` payload shape | `{message, session_id, web_search_allowed}` | **Same shape** — only the `session_id` source + Bearer header differ |
-| TanStack `["sessions"]` query | `enabled:false` ⇒ never fires | `enabled:true` ⇒ fetches the user's sessions |
-| Token store | Persisted but empty/unused; no reads on the request path | Holds access+refresh(+user/email); read by interceptor & guard |
+| Surface                       | Flag **OFF** (default — today)                                           | Flag **ON**                                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| Routing to `/` (chat)         | Open; no guard; `<AuthGuard>` is a passthrough                           | `<AuthGuard>` redirects unauthenticated → `/login?next=/` after hydration                                            |
+| `/login`, `/register` routes  | Exist but unused on the happy path; nothing redirects there              | Entry points; successful auth redirects to `next` or `/`                                                             |
+| `session_id` source           | Client-generated `uuid` in `localStorage` (`rag_session_id`) — anonymous | Server-owned, user-scoped; from `session.store.currentSessionId` (backend mints+binds on first use)                  |
+| `Authorization` header        | **Never attached** (`auth: flags.auth` ⇒ `false`)                        | `Bearer <access>` attached to `auth:true` requests by the interceptor                                                |
+| `401` handling                | Surfaced as an ordinary HTTP error (today's `Backend error: 401`)        | Single-flight refresh → retry once; on failure clear store + redirect `/login`                                       |
+| `403` handling                | Ordinary HTTP error                                                      | Typed `ApiError{kind:"forbidden"}`; surfaced as "no access"; never retried                                           |
+| Sidebar                       | "Clear session" only (today)                                             | `<SessionList>` (server sessions + resume + new) and `<UserMenu>` (avatar + logout); legacy clear-session may remain |
+| `/chat` payload shape         | `{message, session_id, web_search_allowed}`                              | **Same shape** — only the `session_id` source + Bearer header differ                                                 |
+| TanStack `["sessions"]` query | `enabled:false` ⇒ never fires                                            | `enabled:true` ⇒ fetches the user's sessions                                                                         |
+| Token store                   | Persisted but empty/unused; no reads on the request path                 | Holds access+refresh(+user/email); read by interceptor & guard                                                       |
 
 **Proof that flag-off ≡ today:** with `flags.auth === false`, (a) the interceptor's `if (flags.auth && auth)` blocks never run → no Bearer, no refresh; (b) `resolveSessionId()` returns the anonymous `localStorage` id exactly as `services/api.ts:9-17` does today; (c) `AuthGuard` returns `<>{children}</>` unconditionally; (d) `SessionList`/`UserMenu` are not mounted (`{flags.auth && …}`); (e) the `["sessions"]` query is `enabled:false`. No auth code is on the hot path.
 
@@ -1095,6 +1175,7 @@ import { UserMenu } from "@/features/auth/components/user-menu";
 ## 8. Testing & Verification
 
 **MSW handlers (`test/msw/handlers.auth.ts`):**
+
 - `POST /auth/register` → `201` `UserOut`; duplicate email → `409`.
 - `POST /auth/login` → `200` `TokenPair`; bad creds → `401` (generic).
 - `POST /auth/refresh` → `200` fresh `TokenPair` when given a known refresh token; an access token (or unknown) → `401`.
@@ -1102,6 +1183,7 @@ import { UserMenu } from "@/features/auth/components/user-menu";
 - A `/chat` handler that returns `401` **once** then `200` (to drive the refresh-retry test), and one that returns `403`.
 
 **Unit tests:**
+
 1. **Interceptor refresh-once (`http-client.refresh.test.ts`)** — (a) `401`→refresh→retry **succeeds**: stub `/chat` 401-then-200, assert `/auth/refresh` called exactly once and the final result resolves with the 200 body. (b) **refresh fails** → `authStore.clear()` called + redirect to `/login` + rejects `ApiError{kind:"unauthorized"}`. (c) **single-flight**: fire 3 concurrent `auth:true` requests that all 401; assert `/auth/refresh` is hit **once** and all 3 retry with the new token. (d) **no loop**: retry that 401s again does **not** trigger a second refresh (`__retried` guard) → clear+redirect. (e) **`403`** → `ApiError{kind:"forbidden"}`, no refresh attempted.
 2. **`auth.store.test.ts`** — `setTokens` populates access/refresh; `clear` empties them; persisted JSON round-trips through `localStorage` under `rag_auth`; `onRehydrateStorage` flips `hasHydrated`; `partialize` excludes `hasHydrated`.
 3. **`auth-guard.test.tsx`** — flag **off**: renders children, never redirects. Flag **on** + unauthenticated + hydrated: calls `router.replace("/login?next=…")` and renders nothing. Flag **on** + authenticated: renders children. Flag on + not-yet-hydrated: renders nothing, no redirect.
@@ -1133,10 +1215,10 @@ import { UserMenu } from "@/features/auth/components/user-menu";
 
 ## 10. Exit Criteria (checkable)
 
-1. **Flag-off parity.** With `NEXT_PUBLIC_FEATURE_AUTH` unset/`false`: no `Authorization` header on any request, anonymous `rag_session_id` used, `/login` never forced, sidebar shows today's controls. Playwright core flow (M5) passes unchanged. *(M6 acceptance gate.)*
+1. **Flag-off parity.** With `NEXT_PUBLIC_FEATURE_AUTH` unset/`false`: no `Authorization` header on any request, anonymous `rag_session_id` used, `/login` never forced, sidebar shows today's controls. Playwright core flow (M5) passes unchanged. _(M6 acceptance gate.)_
 2. **Flag-on register/login.** With the flag on (MSW or P3 backend): register → auto-login → tokens persisted in `rag_auth`; login of an existing user works; bad creds show the generic error.
 3. **Bearer attached.** Every `auth:true` request carries `Authorization: Bearer <access>` when the flag is on (asserted in tests + visible in the network tab).
-4. **Refresh-once-and-retry.** A `401` triggers exactly one `/auth/refresh`, one retry; concurrent 401s share one refresh (single-flight); a failed refresh clears the store and redirects to `/login`; no infinite loop. *(Unit-tested.)*
+4. **Refresh-once-and-retry.** A `401` triggers exactly one `/auth/refresh`, one retry; concurrent 401s share one refresh (single-flight); a failed refresh clears the store and redirects to `/login`; no infinite loop. _(Unit-tested.)_
 5. **403 surfaced, not retried.** A cross-user `403` yields `ApiError{kind:"forbidden"}` and is shown as a forbidden error; no refresh is attempted.
 6. **Server-owned sessions + resume.** With the flag on, the sidebar lists the user's sessions; "new chat" creates one; selecting a session loads its history into the chat store; the active session is highlighted.
 7. **Guarded chat route.** Flag on + unauthenticated → redirected to `/login`; flag off → open. No flash of protected content (guard renders `null` pre-hydration / unauthenticated).

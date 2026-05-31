@@ -1,18 +1,18 @@
 # M7 — Multi-Provider BYOK (Backend Phase P4 + Phase 6 freemium ladder)
 
-This milestone makes the app multi-tenant *and* multi-provider on the client: an authenticated
+This milestone makes the app multi-tenant _and_ multi-provider on the client: an authenticated
 user can store their own LLM provider keys (Bring Your Own Key — Gemini / OpenAI / Anthropic) on a
 new **Settings** page, and pick a provider + model per conversation via a **model-picker** next to
 the chat input. The provider/model choice rides along on the `/chat` request; the backend resolves
 the user's encrypted key per request (P4 `get_llm_provider`). Everything here is behind
-`NEXT_PUBLIC_FEATURE_BYOK` — with the flag off, the app behaves *exactly* like today (server default
+`NEXT_PUBLIC_FEATURE_BYOK` — with the flag off, the app behaves _exactly_ like today (server default
 provider, no Settings link, no model picker).
 
 **BYOK is the upgrade path in a freemium model, not merely optional multi-provider.** Phase 6 reframes
 provider selection as a 3-tier per-request **freemium ladder** (BYOK → operator free-tier → exhausted;
 see §2.5, [`Python-Agentic-RAG-Backend/docs/09_Phase6_Agentic_Architecture.md`](../../../Python-Agentic-RAG-Backend/docs/09_Phase6_Agentic_Architecture.md)
 §3): an evaluator with **no key** can use the app on the operator's free Gemini key (heavily
-rate-limited), and BYOK is the *upgrade* to private, unlimited use. This adds two client surfaces on
+rate-limited), and BYOK is the _upgrade_ to private, unlimited use. This adds two client surfaces on
 top of the keys-CRUD + picker above — both flag-gated, both dark by default:
 
 - a **free-tier data-policy disclaimer** shown to keyless (free-mode) users (§2.5 / Phase 6 §4); and
@@ -21,7 +21,7 @@ top of the keys-CRUD + picker above — both flag-gated, both dark by default:
 
 > **Status:** backend-dependent (needs **P4** provider abstraction + **P3** encrypted `user_llm_keys`
 > storage + the **Phase 6** freemium ladder & `FreeTierExhaustedError`) / **depends on** M6 (auth —
-> keys are user-owned and require a Bearer token; "free tier" is an *authenticated* user with no key)
+> keys are user-owned and require a Bearer token; "free tier" is an _authenticated_ user with no key)
 > / **unlocks** per-user cost attribution (cost scales with users, not with the operator's single key).
 > **Flag default: OFF** (`NEXT_PUBLIC_FEATURE_BYOK=false`).
 
@@ -30,6 +30,7 @@ top of the keys-CRUD + picker above — both flag-gated, both dark by default:
 ## 1. Objective & Scope
 
 ### In scope
+
 - **`app/settings/page.tsx`** — a flag- and auth-gated Settings route that hosts the API-keys UI.
 - **API-keys CRUD UI** (`api-keys-form` + `api-key-row`) — list the user's stored keys (masked
   metadata only), **add** a key for a provider, **rotate** (replace) it, and **delete** it.
@@ -46,10 +47,11 @@ top of the keys-CRUD + picker above — both flag-gated, both dark by default:
 - **Flag gating** — `NEXT_PUBLIC_FEATURE_BYOK` controls every surface above; off == today.
 
 ### Out of scope (do NOT build here)
+
 - **Streaming changes** — SSE / token streaming is M9 (P6). The model picker only chooses
   provider + model; it does not alter the streaming vs blocking strategy.
 - **Provider resolution, free-tier allowance counting, and the shared-quota global guard** — the
-  3-tier ladder, the per-user/global Redis counters, and the `FreeTierExhaustedError` *decision* are
+  3-tier ladder, the per-user/global Redis counters, and the `FreeTierExhaustedError` _decision_ are
   Phase 6 (§3) backend-owned. The frontend only **reacts** to the resulting `code` and to "user has
   no key"; it never sets or reads any allowance number (those are backend `Settings`).
 - **Provider-specific advanced params** beyond model choice — temperature, top-p, max-tokens,
@@ -57,7 +59,7 @@ top of the keys-CRUD + picker above — both flag-gated, both dark by default:
   selection; nothing else is exposed.
 - **Per-node model tiering + provider-native prompt caching** — backend-internal cost levers
   (Phase 6 §6); no frontend surface.
-- **A "default provider" server preference endpoint** — P3/P4 store a key *per provider* with a
+- **A "default provider" server preference endpoint** — P3/P4 store a key _per provider_ with a
   `(user_id, provider)` unique constraint; there is no backend "set my default provider" route. The
   client-side default is derived (see §3 decisions) and persisted locally.
 - **Key validation against the provider at add-time** — the backend stores ciphertext without a live
@@ -96,11 +98,11 @@ DEFAULT_LLM_MODEL: str = "gemini-2.5-flash"
 and the per-provider default models, from `05_Phase4...md` Appendix A ("Provider capability matrix")
 and the adapter constructors (§5 Tasks 4–6):
 
-| Provider    | Adapter default model (`__init__` default)         | Source |
-|-------------|-----------------------------------------------------|--------|
-| `gemini`    | `gemini-2.5-flash`                                  | Task 4 `GeminiProvider.__init__`, Appendix A |
-| `openai`    | `gpt-4o-mini`                                       | Task 5 `OpenAIProvider.__init__`, Appendix A |
-| `anthropic` | `claude-3-5-haiku-latest`                           | Task 6 `AnthropicProvider.__init__`, Appendix A |
+| Provider    | Adapter default model (`__init__` default) | Source                                          |
+| ----------- | ------------------------------------------ | ----------------------------------------------- |
+| `gemini`    | `gemini-2.5-flash`                         | Task 4 `GeminiProvider.__init__`, Appendix A    |
+| `openai`    | `gpt-4o-mini`                              | Task 5 `OpenAIProvider.__init__`, Appendix A    |
+| `anthropic` | `claude-3-5-haiku-latest`                  | Task 6 `AnthropicProvider.__init__`, Appendix A |
 
 > The backend accepts an arbitrary `model: str` (it is `model: Mapped[str]` on the key row / a free
 > `model` argument to `build_provider`). The frontend **constrains** the choice to a curated,
@@ -113,11 +115,11 @@ and the adapter constructors (§5 Tasks 4–6):
 From `04_Phase3...md` §5 Task 7 and Appendix B. The router is mounted at **`/api/keys`** and every
 route is behind `get_current_user` (Bearer access token required → 401 without it).
 
-| Route                       | Method   | Body                         | Success | Response model            |
-|-----------------------------|----------|------------------------------|---------|---------------------------|
-| `/api/keys`                 | `POST`   | `KeyIn { provider, api_key }`| `201`   | `KeyOut`                  |
-| `/api/keys/{provider}`      | `PUT`    | `KeyIn { provider, api_key }`| `200`   | `KeyOut` (rotate/replace) |
-| `/api/keys/{provider}`      | `DELETE` | —                            | `204`   | (empty)                   |
+| Route                  | Method   | Body                          | Success | Response model            |
+| ---------------------- | -------- | ----------------------------- | ------- | ------------------------- |
+| `/api/keys`            | `POST`   | `KeyIn { provider, api_key }` | `201`   | `KeyOut`                  |
+| `/api/keys/{provider}` | `PUT`    | `KeyIn { provider, api_key }` | `200`   | `KeyOut` (rotate/replace) |
+| `/api/keys/{provider}` | `DELETE` | —                             | `204`   | (empty)                   |
 
 **Add** (`POST /api/keys`), verbatim from Task 7:
 
@@ -147,7 +149,7 @@ async def delete_key(provider: str, ...):
 ```
 
 > **Note — there is no explicit `GET /api/keys` route in the P3 Task-7 listing.** The phase doc
-> shows add/rotate/delete; the client still needs to render *which* providers have a key on file. We
+> shows add/rotate/delete; the client still needs to render _which_ providers have a key on file. We
 > treat the canonical **list** as `GET /api/keys` returning an array of masked metadata, which is the
 > natural read counterpart and the shape the frontend depends on. This is the **one** place the
 > frontend asks the backend to confirm/add a read route; if the backend instead returns the masked
@@ -164,15 +166,15 @@ This is the load-bearing security contract. From `04_Phase3...md`:
 
 - The key is stored as **ciphertext** (Fernet token), never plaintext:
   `ciphertext: Mapped[str] = mapped_column(Text)  # Fernet token` (Task 7 model), and the Exit
-  Criteria: *"Querying a `user_llm_keys` row returns a Fernet token, **not** the plaintext API key"*.
-- The CRUD responses **never echo the secret**: *"responses **never** echo plaintext or ciphertext"*
-  and *"`KeyOut` exposes only `id` + `provider`"* (Task 7). The add handler explicitly logs
-  *"no api_key, no ciphertext"*.
+  Criteria: _"Querying a `user_llm_keys` row returns a Fernet token, **not** the plaintext API key"_.
+- The CRUD responses **never echo the secret**: _"responses **never** echo plaintext or ciphertext"_
+  and _"`KeyOut` exposes only `id` + `provider`"_ (Task 7). The add handler explicitly logs
+  _"no api_key, no ciphertext"_.
 - Therefore **the plaintext key is write-only**: the client sends it on add/rotate and the server
   never returns it on any read. There is no round-trip of the secret to the browser, ever.
 
 **`KeyMetadata` (masked) — the shape the list/read returns.** The minimal backend `KeyOut` is
-`{ id, provider }`. The frontend models a *superset* of masked metadata so it can render a useful row
+`{ id, provider }`. The frontend models a _superset_ of masked metadata so it can render a useful row
 (`provider`, optional `label`, optional `last4`, optional `created_at`) while requiring **only** the
 fields the backend guarantees today (`id`, `provider`). Every extra field is **optional** in the Zod
 schema (§6 Task b) so the UI degrades gracefully whether the backend returns the lean `KeyOut` or a
@@ -183,15 +185,27 @@ Sample masked list payload (richest form the client will accept):
 
 ```json
 [
-  { "id": "8f3c…", "provider": "openai",    "label": "personal",  "last4": "Ab12", "created_at": "2026-05-20T10:11:12Z" },
-  { "id": "1a2b…", "provider": "anthropic", "label": null,        "last4": null,   "created_at": "2026-05-22T08:00:00Z" }
+  {
+    "id": "8f3c…",
+    "provider": "openai",
+    "label": "personal",
+    "last4": "Ab12",
+    "created_at": "2026-05-20T10:11:12Z"
+  },
+  {
+    "id": "1a2b…",
+    "provider": "anthropic",
+    "label": null,
+    "last4": null,
+    "created_at": "2026-05-22T08:00:00Z"
+  }
 ]
 ```
 
 Leanest form (current `KeyOut`) the client also accepts:
 
 ```json
-[ { "id": "8f3c…", "provider": "openai" } ]
+[{ "id": "8f3c…", "provider": "openai" }]
 ```
 
 ### 2.4 Per-conversation model selection on `/chat` (P4)
@@ -238,7 +252,7 @@ backend resolves the user's key for that `provider`; the frontend never sends a 
 > **Contract assumption (flagged in §10):** P4 Task 9 shows `request.message`, `request.session_id`,
 > `request.web_search_allowed`. The `provider`/`model` fields on `ChatRequest` are the natural
 > extension that lets the user override the stored row per conversation. If the backend keeps the
-> selection *only* on the key row (no per-request override), the frontend still works: it sends the
+> selection _only_ on the key row (no per-request override), the frontend still works: it sends the
 > fields harmlessly (ignored extra keys) and the picker effectively mirrors the stored provider. The
 > frontend codes them as optional so neither interpretation breaks.
 
@@ -251,12 +265,12 @@ extended `get_llm_provider` on **every** `/api/chat` request (source of truth:
 additions are the `free_tier_exhausted` error code and the free-mode disclaimer. The ladder:
 
 1. **BYOK (user's own key).** The authenticated user has an enabled key ⇒ the backend builds a provider
-   on *their* key, with cheap/strong **model tiering** (the §2.4 picker; cheap routes, strong
+   on _their_ key, with cheap/strong **model tiering** (the §2.4 picker; cheap routes, strong
    synthesizes). This is the only tier where the picker and tier hints matter.
 2. **Operator free tier.** No key but **within** the free allowance ⇒ the operator's
    `LLM_FALLBACK_API_KEY` — a **single basic model, free Gemini Flash** (no tiering; route and synth use
    the same model). Double-gated by Redis counters (backend Phase 5): a **per-user daily allowance**
-   *and* a **global daily guard**. A request must pass **both**.
+   _and_ a **global daily guard**. A request must pass **both**.
 3. **Exhausted.** No key and **over** the cap ⇒ the backend raises **`FreeTierExhaustedError`**, an
    `AppException` subclass carrying a **stable machine-readable code `"free_tier_exhausted"`**. The
    frontend keys off this code (not the HTTP status) to show a BYOK upsell CTA (Task m) instead of a
@@ -274,7 +288,7 @@ signal and to "the user has no key."
 
 **Free-tier data policy (Phase 6 §4).** Free-tier RAG is **allowed** (the demo needs it) but **must be
 disclosed**: free-tier requests run on the operator's key against Google's free Gemini tier, and Google
-may use free-tier data per their terms. The frontend surfaces a disclaimer to free-mode users *before*
+may use free-tier data per their terms. The frontend surfaces a disclaimer to free-mode users _before_
 they upload anything sensitive. **Exact copy (this is the contract — a product/legal requirement, not
 optional polish):**
 
@@ -299,17 +313,17 @@ CTA only ever appear for a signed-in user; both surfaces are additionally gated 
 
 ## 3. Decisions & Rationale
 
-| Decision | Rationale |
-|---|---|
-| **Write-only secret fields — never round-trip the key to the client.** | The P3 contract is that secrets are ciphertext-at-rest and never echoed (§2.3). The `api_key` input is *send-only*: it exists in a controlled input, is posted, then the field is cleared on success and the value is dropped. No client state, cache, or store ever holds the plaintext after submit. Display is always the masked `••••last4` derived from `KeyMetadata`, never a real key. |
-| **Per-conversation model state in Zustand; persisted "default" in localStorage, not the server.** | The picker selection is *live UI state* tied to the current conversation, exactly the kind of high-frequency, ephemeral state the architecture (FRONTEND_IMPROVEMENT_PLAN "State split") puts in **Zustand**, not the Query cache. There is no backend "default provider" endpoint (§2.2 note), so the user's preferred default is derived (first provider with a key, else server default) and persisted via Zustand `persist` so it survives reloads. |
-| **Optimistic-with-rollback for delete; invalidate-on-settle for add/rotate.** | Delete is unambiguous (the row is gone) → optimistic removal feels instant and rolls back on error. Add/rotate change server-derived metadata we don't fully synthesize client-side (`created_at`, `last4`), so we **invalidate** the `["llm-keys"]` query on success to refetch the authoritative masked list rather than guessing. Both paths emit a toast. |
-| **Provider/model registry as a typed constant synced to the backend enum.** | `providers.registry.ts` is the single client-side source of truth: a `Provider` union (`"gemini" \| "openai" \| "anthropic"`) plus a curated per-provider model list, labels, and icons, matching `05_Phase4...md` Appendix A. The `/chat` payload and the picker both derive from it, so we never send an unknown provider/model and a backend enum change is a one-file edit. |
-| **Graceful fallback to server default when no key / no selection.** | With the flag on but the user holding no key for the chosen provider, the picker hints "no key — add one in Settings" and we either disable selection of that provider or send no `provider`/`model` (server falls back to `DEFAULT_LLM_PROVIDER`). With the flag off we send neither field → behavior is byte-identical to today. |
-| **All BYOK surfaces gated by `flags.byok` AND auth.** | Keys are user-owned and need a Bearer token (P3 Appendix B). The Settings route and the model picker only mount when `flags.byok && flags.auth && isAuthenticated`. The flag is the kill-switch; auth is the precondition. |
-| **(D6) Surface `free_tier_exhausted` by its `code`, not HTTP status; treat it as terminal — no retry.** | Phase 6 §3 makes the *code* stable but is silent on the status (§2.5), so branching on status is fragile. The failed `/chat` call is **not** retried (retrying an exhausted shared quota only burns more budget); we render a BYOK upsell CTA (Task m) as the resolution. |
-| **(D7) Show the free-tier disclaimer **only in free mode**, derived from "user has zero enabled keys."** | Phase 6 §4: BYOK traffic never touches the operator/Google free path, so the privacy warning would be **false** there. "Free mode" is read off the existing `useApiKeys().list` — an **empty** key list ⇒ free mode; the banner disappears the moment any key exists. No new endpoint. |
-| **(D8) Free-tier surfaces require an authenticated user (no anonymous tier); gate behind `flags.byok && flags.auth`.** | Backend P3 makes `/api/chat` bearer-only, so "free tier" = a **signed-in** user with no key (§2.5). With either flag off, neither the disclaimer nor the exhausted CTA renders ⇒ today's behavior. |
+| Decision                                                                                                               | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Write-only secret fields — never round-trip the key to the client.**                                                 | The P3 contract is that secrets are ciphertext-at-rest and never echoed (§2.3). The `api_key` input is _send-only_: it exists in a controlled input, is posted, then the field is cleared on success and the value is dropped. No client state, cache, or store ever holds the plaintext after submit. Display is always the masked `••••last4` derived from `KeyMetadata`, never a real key.                                                           |
+| **Per-conversation model state in Zustand; persisted "default" in localStorage, not the server.**                      | The picker selection is _live UI state_ tied to the current conversation, exactly the kind of high-frequency, ephemeral state the architecture (FRONTEND_IMPROVEMENT_PLAN "State split") puts in **Zustand**, not the Query cache. There is no backend "default provider" endpoint (§2.2 note), so the user's preferred default is derived (first provider with a key, else server default) and persisted via Zustand `persist` so it survives reloads. |
+| **Optimistic-with-rollback for delete; invalidate-on-settle for add/rotate.**                                          | Delete is unambiguous (the row is gone) → optimistic removal feels instant and rolls back on error. Add/rotate change server-derived metadata we don't fully synthesize client-side (`created_at`, `last4`), so we **invalidate** the `["llm-keys"]` query on success to refetch the authoritative masked list rather than guessing. Both paths emit a toast.                                                                                           |
+| **Provider/model registry as a typed constant synced to the backend enum.**                                            | `providers.registry.ts` is the single client-side source of truth: a `Provider` union (`"gemini" \| "openai" \| "anthropic"`) plus a curated per-provider model list, labels, and icons, matching `05_Phase4...md` Appendix A. The `/chat` payload and the picker both derive from it, so we never send an unknown provider/model and a backend enum change is a one-file edit.                                                                         |
+| **Graceful fallback to server default when no key / no selection.**                                                    | With the flag on but the user holding no key for the chosen provider, the picker hints "no key — add one in Settings" and we either disable selection of that provider or send no `provider`/`model` (server falls back to `DEFAULT_LLM_PROVIDER`). With the flag off we send neither field → behavior is byte-identical to today.                                                                                                                      |
+| **All BYOK surfaces gated by `flags.byok` AND auth.**                                                                  | Keys are user-owned and need a Bearer token (P3 Appendix B). The Settings route and the model picker only mount when `flags.byok && flags.auth && isAuthenticated`. The flag is the kill-switch; auth is the precondition.                                                                                                                                                                                                                              |
+| **(D6) Surface `free_tier_exhausted` by its `code`, not HTTP status; treat it as terminal — no retry.**                | Phase 6 §3 makes the _code_ stable but is silent on the status (§2.5), so branching on status is fragile. The failed `/chat` call is **not** retried (retrying an exhausted shared quota only burns more budget); we render a BYOK upsell CTA (Task m) as the resolution.                                                                                                                                                                               |
+| **(D7) Show the free-tier disclaimer **only in free mode**, derived from "user has zero enabled keys."**               | Phase 6 §4: BYOK traffic never touches the operator/Google free path, so the privacy warning would be **false** there. "Free mode" is read off the existing `useApiKeys().list` — an **empty** key list ⇒ free mode; the banner disappears the moment any key exists. No new endpoint.                                                                                                                                                                  |
+| **(D8) Free-tier surfaces require an authenticated user (no anonymous tier); gate behind `flags.byok && flags.auth`.** | Backend P3 makes `/api/chat` bearer-only, so "free tier" = a **signed-in** user with no key (§2.5). With either flag off, neither the disclaimer nor the exhausted CTA renders ⇒ today's behavior.                                                                                                                                                                                                                                                      |
 
 ---
 
@@ -322,11 +336,11 @@ Today (pre-M6/M7 baseline, and after M1–M6 land the names below):
 - **`/chat` sends only `message` / `session_id` / `web_search_allowed`.** In the prototype this is
   `services/api.ts` `sendMessage(...)` building `payload: ChatRequest` with exactly those three
   fields (`services/api.ts:46-50`), and the type is `ChatRequest { message; session_id;
-  web_search_allowed }` in `types/index.ts:12-16`. After M1 this becomes
+web_search_allowed }` in `types/index.ts:12-16`. After M1 this becomes
   `features/chat/api/chat.schemas.ts` (`ChatRequestSchema`) + `features/chat/api/chat.api.ts`
   (`sendChatMessage`), but the **wire shape is unchanged** — still only those three fields.
 - **No auth header on requests** in the prototype; M6 adds the persisted token store and the
-  `http-client` Bearer interceptor (`flags.auth`). M7 *relies on* that: the keys API and `/chat`
+  `http-client` Bearer interceptor (`flags.auth`). M7 _relies on_ that: the keys API and `/chat`
   send `Authorization: Bearer <access>` via the M6 interceptor.
 - **The model picker has nowhere to plug in yet.** `chat-input.tsx` (prototype:
   `components/chat/chat-input.tsx`; after M1: `features/chat/components/chat-input.tsx`) owns the
@@ -389,7 +403,7 @@ test/
 > Each task lists a goal, the files touched, and full copy-pasteable TypeScript/TSX. Types are
 > `z.infer` of the Zod schemas so runtime + compile-time stay locked, matching the M1 convention.
 > Assumes M1 `lib/api/http-client.ts` exposes a typed `request<T>(path, { method, body, schema, auth,
-> signal })`, M0 `lib/env.ts`/`lib/flags.ts`, and M6 auth (token store + Bearer interceptor).
+signal })`, M0 `lib/env.ts`/`lib/flags.ts`, and M6 auth (token store + Bearer interceptor).
 
 ### Task 0 — Flag + env wiring
 
@@ -642,23 +656,18 @@ toasts. Delete is optimistic with rollback; add/rotate invalidate on success.
 // features/providers/hooks/use-api-keys.ts
 "use client";
 
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { flags } from "@/lib/flags";
 import { useIsAuthenticated } from "@/features/auth/hooks/use-auth"; // M6
-import {
-  addKey,
-  deleteKey,
-  listKeys,
-  rotateKey,
-} from "../api/keys.api";
+import { addKey, deleteKey, listKeys, rotateKey } from "../api/keys.api";
 import type { Provider } from "../api/providers.registry";
 import { PROVIDER_REGISTRY } from "../api/providers.registry";
-import type { AddKeyRequest, KeyListResponse, KeyMetadata } from "../api/keys.schemas";
+import type {
+  AddKeyRequest,
+  KeyListResponse,
+  KeyMetadata,
+} from "../api/keys.schemas";
 
 export const LLM_KEYS_QK = ["llm-keys"] as const;
 
@@ -682,7 +691,8 @@ export function useApiKeys() {
       invalidate(); // refetch authoritative masked list (created_at/last4 are server-derived)
       toast.success(`${PROVIDER_REGISTRY[vars.provider].label} key saved`);
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not save key"),
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Could not save key"),
   });
 
   const rotate = useMutation({
@@ -691,7 +701,8 @@ export function useApiKeys() {
       invalidate();
       toast.success(`${PROVIDER_REGISTRY[vars.provider].label} key rotated`);
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not rotate key"),
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Could not rotate key"),
   });
 
   const remove = useMutation({
@@ -701,7 +712,7 @@ export function useApiKeys() {
       await qc.cancelQueries({ queryKey: LLM_KEYS_QK });
       const previous = qc.getQueryData<KeyListResponse>(LLM_KEYS_QK);
       qc.setQueryData<KeyListResponse>(LLM_KEYS_QK, (old) =>
-        (old ?? []).filter((k) => k.provider !== provider),
+        (old ?? []).filter((k) => k.provider !== provider)
       );
       return { previous };
     },
@@ -715,7 +726,9 @@ export function useApiKeys() {
   });
 
   /** Set of providers the user currently has a key for (drives picker hints). */
-  const ownedProviders = new Set<Provider>((list.data ?? []).map((k) => k.provider));
+  const ownedProviders = new Set<Provider>(
+    (list.data ?? []).map((k) => k.provider)
+  );
   const keyFor = (p: Provider): KeyMetadata | undefined =>
     (list.data ?? []).find((k) => k.provider === p);
 
@@ -737,7 +750,11 @@ import { notFound, redirect } from "next/navigation";
 import { flags } from "@/lib/flags";
 import { getServerAuthState } from "@/features/auth/server"; // M6 helper (token presence)
 
-export default function SettingsLayout({ children }: { children: React.ReactNode }) {
+export default function SettingsLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   // Flag off → the route does not exist (404), matching "no settings page link" when OFF.
   if (!flags.byok) notFound();
   // Auth precondition — keys are user-owned; bounce anonymous users to login.
@@ -746,7 +763,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-      <p className="mt-1 text-sm text-muted-foreground">
+      <p className="text-muted-foreground mt-1 text-sm">
         Manage your provider API keys (Bring Your Own Key).
       </p>
       <div className="mt-8">{children}</div>
@@ -785,7 +802,13 @@ export default function SettingsPage() {
 import type { Provider } from "../api/providers.registry";
 import { PROVIDER_REGISTRY } from "../api/providers.registry";
 
-export function ProviderIcon({ provider, className }: { provider: Provider; className?: string }) {
+export function ProviderIcon({
+  provider,
+  className,
+}: {
+  provider: Provider;
+  className?: string;
+}) {
   const Icon = PROVIDER_REGISTRY[provider].icon;
   return <Icon className={className ?? "h-4 w-4"} aria-hidden />;
 }
@@ -812,11 +835,21 @@ interface ApiKeyRowProps {
   onDelete: (provider: Provider) => void;
 }
 
-export function ApiKeyRow({ provider, meta, busy, onSave, onDelete }: ApiKeyRowProps) {
+export function ApiKeyRow({
+  provider,
+  meta,
+  busy,
+  onSave,
+  onDelete,
+}: ApiKeyRowProps) {
   // Local, send-only secret. Cleared on submit; never seeded from `meta`.
   const [secret, setSecret] = useState("");
   const exists = Boolean(meta);
-  const masked = meta?.last4 ? `••••••••${meta.last4}` : exists ? "••••••••" : "Not set";
+  const masked = meta?.last4
+    ? `••••••••${meta.last4}`
+    : exists
+      ? "••••••••"
+      : "Not set";
 
   const submit = () => {
     const value = secret.trim();
@@ -826,12 +859,14 @@ export function ApiKeyRow({ provider, meta, busy, onSave, onDelete }: ApiKeyRowP
   };
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 sm:flex-row sm:items-center">
+    <div className="border-border bg-card flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center">
       <div className="flex min-w-40 items-center gap-2">
         <ProviderIcon provider={provider} />
         <div>
-          <p className="text-sm font-medium">{PROVIDER_REGISTRY[provider].label}</p>
-          <p className="font-mono text-xs text-muted-foreground">{masked}</p>
+          <p className="text-sm font-medium">
+            {PROVIDER_REGISTRY[provider].label}
+          </p>
+          <p className="text-muted-foreground font-mono text-xs">{masked}</p>
         </div>
       </div>
 
@@ -853,7 +888,13 @@ export function ApiKeyRow({ provider, meta, busy, onSave, onDelete }: ApiKeyRowP
           disabled={busy}
         />
         <Button onClick={submit} disabled={busy || !secret.trim()} size="sm">
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : exists ? "Rotate" : "Add"}
+          {busy ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : exists ? (
+            "Rotate"
+          ) : (
+            "Add"
+          )}
         </Button>
         {exists && (
           <Button
@@ -863,7 +904,7 @@ export function ApiKeyRow({ provider, meta, busy, onSave, onDelete }: ApiKeyRowP
             variant="ghost"
             aria-label={`Delete ${PROVIDER_REGISTRY[provider].label} key`}
           >
-            <Trash2 className="h-4 w-4 text-destructive" />
+            <Trash2 className="text-destructive h-4 w-4" />
           </Button>
         )}
       </div>
@@ -902,16 +943,20 @@ export function ApiKeysForm() {
 
   if (list.isError) {
     return (
-      <p className="text-sm text-destructive">
-        Could not load your keys. {list.error instanceof Error ? list.error.message : ""}
+      <p className="text-destructive text-sm">
+        Could not load your keys.{" "}
+        {list.error instanceof Error ? list.error.message : ""}
       </p>
     );
   }
 
-  const busyProvider =
-    add.isPending ? add.variables?.provider :
-    rotate.isPending ? rotate.variables?.provider :
-    remove.isPending ? remove.variables : undefined;
+  const busyProvider = add.isPending
+    ? add.variables?.provider
+    : rotate.isPending
+      ? rotate.variables?.provider
+      : remove.isPending
+        ? remove.variables
+        : undefined;
 
   return (
     <div className="space-y-3">
@@ -925,9 +970,9 @@ export function ApiKeysForm() {
           onDelete={(provider) => remove.mutate(provider)}
         />
       ))}
-      <p className="pt-2 text-xs text-muted-foreground">
-        Keys are encrypted at rest on the server and are never shown again after saving. Paste a new
-        key to rotate.
+      <p className="text-muted-foreground pt-2 text-xs">
+        Keys are encrypted at rest on the server and are never shown again after
+        saving. Paste a new key to rotate.
       </p>
     </div>
   );
@@ -983,14 +1028,14 @@ export const useProviderStore = create<ProviderState>()(
       name: "byok-model-selection",
       // Only persist the two scalar fields; never anything secret (there is nothing secret here).
       partialize: (s) => ({ provider: s.provider, model: s.model }),
-    },
-  ),
+    }
+  )
 );
 
 /** Resolve the effective wire selection, falling back to the server default. */
 export const effectiveSelection = (
   provider: Provider | null,
-  model: string | null,
+  model: string | null
 ): { provider: Provider; model: string } => {
   const p = provider ?? SERVER_DEFAULT.provider;
   return { provider: p, model: model ?? defaultModelFor(p) };
@@ -1098,15 +1143,22 @@ export function ModelPicker() {
 
   const selectedMeta = PROVIDER_REGISTRY[selectedProvider];
   const selectedModelLabel =
-    selectedMeta.models.find((m) => m.id === selectedModel)?.label ?? selectedModel;
+    selectedMeta.models.find((m) => m.id === selectedModel)?.label ??
+    selectedModel;
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-8 gap-1.5 rounded-full px-2 text-xs">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-1.5 rounded-full px-2 text-xs"
+        >
           <ProviderIcon provider={selectedProvider} className="h-3.5 w-3.5" />
           <span className="max-w-32 truncate">{selectedModelLabel}</span>
-          {!hasKeyForSelected && <KeyRound className="h-3 w-3 text-amber-500" aria-label="No key" />}
+          {!hasKeyForSelected && (
+            <KeyRound className="h-3 w-3 text-amber-500" aria-label="No key" />
+          )}
           <ChevronDown className="h-3 w-3 opacity-60" />
         </Button>
       </DropdownMenuTrigger>
@@ -1122,7 +1174,7 @@ export function ModelPicker() {
                 {!owned && (
                   <Link
                     href="/settings"
-                    className="ml-auto text-[11px] font-normal text-muted-foreground underline hover:text-foreground"
+                    className="text-muted-foreground hover:text-foreground ml-auto text-[11px] font-normal underline"
                   >
                     Add key
                   </Link>
@@ -1200,7 +1252,7 @@ export interface SendChatArgs {
 
 export async function sendChatMessage(
   { message, sessionId, webSearchAllowed, provider, model }: SendChatArgs,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<ChatResponse> {
   const body = ChatRequestSchema.parse({
     message,
@@ -1237,8 +1289,8 @@ export function ChatInput({ isLoading, onSend }: ChatInputProps) {
   };
 
   return (
-    <div className="p-4 bg-background border-t border-border">
-      <div className="max-w-4xl mx-auto space-y-2">
+    <div className="bg-background border-border border-t p-4">
+      <div className="mx-auto max-w-4xl space-y-2">
         {/* …existing rounded input row… */}
         <div className="flex items-center gap-2 px-2">
           {/* Renders null when flags.byok is false → no picker, no layout change. */}
@@ -1276,7 +1328,7 @@ function SettingsLink() {
   return (
     <Link
       href="/settings"
-      className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+      className="text-muted-foreground hover:bg-accent hover:text-foreground flex items-center gap-2 rounded-md px-3 py-2 text-sm"
     >
       <SettingsIcon className="h-4 w-4" />
       Settings
@@ -1382,7 +1434,10 @@ export function FreeTierDisclaimer() {
       <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" aria-hidden />
       <p className="flex-1 leading-relaxed">
         {DISCLAIMER}{" "}
-        <Link href="/settings" className="font-medium underline hover:text-amber-100">
+        <Link
+          href="/settings"
+          className="font-medium underline hover:text-amber-100"
+        >
           Add a key →
         </Link>
       </p>
@@ -1439,19 +1494,20 @@ export function FreeTierExhaustedDialog({ error }: { error: unknown }) {
   return (
     <div
       role="alert"
-      className="rounded-lg border border-border bg-card p-4 text-sm"
+      className="border-border bg-card rounded-lg border p-4 text-sm"
     >
-      <div className="mb-1 flex items-center gap-2 font-semibold text-foreground">
+      <div className="text-foreground mb-1 flex items-center gap-2 font-semibold">
         <KeyRound className="h-4 w-4 text-amber-400" aria-hidden />
         You&apos;ve reached the free demo limit
       </div>
-      <p className="mb-3 text-muted-foreground">
-        The free demo tier is exhausted for now. Add your own API key for private, unlimited use with
-        your choice of models — it takes a few seconds.
+      <p className="text-muted-foreground mb-3">
+        The free demo tier is exhausted for now. Add your own API key for
+        private, unlimited use with your choice of models — it takes a few
+        seconds.
       </p>
       <Link
         href="/settings"
-        className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground hover:opacity-90"
+        className="bg-primary text-primary-foreground inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium hover:opacity-90"
       >
         Add your API key
       </Link>
@@ -1497,18 +1553,18 @@ guarantees:
 
 `NEXT_PUBLIC_FEATURE_BYOK` (default **false**). Proves flag-off == today.
 
-| Surface | Flag **OFF** (default — today) | Flag **ON** (+ authenticated) |
-|---|---|---|
-| Settings link (sidebar/user-menu) | Not rendered (`SettingsLink` returns null) | Rendered for authenticated users |
-| `/settings` route | `notFound()` (404) — route effectively doesn't exist | Renders `ApiKeysForm` (after auth redirect if anonymous) |
-| `useApiKeys` list query | `enabled: false` — never fetches `/api/keys` | Fetches masked list; powers rows + picker hints |
-| Model picker (`ModelPicker`) | Returns `null` — not shown near chat input | Shown; pick provider+model per conversation |
-| `provider.store` persistence | Inert (never read by a visible surface) | Persists per-conversation selection across reloads |
-| `/chat` payload | `{ message, session_id, web_search_allowed }` only | Same **plus** optional `provider` + `model` from the picker |
-| No selection / no key | n/a (no picker) | `chatPayloadFragment()` falls back to server default; backend uses its own default key/provider |
-| Free-tier disclaimer (`FreeTierDisclaimer`) | Returns `null` — never shown | Shown **only** when `flags.auth` **and** the user has **zero** keys (free mode); hidden once any key exists; dismissible (§2.5 / D7; Task l) |
-| Exhausted CTA (`FreeTierExhaustedDialog`) | Returns `null` — `free_tier_exhausted` (if it ever arrives) falls through to the generic M5 error path | When `flags.auth` and a `/chat` call fails with `code: "free_tier_exhausted"`, renders the BYOK upsell → `/settings`; the call is **not** retried (§2.5 / D6; Task m) |
-| Net behavior | **Identical to M6** — server default provider, anonymous-safe | BYOK live end-to-end; free-mode disclaimer + exhausted upsell live (auth required) |
+| Surface                                     | Flag **OFF** (default — today)                                                                         | Flag **ON** (+ authenticated)                                                                                                                                         |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Settings link (sidebar/user-menu)           | Not rendered (`SettingsLink` returns null)                                                             | Rendered for authenticated users                                                                                                                                      |
+| `/settings` route                           | `notFound()` (404) — route effectively doesn't exist                                                   | Renders `ApiKeysForm` (after auth redirect if anonymous)                                                                                                              |
+| `useApiKeys` list query                     | `enabled: false` — never fetches `/api/keys`                                                           | Fetches masked list; powers rows + picker hints                                                                                                                       |
+| Model picker (`ModelPicker`)                | Returns `null` — not shown near chat input                                                             | Shown; pick provider+model per conversation                                                                                                                           |
+| `provider.store` persistence                | Inert (never read by a visible surface)                                                                | Persists per-conversation selection across reloads                                                                                                                    |
+| `/chat` payload                             | `{ message, session_id, web_search_allowed }` only                                                     | Same **plus** optional `provider` + `model` from the picker                                                                                                           |
+| No selection / no key                       | n/a (no picker)                                                                                        | `chatPayloadFragment()` falls back to server default; backend uses its own default key/provider                                                                       |
+| Free-tier disclaimer (`FreeTierDisclaimer`) | Returns `null` — never shown                                                                           | Shown **only** when `flags.auth` **and** the user has **zero** keys (free mode); hidden once any key exists; dismissible (§2.5 / D7; Task l)                          |
+| Exhausted CTA (`FreeTierExhaustedDialog`)   | Returns `null` — `free_tier_exhausted` (if it ever arrives) falls through to the generic M5 error path | When `flags.auth` and a `/chat` call fails with `code: "free_tier_exhausted"`, renders the BYOK upsell → `/settings`; the call is **not** retried (§2.5 / D6; Task m) |
+| Net behavior                                | **Identical to M6** — server default provider, anonymous-safe                                          | BYOK live end-to-end; free-mode disclaimer + exhausted upsell live (auth required)                                                                                    |
 
 Free-tier rows summarized: flag **off** ⇒ **neither** the disclaimer nor the CTA renders; flag **on**
 (+ auth) **and no key** ⇒ disclaimer shows; flag **on** (+ auth) **and** `/chat` returns
@@ -1528,15 +1584,30 @@ The single guarantee: when `flags.byok === false`, every new surface short-circu
 ```ts
 import { http, HttpResponse } from "msw";
 
-let keys: Array<{ id: string; provider: string; last4: string; created_at: string }> = [];
+let keys: Array<{
+  id: string;
+  provider: string;
+  last4: string;
+  created_at: string;
+}> = [];
 
 export const keysHandlers = [
   http.get("*/api/keys", () =>
     // MASKED list — no secret ever returned.
-    HttpResponse.json(keys.map(({ id, provider, last4, created_at }) => ({ id, provider, last4, created_at }))),
+    HttpResponse.json(
+      keys.map(({ id, provider, last4, created_at }) => ({
+        id,
+        provider,
+        last4,
+        created_at,
+      }))
+    )
   ),
   http.post("*/api/keys", async ({ request }) => {
-    const body = (await request.json()) as { provider: string; api_key: string };
+    const body = (await request.json()) as {
+      provider: string;
+      api_key: string;
+    };
     const rec = {
       id: crypto.randomUUID(),
       provider: body.provider,
@@ -1544,15 +1615,24 @@ export const keysHandlers = [
       created_at: new Date().toISOString(),
     };
     keys = [...keys.filter((k) => k.provider !== body.provider), rec];
-    return HttpResponse.json({ id: rec.id, provider: rec.provider, last4: rec.last4 }, { status: 201 });
+    return HttpResponse.json(
+      { id: rec.id, provider: rec.provider, last4: rec.last4 },
+      { status: 201 }
+    );
   }),
   http.put("*/api/keys/:provider", async ({ params, request }) => {
     const body = (await request.json()) as { api_key: string };
     keys = keys.map((k) =>
-      k.provider === params.provider ? { ...k, last4: body.api_key.slice(-4) } : k,
+      k.provider === params.provider
+        ? { ...k, last4: body.api_key.slice(-4) }
+        : k
     );
     const rec = keys.find((k) => k.provider === params.provider)!;
-    return HttpResponse.json({ id: rec.id, provider: rec.provider, last4: rec.last4 });
+    return HttpResponse.json({
+      id: rec.id,
+      provider: rec.provider,
+      last4: rec.last4,
+    });
   }),
   http.delete("*/api/keys/:provider", ({ params }) => {
     keys = keys.filter((k) => k.provider !== params.provider);
@@ -1566,8 +1646,8 @@ export const keysHandlers = [
 export const freeTierExhaustedChatHandler = http.post("*/api/chat", () =>
   HttpResponse.json(
     { detail: "Free tier exhausted.", code: "free_tier_exhausted" },
-    { status: 429 }, // could equally be 402; isFreeTierExhausted keys off `code`, not this
-  ),
+    { status: 429 } // could equally be 402; isFreeTierExhausted keys off `code`, not this
+  )
 );
 ```
 
@@ -1604,7 +1684,7 @@ export const freeTierExhaustedChatHandler = http.post("*/api/chat", () =>
     to `/settings`); given any other error, a non-matching code, or flags off → renders nothing (so the
     caller's generic error UI takes over).
 13. **Exhausted `/chat` → CTA, no retry.** With `freeTierExhaustedChatHandler` active and `flags.byok &&
-    flags.auth` on, sending a message surfaces the CTA and the `/chat` endpoint is hit **exactly once**
+flags.auth` on, sending a message surfaces the CTA and the `/chat` endpoint is hit **exactly once**
     (assert no retry — D6). With `flags.auth` off (no anonymous tier, D8), neither free-tier surface
     renders even when keyless.
 
@@ -1666,10 +1746,10 @@ CI green on the branch (same per-milestone gate as the rest of the plan).
     today" guarantee. The flag-off test (§9.7) snapshots the `/chat` body and asserts the picker /
     link render null as a regression tripwire.
 11. **`free_tier_exhausted` HTTP-status assumption (Phase 6 is silent).** Phase 6 §3 guarantees the
-    stable *code* but **not** the HTTP status of the exhausted response (§2.5). We therefore branch on
+    stable _code_ but **not** the HTTP status of the exhausted response (§2.5). We therefore branch on
     `code` (Task k `isFreeTierExhausted`), tolerant of whatever status (likely 402 or 429). **Risk:** if
     a generic interceptor swallows 402/429 (e.g. routes 401/403 specially, or coerces 429 into a bare
-    "rate limited" toast) *before* the body's `code` is read, the upsell never fires. Mitigation: ensure
+    "rate limited" toast) _before_ the body's `code` is read, the upsell never fires. Mitigation: ensure
     the M1 `ApiError` carries `code` from the error body for **all** non-2xx (Task k edit), and that the
     chat error branch consults `isFreeTierExhausted` before any status-based handling. Test §9.10 asserts
     both 402 and 429 resolve to the CTA. If the backend later pins a specific status, nothing changes —
@@ -1696,7 +1776,7 @@ CI green on the branch (same per-milestone gate as the rest of the plan).
 2. **Settings page (flag on, authed).** `/settings` renders `ApiKeysForm`; anonymous users are
    redirected to login.
 3. **Keys CRUD works against the P3 contract.** Add (`POST /api/keys`), rotate (`PUT
-   /api/keys/{provider}`), delete (`DELETE /api/keys/{provider}` → 204) all succeed via the authed
+/api/keys/{provider}`), delete (`DELETE /api/keys/{provider}` → 204) all succeed via the authed
    `http-client`; the masked list refetches and renders `••••last4`.
 4. **Secret is write-only.** The plaintext key never appears in any client state, store, cache, log,
    or the DOM after submit; the input clears on success; tests §9.1/§9.4 pass.
@@ -1740,4 +1820,7 @@ Milestone-sized commits on the milestone branch (no `git` is run as part of writ
 15. `test(providers): MSW keys CRUD + secret-never-echoed + picker→/chat + flag-off parity + disclaimer + exhausted-CTA + auth-gating`
 
 Each commit leaves the tree releasable; with the flag off the app is indistinguishable from M6.
+
+```
+
 ```

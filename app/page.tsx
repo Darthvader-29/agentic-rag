@@ -75,12 +75,13 @@ export default function Home() {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, aiMsg]);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
 
       const errorText =
-        err?.message ||
-        "The AI service returned an error. Please try again later.";
+        err instanceof Error
+          ? err.message
+          : "The AI service returned an error. Please try again later.";
 
       const errorMsg: Message = {
         id: uuidv4(),
@@ -102,11 +103,11 @@ export default function Home() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 overflow-hidden dark:bg-slate-950">
+    <div className="flex h-screen w-full overflow-hidden bg-slate-50 dark:bg-slate-950">
       {/* Sidebar with transition */}
       <div
         className={cn(
-          "transition-all duration-300 ease-in-out overflow-hidden",
+          "overflow-hidden transition-all duration-300 ease-in-out",
           isSidebarOpen ? "w-64 opacity-100" : "w-0 opacity-0"
         )}
       >
@@ -117,7 +118,7 @@ export default function Home() {
       </div>
 
       {/* Main Chat Area */}
-      <div className="flex flex-col flex-1 h-full relative bg-background shadow-xl rounded-l-2xl border-l border-slate-100 overflow-hidden my-0 mr-0 dark:border-slate-800 dark:shadow-none">
+      <div className="bg-background relative my-0 mr-0 flex h-full flex-1 flex-col overflow-hidden rounded-l-2xl border-l border-slate-100 shadow-xl dark:border-slate-800 dark:shadow-none">
         {/* Open button – only when sidebar is closed */}
         {!isSidebarOpen && (
           <div className="absolute top-4 left-4 z-10">
@@ -132,8 +133,8 @@ export default function Home() {
           </div>
         )}
 
-        <ScrollArea className="flex-1 p-4 max-h-[calc(100vh-80px)]">
-          <div className="max-w-4xl mx-auto space-y-6 pb-10 pt-10">
+        <ScrollArea className="max-h-[calc(100vh-80px)] flex-1 p-4">
+          <div className="mx-auto max-w-4xl space-y-6 pt-10 pb-10">
             {messages.length === 0 ? (
               <div className="mt-10">
                 <EmptyState />

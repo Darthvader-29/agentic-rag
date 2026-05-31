@@ -58,16 +58,16 @@ media galleries).
 ### Out of scope (do NOT build here)
 
 - **Backend emission of components.** Synthesis emitting the fenced ` ```json ` blocks is **P6**
-  (`09_Phase6_Agentic_Architecture.md` §5). M10 only *renders* what the backend already emits.
+  (`09_Phase6_Agentic_Architecture.md` §5). M10 only _renders_ what the backend already emits.
 - **The `component` SSE event plumbing itself** — the parser branch, the loose `SseComponentSchema`,
   `onComponent`, and the `addComponent` store wiring are **M2/M9**. M10 consumes
   `message.components`; it does not parse the wire or touch the store action.
 - **The strict streaming flip** (`NEXT_PUBLIC_FEATURE_STREAMING=true`) — that is **M9**. M10 works
-  with components delivered by *either* strategy (M9 streamed, or a blocking path that ever populates
+  with components delivered by _either_ strategy (M9 streamed, or a blocking path that ever populates
   `components`); it renders from `Message.components` regardless of how they got there.
 - **The buffer-until-fence rule** — buffering a partial ` ```json ` block until its fence closes is a
   **backend (P6)** concern; the frontend receives one whole block per `component` event (M2).
-- New shadcn primitives beyond what M3 added; auth/BYOK; the sources-panel *structure* (M3 owns it —
+- New shadcn primitives beyond what M3 added; auth/BYOK; the sources-panel _structure_ (M3 owns it —
   M10 only feeds it citation data).
 
 ---
@@ -80,10 +80,10 @@ media galleries).
 
 ### 2.1 What synthesis emits
 
-From 09_Phase6 §5 (verbatim intent): `synthesis` returns **Markdown prose** plus **zero or more
+From 09*Phase6 §5 (verbatim intent): `synthesis` returns **Markdown prose** plus **zero or more
 component specs** as fenced ` ```json ` blocks. On the backend a pydantic union validates each block;
 **an invalid block is dropped (prose still renders) — never a 500** (it mirrors Phase 6's defensive
-`decide_combined_route` pattern). Decision 2 of that doc fixes *why* the output is Markdown +
+`decide_combined_route` pattern). Decision 2 of that doc fixes \_why* the output is Markdown +
 component JSON rather than model-authored HTML: it is cheaper (fewer tokens), **safe** (no
 model-authored executable markup → no XSS), and **streamable** — "the frontend renders rich UI from a
 trusted, fixed component catalog."
@@ -104,14 +104,14 @@ component (whole block 2) ─┘      │ M10: validate spec → <ComponentBlock
 
 ### 2.3 Component catalog (09_Phase6 §5 table + Appendix C examples)
 
-| Type | Purpose (09 §5) | Authoritative shape |
-|------|-----------------|---------------------|
-| `table` | structured data, comparisons | `{"type":"table","columns":[...],"rows":[[...],[...]]}` (Appendix C) |
-| `chart` | numbers, comparisons | `{"type":"chart","chart":"bar","x":[...],"series":[{"name":...,"y":[...]}]}` (Appendix C) |
-| `citation` | clickable cards → exact retrieved chunk / web source — **provenance** | `{"type":"citation","items":[{"label":...,"source_id":...,"snippet":...}]}` (Appendix C) |
-| `callout` | info / warning / tip boxes | `{"type":"callout","level":"info"\|"warning"\|"tip","text":...}` (Appendix C) |
-| `code` | syntax-highlighted, copyable code | **shape not printed in 09** — see assumption below |
-| `media` | images & galleries | **shape not printed in 09** — see assumption below |
+| Type       | Purpose (09 §5)                                                       | Authoritative shape                                                                       |
+| ---------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `table`    | structured data, comparisons                                          | `{"type":"table","columns":[...],"rows":[[...],[...]]}` (Appendix C)                      |
+| `chart`    | numbers, comparisons                                                  | `{"type":"chart","chart":"bar","x":[...],"series":[{"name":...,"y":[...]}]}` (Appendix C) |
+| `citation` | clickable cards → exact retrieved chunk / web source — **provenance** | `{"type":"citation","items":[{"label":...,"source_id":...,"snippet":...}]}` (Appendix C)  |
+| `callout`  | info / warning / tip boxes                                            | `{"type":"callout","level":"info"\|"warning"\|"tip","text":...}` (Appendix C)             |
+| `code`     | syntax-highlighted, copyable code                                     | **shape not printed in 09** — see assumption below                                        |
+| `media`    | images & galleries                                                    | **shape not printed in 09** — see assumption below                                        |
 
 The four Appendix C examples (`table`, `chart`, `citation`, `callout`) are reproduced exactly in the
 strict schemas. `citation` is explicitly the **SOURCES / provenance channel** — its `items[]` are the
@@ -134,7 +134,7 @@ component type" as an open build-time detail):
 ```
 
 Because the strict union **drops** any block it cannot validate (§2.1 parity), a backend that later
-ships a *different* `code`/`media` shape degrades safely to "prose only" until M10's schema is
+ships a _different_ `code`/`media` shape degrades safely to "prose only" until M10's schema is
 updated — it never crashes. These two schemas are the **single place** to reconcile; the
 single-source-of-truth rule (Risk R5) keeps the renderer and the backend catalog from drifting
 silently.
@@ -143,7 +143,7 @@ silently.
 
 The backend already drops invalid blocks server-side. M10 applies the **same rule a second time** on
 the client: every opaque spec on `message.components` is re-validated against the strict union, and
-**an invalid / unknown block is dropped** (the surrounding prose, and every *sibling* valid block,
+**an invalid / unknown block is dropped** (the surrounding prose, and every _sibling_ valid block,
 still render). This is defense-in-depth — the loose `SseComponentSchema` (M2) only guarantees
 "an object with a string `type`"; M10's strict union is what actually gates rendering.
 
@@ -151,15 +151,15 @@ still render). This is defense-in-depth — the loose `SseComponentSchema` (M2) 
 
 ## 3. Decisions & Rationale
 
-| # | Decision | Rationale | Rejected alternative |
-|---|----------|-----------|----------------------|
-| D1 | **Strict `z.discriminatedUnion("type", …)` in M10**, while M2's loose `SseComponentSchema` stays in `chat.schemas.ts` | Two layers, two jobs: M2's loose schema keeps the *wire/store* permissive (accept any `{type, …}` so a forward-compatible block isn't dropped at the transport before the UI even exists). M10's strict union is the *render gate* — it produces a fully-typed `ComponentSpec` so each renderer gets exact props with **no `any`**, and `discriminatedUnion` gives O(1) dispatch + the best Zod error messages keyed on `type`. | One strict schema at the SSE boundary (couples the wire to the renderer; a new backend block type would be dropped before reaching the store, losing forward-compat). |
-| D2 | **Drop-invalid → degrade to prose** (mirror the backend §5 rule) | A malformed/unknown block must never blank the answer. `safeParseComponent` returns `null` on failure and the dispatcher renders nothing for it; siblings + prose are unaffected. Matches the backend's "invalid block dropped, never a 500" exactly, so behavior is consistent end-to-end. | Throwing / an error boundary per block (heavier, and an error boundary still flashes a fallback); rendering raw JSON for *invalid* blocks (noisy — raw JSON is reserved for the **flag-off** path, D3). |
-| D3 | **Flag-gated with a raw-`code-block` fallback when OFF** | Dark-launch discipline (the M2/M9 pattern): off ⇒ zero behavior change. But "zero rich UI" shouldn't mean "silently lose the data," so off renders each spec as **collapsed pretty-printed JSON inside M3's `code-block`** — debuggable, copyable, and obviously-not-yet-rich. On ⇒ the validated renderer. | Off ⇒ render nothing (loses visibility that components arrived); off ⇒ rich anyway (defeats the dark launch). |
-| D4 | **Reuse M3's `code-block.tsx` for the `code` type** | M3 already built a lazy-highlighted, copyable, semantic-token code block with a `<pre>` fallback (`ssr:false`). The `code` component is exactly that with `{language, code}` props — reusing it means one highlighter, one copy hook, one theme, and the **flag-off raw fallback** is literally the same component. | A second highlighter in `rich/code.tsx` (duplicate ~½MB chunk, divergent styling). |
-| D5 | **`citation` feeds the M3 sources panel** (provenance is one channel) | 09 §5 calls `citation` the provenance channel. M3 already owns the "Referenced N chunks" sources panel. Mapping `citation.items[] → Source[]` and rendering through the **same** panel/card affordances keeps one sources UX whether provenance arrives as M3's synthesized `sources` (blocking) or as a P6 `citation` block (rich). | A parallel, differently-styled citation list (two provenance UIs that drift). |
-| D6 | **Charts via `recharts`, lazy-loaded (`next/dynamic`, `ssr:false`)** | A charting lib is heavy and only needed when an answer actually contains a `chart` block. `next/dynamic({ssr:false})` keeps it **out of the chat route's first-load JS** and off the server; it loads only when a chart mounts — the same lazy posture M3 uses for the highlighter (D2 there). `recharts` is React-native, responsive, and SVG-based (crisp, themeable via `currentColor`/tokens). | Eager import (½MB+ in first load for every chat, most with no chart); a canvas lib (imperative, harder to theme with tokens / reduced-motion). |
-| D7 | **SSR / XSS safety: render from a trusted FIXED catalog only — no model-authored HTML** | This is the whole reason the backend chose "Markdown + component JSON" over "HTML from a cheap model" (09 Decision 2). M10 never `dangerouslySetInnerHTML`s anything from a spec; every field is rendered as **text or as a typed prop** of a fixed component. `media` URLs are constrained to `http(s)` + the `next.config` allowlist (M9) + `referrerPolicy="no-referrer"`; `citation`/`media` links open with `rel="noopener noreferrer"`. | Trusting any spec field as markup (re-introduces the XSS surface the backend deliberately removed). |
+| #   | Decision                                                                                                              | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                     | Rejected alternative                                                                                                                                                                                    |
+| --- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **Strict `z.discriminatedUnion("type", …)` in M10**, while M2's loose `SseComponentSchema` stays in `chat.schemas.ts` | Two layers, two jobs: M2's loose schema keeps the _wire/store_ permissive (accept any `{type, …}` so a forward-compatible block isn't dropped at the transport before the UI even exists). M10's strict union is the _render gate_ — it produces a fully-typed `ComponentSpec` so each renderer gets exact props with **no `any`**, and `discriminatedUnion` gives O(1) dispatch + the best Zod error messages keyed on `type`.               | One strict schema at the SSE boundary (couples the wire to the renderer; a new backend block type would be dropped before reaching the store, losing forward-compat).                                   |
+| D2  | **Drop-invalid → degrade to prose** (mirror the backend §5 rule)                                                      | A malformed/unknown block must never blank the answer. `safeParseComponent` returns `null` on failure and the dispatcher renders nothing for it; siblings + prose are unaffected. Matches the backend's "invalid block dropped, never a 500" exactly, so behavior is consistent end-to-end.                                                                                                                                                   | Throwing / an error boundary per block (heavier, and an error boundary still flashes a fallback); rendering raw JSON for _invalid_ blocks (noisy — raw JSON is reserved for the **flag-off** path, D3). |
+| D3  | **Flag-gated with a raw-`code-block` fallback when OFF**                                                              | Dark-launch discipline (the M2/M9 pattern): off ⇒ zero behavior change. But "zero rich UI" shouldn't mean "silently lose the data," so off renders each spec as **collapsed pretty-printed JSON inside M3's `code-block`** — debuggable, copyable, and obviously-not-yet-rich. On ⇒ the validated renderer.                                                                                                                                   | Off ⇒ render nothing (loses visibility that components arrived); off ⇒ rich anyway (defeats the dark launch).                                                                                           |
+| D4  | **Reuse M3's `code-block.tsx` for the `code` type**                                                                   | M3 already built a lazy-highlighted, copyable, semantic-token code block with a `<pre>` fallback (`ssr:false`). The `code` component is exactly that with `{language, code}` props — reusing it means one highlighter, one copy hook, one theme, and the **flag-off raw fallback** is literally the same component.                                                                                                                           | A second highlighter in `rich/code.tsx` (duplicate ~½MB chunk, divergent styling).                                                                                                                      |
+| D5  | **`citation` feeds the M3 sources panel** (provenance is one channel)                                                 | 09 §5 calls `citation` the provenance channel. M3 already owns the "Referenced N chunks" sources panel. Mapping `citation.items[] → Source[]` and rendering through the **same** panel/card affordances keeps one sources UX whether provenance arrives as M3's synthesized `sources` (blocking) or as a P6 `citation` block (rich).                                                                                                          | A parallel, differently-styled citation list (two provenance UIs that drift).                                                                                                                           |
+| D6  | **Charts via `recharts`, lazy-loaded (`next/dynamic`, `ssr:false`)**                                                  | A charting lib is heavy and only needed when an answer actually contains a `chart` block. `next/dynamic({ssr:false})` keeps it **out of the chat route's first-load JS** and off the server; it loads only when a chart mounts — the same lazy posture M3 uses for the highlighter (D2 there). `recharts` is React-native, responsive, and SVG-based (crisp, themeable via `currentColor`/tokens).                                            | Eager import (½MB+ in first load for every chat, most with no chart); a canvas lib (imperative, harder to theme with tokens / reduced-motion).                                                          |
+| D7  | **SSR / XSS safety: render from a trusted FIXED catalog only — no model-authored HTML**                               | This is the whole reason the backend chose "Markdown + component JSON" over "HTML from a cheap model" (09 Decision 2). M10 never `dangerouslySetInnerHTML`s anything from a spec; every field is rendered as **text or as a typed prop** of a fixed component. `media` URLs are constrained to `http(s)` + the `next.config` allowlist (M9) + `referrerPolicy="no-referrer"`; `citation`/`media` links open with `rel="noopener noreferrer"`. | Trusting any spec field as markup (re-introduces the XSS surface the backend deliberately removed).                                                                                                     |
 
 ---
 
@@ -174,7 +174,7 @@ Everything M10 needs already exists from M1/M2/M3/M9 — M10 is purely additive 
   opaque spec to a message's `components[]`. M2/M9 call it from `onComponent`. M10 does **not** add or
   modify a store action — it consumes the already-populated array via the message selector.
 - **`features/chat/api/chat.schemas.ts` — loose `SseComponentSchema` (M2).** The permissive wire
-  schema (≈ `z.object({ type: z.string() }).passthrough()`) that lets *any* component frame through
+  schema (≈ `z.object({ type: z.string() }).passthrough()`) that lets _any_ component frame through
   to `addComponent`. **Stays as-is.** M10's strict union lives in a **new** file and is what the
   renderer validates against.
 - **`lib/sse/parser.ts` / `lib/sse/stream-chat.ts` (M2/M9).** Already yield/dispatch the `component`
@@ -235,6 +235,7 @@ features/chat/components/rich/__tests__/
 `sources-panel.tsx`, `lib/sse/*`, `next.config.ts` images allowlist.
 
 **Install:**
+
 ```bash
 npm i recharts
 # react-markdown / remark-gfm / the highlighter are already present (M3).
@@ -319,7 +320,9 @@ export const tableSchema = z.object({
   type: z.literal("table"),
   columns: z.array(z.string()),
   // Cells are scalars; coerce-tolerant (string|number|boolean|null) and rendered as text.
-  rows: z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
+  rows: z.array(
+    z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))
+  ),
   caption: z.string().optional(),
 });
 
@@ -408,7 +411,9 @@ export function safeParseComponent(raw: unknown): ComponentSpec | null {
  * Normalize a message's whole opaque components array into typed, render-ready specs,
  * dropping every invalid block (defense-in-depth over the backend's own drop, §2.5).
  */
-export function normalizeComponents(raw: readonly unknown[] | undefined): ComponentSpec[] {
+export function normalizeComponents(
+  raw: readonly unknown[] | undefined
+): ComponentSpec[] {
   if (!raw || raw.length === 0) return [];
   const out: ComponentSpec[] = [];
   for (const item of raw) {
@@ -463,8 +468,8 @@ function RawFallback({ spec }: { spec: unknown }) {
     return null; // unserializable → nothing (never crash)
   }
   return (
-    <details className="my-3 rounded-md border border-border bg-muted/40">
-      <summary className="cursor-pointer select-none px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+    <details className="border-border bg-muted/40 my-3 rounded-md border">
+      <summary className="text-muted-foreground hover:text-foreground cursor-pointer px-3 py-1.5 text-xs select-none">
         Rich component (raw)
       </summary>
       <div className="px-3 pb-3">
@@ -531,15 +536,21 @@ function cellText(v: string | number | boolean | null): string {
 export function TableComponent({ spec }: { spec: TableSpec }) {
   const { columns, rows, caption } = spec;
   return (
-    <div className="my-3 overflow-x-auto rounded-md border border-border">
+    <div className="border-border my-3 overflow-x-auto rounded-md border">
       <table className="w-full border-collapse text-sm">
         {caption && (
-          <caption className="px-3 py-2 text-left text-xs text-muted-foreground">{caption}</caption>
+          <caption className="text-muted-foreground px-3 py-2 text-left text-xs">
+            {caption}
+          </caption>
         )}
         <thead>
-          <tr className="border-b border-border bg-muted/60">
+          <tr className="border-border bg-muted/60 border-b">
             {columns.map((col, i) => (
-              <th key={i} scope="col" className="px-3 py-2 text-left font-medium text-foreground">
+              <th
+                key={i}
+                scope="col"
+                className="text-foreground px-3 py-2 text-left font-medium"
+              >
                 {col}
               </th>
             ))}
@@ -547,9 +558,15 @@ export function TableComponent({ spec }: { spec: TableSpec }) {
         </thead>
         <tbody>
           {rows.map((row, r) => (
-            <tr key={r} className="border-b border-border last:border-0 hover:bg-muted/40">
+            <tr
+              key={r}
+              className="border-border hover:bg-muted/40 border-b last:border-0"
+            >
               {columns.map((_, c) => (
-                <td key={c} className="px-3 py-2 align-top text-muted-foreground">
+                <td
+                  key={c}
+                  className="text-muted-foreground px-3 py-2 align-top"
+                >
                   {cellText(row[c] ?? null)}
                 </td>
               ))}
@@ -573,25 +590,38 @@ import { cn } from "@/lib/utils";
 import type { CalloutSpec } from "./component.schemas";
 
 const LEVEL = {
-  info: { Icon: Info, box: "border-primary/30 bg-primary/5", icon: "text-primary", role: "note" },
+  info: {
+    Icon: Info,
+    box: "border-primary/30 bg-primary/5",
+    icon: "text-primary",
+    role: "note",
+  },
   warning: {
     Icon: AlertTriangle,
     box: "border-destructive/30 bg-destructive/5",
     icon: "text-destructive",
     role: "alert",
   },
-  tip: { Icon: Lightbulb, box: "border-chart-2/30 bg-chart-2/5", icon: "text-chart-2", role: "note" },
+  tip: {
+    Icon: Lightbulb,
+    box: "border-chart-2/30 bg-chart-2/5",
+    icon: "text-chart-2",
+    role: "note",
+  },
 } as const;
 
 export function CalloutComponent({ spec }: { spec: CalloutSpec }) {
   const { level, text, title } = spec;
   const { Icon, box, icon, role } = LEVEL[level];
   return (
-    <div role={role} className={cn("my-3 flex gap-3 rounded-md border p-3 text-sm", box)}>
+    <div
+      role={role}
+      className={cn("my-3 flex gap-3 rounded-md border p-3 text-sm", box)}
+    >
       <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", icon)} aria-hidden />
       <div className="min-w-0 flex-1">
-        {title && <p className="mb-0.5 font-medium text-foreground">{title}</p>}
-        <p className="whitespace-pre-wrap text-muted-foreground">{text}</p>
+        {title && <p className="text-foreground mb-0.5 font-medium">{title}</p>}
+        <p className="text-muted-foreground whitespace-pre-wrap">{text}</p>
       </div>
     </div>
   );
@@ -637,19 +667,47 @@ import type { ChartSpec } from "./component.schemas";
 // Lazy, client-only: recharts is pulled in ONLY when a chart block actually mounts.
 const ResponsiveContainer = dynamic(
   () => import("recharts").then((m) => m.ResponsiveContainer),
-  { ssr: false, loading: () => <div className="h-64 w-full animate-pulse rounded-md bg-muted/40" /> },
+  {
+    ssr: false,
+    loading: () => (
+      <div className="bg-muted/40 h-64 w-full animate-pulse rounded-md" />
+    ),
+  }
 );
-const BarChart = dynamic(() => import("recharts").then((m) => m.BarChart), { ssr: false });
-const LineChart = dynamic(() => import("recharts").then((m) => m.LineChart), { ssr: false });
-const AreaChart = dynamic(() => import("recharts").then((m) => m.AreaChart), { ssr: false });
-const Bar = dynamic(() => import("recharts").then((m) => m.Bar), { ssr: false });
-const Line = dynamic(() => import("recharts").then((m) => m.Line), { ssr: false });
-const Area = dynamic(() => import("recharts").then((m) => m.Area), { ssr: false });
-const XAxis = dynamic(() => import("recharts").then((m) => m.XAxis), { ssr: false });
-const YAxis = dynamic(() => import("recharts").then((m) => m.YAxis), { ssr: false });
-const CartesianGrid = dynamic(() => import("recharts").then((m) => m.CartesianGrid), { ssr: false });
-const Tooltip = dynamic(() => import("recharts").then((m) => m.Tooltip), { ssr: false });
-const Legend = dynamic(() => import("recharts").then((m) => m.Legend), { ssr: false });
+const BarChart = dynamic(() => import("recharts").then((m) => m.BarChart), {
+  ssr: false,
+});
+const LineChart = dynamic(() => import("recharts").then((m) => m.LineChart), {
+  ssr: false,
+});
+const AreaChart = dynamic(() => import("recharts").then((m) => m.AreaChart), {
+  ssr: false,
+});
+const Bar = dynamic(() => import("recharts").then((m) => m.Bar), {
+  ssr: false,
+});
+const Line = dynamic(() => import("recharts").then((m) => m.Line), {
+  ssr: false,
+});
+const Area = dynamic(() => import("recharts").then((m) => m.Area), {
+  ssr: false,
+});
+const XAxis = dynamic(() => import("recharts").then((m) => m.XAxis), {
+  ssr: false,
+});
+const YAxis = dynamic(() => import("recharts").then((m) => m.YAxis), {
+  ssr: false,
+});
+const CartesianGrid = dynamic(
+  () => import("recharts").then((m) => m.CartesianGrid),
+  { ssr: false }
+);
+const Tooltip = dynamic(() => import("recharts").then((m) => m.Tooltip), {
+  ssr: false,
+});
+const Legend = dynamic(() => import("recharts").then((m) => m.Legend), {
+  ssr: false,
+});
 
 // Semantic palette via the token utilities (resolve per-theme; no hardcoded hex).
 const SERIES_COLORS = [
@@ -663,7 +721,9 @@ const SERIES_COLORS = [
 /** Pivot {x, series[]} → recharts row objects: [{ x, [seriesName]: y }]. */
 function toRows(spec: ChartSpec): Array<Record<string, string | number>> {
   return spec.x.map((label, i) => {
-    const row: Record<string, string | number> = { x: typeof label === "number" ? label : String(label) };
+    const row: Record<string, string | number> = {
+      x: typeof label === "number" ? label : String(label),
+    };
     for (const s of spec.series) row[s.name] = s.y[i] ?? 0;
     return row;
   });
@@ -677,7 +737,10 @@ export function ChartComponent({ spec }: { spec: ChartSpec }) {
   const axes = (
     <>
       <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-      <XAxis dataKey="x" tick={{ fontSize: 12, fill: "var(--color-muted-foreground)" }} />
+      <XAxis
+        dataKey="x"
+        tick={{ fontSize: 12, fill: "var(--color-muted-foreground)" }}
+      />
       <YAxis tick={{ fontSize: 12, fill: "var(--color-muted-foreground)" }} />
       <Tooltip
         contentStyle={{
@@ -693,11 +756,17 @@ export function ChartComponent({ spec }: { spec: ChartSpec }) {
   );
 
   return (
-    <figure className="my-3 rounded-md border border-border bg-card p-3">
+    <figure className="border-border bg-card my-3 rounded-md border p-3">
       {spec.title && (
-        <figcaption className="mb-2 text-xs font-medium text-muted-foreground">{spec.title}</figcaption>
+        <figcaption className="text-muted-foreground mb-2 text-xs font-medium">
+          {spec.title}
+        </figcaption>
       )}
-      <div className="h-64 w-full" role="img" aria-label={spec.title ?? "Chart"}>
+      <div
+        className="h-64 w-full"
+        role="img"
+        aria-label={spec.title ?? "Chart"}
+      >
         <ResponsiveContainer width="100%" height="100%">
           {spec.chart === "line" ? (
             <LineChart data={rows}>
@@ -794,7 +863,7 @@ external link (the panel sets `rel="noopener noreferrer"`); an item with only `s
 non-link card; the count matches `items.length`.
 
 > **Render-order note (§Task 8):** because `citation` renders the sources panel, when an answer has
-> *both* M3-synthesized `sources` (from `context_count`) **and** a `citation` component, prefer the
+> _both_ M3-synthesized `sources` (from `context_count`) **and** a `citation` component, prefer the
 > citation provenance (it is the precise, P6-authored channel). The `chat-message` wiring (Task 8)
 > suppresses the generic synthesized sources panel for that message when a `citation` component is
 > present, so provenance isn't shown twice.
@@ -836,11 +905,14 @@ export function MediaComponent({ spec }: { spec: MediaSpec }) {
     <div
       className={cn(
         "my-3",
-        isGallery ? "grid grid-cols-2 gap-2 sm:grid-cols-3" : "max-w-full",
+        isGallery ? "grid grid-cols-2 gap-2 sm:grid-cols-3" : "max-w-full"
       )}
     >
       {items.map((it, i) => (
-        <figure key={i} className="overflow-hidden rounded-md border border-border bg-muted/40">
+        <figure
+          key={i}
+          className="border-border bg-muted/40 overflow-hidden rounded-md border"
+        >
           {/* eslint-disable-next-line @next/next/no-img-element -- external, allowlisted, no-referrer */}
           <img
             src={it.url}
@@ -850,7 +922,9 @@ export function MediaComponent({ spec }: { spec: MediaSpec }) {
             className="h-auto w-full object-cover"
           />
           {it.caption && (
-            <figcaption className="px-2 py-1 text-xs text-muted-foreground">{it.caption}</figcaption>
+            <figcaption className="text-muted-foreground px-2 py-1 text-xs">
+              {it.caption}
+            </figcaption>
           )}
         </figure>
       ))}
@@ -890,25 +964,37 @@ const hasCitation = components.some((c) => c.type === "citation");
 ```
 
 ```tsx
-        {/* …existing Markdown body block (M3) stays exactly as-is… */}
+{
+  /* …existing Markdown body block (M3) stays exactly as-is… */
+}
 
-        {/* M10: rich component blocks, after the body. Flag-gated inside <ComponentBlock>.
+{
+  /* M10: rich component blocks, after the body. Flag-gated inside <ComponentBlock>.
             Render the RAW (opaque) message.components so the flag-off path can pretty-print them;
-            the dispatcher validates per spec when the flag is on. */}
-        {!isUser && message.components && message.components.length > 0 && (
-          <div className="space-y-1">
-            {message.components.map((spec, i) => (
-              <ComponentBlock key={i} spec={spec} index={i} />
-            ))}
-          </div>
-        )}
+            the dispatcher validates per spec when the flag is on. */
+}
+{
+  !isUser && message.components && message.components.length > 0 && (
+    <div className="space-y-1">
+      {message.components.map((spec, i) => (
+        <ComponentBlock key={i} spec={spec} index={i} />
+      ))}
+    </div>
+  );
+}
 
-        {/* Sources (M3) — suppressed when a P6 citation component already shows provenance. */}
-        {!isUser && !hasCitation && (
-          <SourcesPanel sources={message.sources} count={message.sourcesCount} />
-        )}
+{
+  /* Sources (M3) — suppressed when a P6 citation component already shows provenance. */
+}
+{
+  !isUser && !hasCitation && (
+    <SourcesPanel sources={message.sources} count={message.sourcesCount} />
+  );
+}
 
-        {/* …existing actions block (M3) stays as-is… */}
+{
+  /* …existing actions block (M3) stays as-is… */
+}
 ```
 
 > **Memo note (M3 D3 / R2):** M3 wraps `ChatMessage` in `React.memo` with a custom comparator. Add
@@ -928,15 +1014,15 @@ no `components` is visually unchanged from M3/M9.
 `NEXT_PUBLIC_FEATURE_RICH_COMPONENTS` → `flags.richComponents`. The flag is read **only** inside
 `<ComponentBlock>` (one choke point), so behavior is uniform.
 
-| Situation | Flag OFF (default — dark) | Flag ON |
-|---|---|---|
-| Message has **no** `components` | Unchanged from M9 (prose + M3 sources) | Same — `<ComponentBlock>` never renders |
-| `components` has a **valid** `table`/`chart`/`citation`/`callout`/`code`/`media` | Collapsed **raw JSON** in an M3 `code-block` (`<details>`), copyable | The **rich** renderer for that type |
-| `components` has an **invalid / unknown-type** block | Collapsed raw JSON (so you can see the malformed block) | **Dropped** (renders nothing); prose + siblings unaffected |
-| Mixed valid + invalid blocks | Each shown raw | Valid ones render rich; invalid ones dropped |
-| `citation` block present | Raw JSON (sources panel still shows M3 synthesized sources) | Provenance cards via M3 panel; generic synthesized panel suppressed |
-| Prose (Markdown body) | Always renders (never gated) | Always renders |
-| First-load JS bundle | No `recharts` (lazy) | No `recharts` until a `chart` actually mounts |
+| Situation                                                                        | Flag OFF (default — dark)                                            | Flag ON                                                             |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Message has **no** `components`                                                  | Unchanged from M9 (prose + M3 sources)                               | Same — `<ComponentBlock>` never renders                             |
+| `components` has a **valid** `table`/`chart`/`citation`/`callout`/`code`/`media` | Collapsed **raw JSON** in an M3 `code-block` (`<details>`), copyable | The **rich** renderer for that type                                 |
+| `components` has an **invalid / unknown-type** block                             | Collapsed raw JSON (so you can see the malformed block)              | **Dropped** (renders nothing); prose + siblings unaffected          |
+| Mixed valid + invalid blocks                                                     | Each shown raw                                                       | Valid ones render rich; invalid ones dropped                        |
+| `citation` block present                                                         | Raw JSON (sources panel still shows M3 synthesized sources)          | Provenance cards via M3 panel; generic synthesized panel suppressed |
+| Prose (Markdown body)                                                            | Always renders (never gated)                                         | Always renders                                                      |
+| First-load JS bundle                                                             | No `recharts` (lazy)                                                 | No `recharts` until a `chart` actually mounts                       |
 
 **Invariant:** flag OFF ⇒ **no rich UI and no crash** — the prose path and every other M3/M9 behavior
 are byte-for-byte unchanged; the only addition is a collapsed, opt-in raw block.
