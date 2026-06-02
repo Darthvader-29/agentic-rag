@@ -4,7 +4,7 @@ import { env } from "@/lib/env";
  * Feature flags gate forward-compatible surfaces so unfinished backend phases
  * ship dark. Each flag is consumed by exactly one later milestone:
  *
- *   streaming        -> M2 (seam); M9 flips true (backend P6 SSE)
+ *   streaming        -> M2 (seam); M9 flips ON by default (backend P6 SSE is live)
  *   auth             -> M6 (backend P3 JWT auth + login/register)
  *   byok             -> M7 (backend P4 multi-provider BYOK + model picker)
  *   presignedUpload  -> M8 (backend P5 presigned S3 uploads + status polling)

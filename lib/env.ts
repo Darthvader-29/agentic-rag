@@ -5,10 +5,18 @@ const FeatureFlag = z
   .default("false")
   .transform((v) => v === "true");
 
+// Streaming is ON by default as of M9 — the real P6 SSE backend is live. An operator can
+// still keep it env-gated by setting NEXT_PUBLIC_FEATURE_STREAMING=false to fall back to the
+// blocking path (the useChat facade switches strategies on this flag).
+const FeatureFlagDefaultOn = z
+  .enum(["true", "false"])
+  .default("true")
+  .transform((v) => v === "true");
+
 const envSchema = z.object({
   NEXT_PUBLIC_API_URL: z.string().url().default("http://localhost:8000/api"),
 
-  NEXT_PUBLIC_FEATURE_STREAMING: FeatureFlag,
+  NEXT_PUBLIC_FEATURE_STREAMING: FeatureFlagDefaultOn,
   NEXT_PUBLIC_FEATURE_AUTH: FeatureFlag,
   NEXT_PUBLIC_FEATURE_BYOK: FeatureFlag,
   NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD: FeatureFlag,
