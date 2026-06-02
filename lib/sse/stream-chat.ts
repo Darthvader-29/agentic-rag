@@ -13,11 +13,33 @@ import {
   type SseComponent,
 } from "@/features/chat/api/chat.schemas";
 
-/** The POST body for /api/chat — identical to the blocking ChatRequest. */
+/**
+ * Carries the backend's machine-readable error `code` (e.g. "free_tier_exhausted") from
+ * BOTH delivery paths to the hook:
+ *   - a pre-stream HTTP 4xx whose JSON body is `{detail, code}` (guard tripped before the
+ *     stream opened), and
+ *   - a terminal in-band `event: error` with `{detail, code}`.
+ * The hook branches on `.code` (NOT the HTTP status, an API-layer detail) to decide
+ * between a generic error and the free-tier BYOK upsell. (M7; M9 extends streaming-error.)
+ */
+export class StreamError extends Error {
+  readonly code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = "StreamError";
+    this.code = code;
+  }
+}
+
+/** The POST body for /api/chat — identical to the blocking ChatRequest, plus optional
+ * provider/model selection (M7). The optional fields are omitted when no provider is
+ * chosen, so the request is byte-for-byte today's when the picker is untouched. */
 export interface StreamChatPayload {
   message: string;
   session_id: string;
   web_search_allowed: boolean;
+  provider?: string;
+  model?: string;
 }
 
 export interface StreamChatHandlers {
@@ -74,15 +96,24 @@ export async function streamChat(
   }
 
   if (!res.ok) {
-    // Non-stream HTTP error (auth/rate-limit raised BEFORE the stream opened).
+    // Non-stream HTTP error (auth / rate-limit / free-tier guard raised BEFORE the stream
+    // opened). Surface the machine-readable `code` off the JSON body so the hook can branch
+    // on it (free_tier_exhausted → BYOK CTA) — NOT on res.status.
     let detail = `Backend error: ${res.status}`;
+    let code: string | undefined;
     try {
       const body = await res.json();
-      if (body?.detail) detail = String(body.detail);
+      const parsed = SseErrorSchema.safeParse(body);
+      if (parsed.success) {
+        detail = parsed.data.detail;
+        code = parsed.data.code;
+      } else if (body?.detail) {
+        detail = String(body.detail);
+      }
     } catch {
       /* non-JSON error body */
     }
-    onError?.(new Error(detail));
+    onError?.(new StreamError(detail, code));
     return;
   }
 
@@ -123,9 +154,13 @@ export async function streamChat(
           return; // typed completion terminates the stream
         }
         case "error": {
+          // Terminal in-band error. Surface `detail` + the optional `code`
+          // (free_tier_exhausted etc.) on a StreamError so the hook can branch.
           const parsed = SseErrorSchema.safeParse(safeJson(data));
           onError?.(
-            new Error(parsed.success ? parsed.data.detail : "Stream error")
+            parsed.success
+              ? new StreamError(parsed.data.detail, parsed.data.code)
+              : new StreamError("Stream error")
           );
           return; // backend closes the stream cleanly after an error event
         }

@@ -49,4 +49,10 @@ export interface Message {
   sourcesCount?: number;
   /** Stored on user messages so the retry function can re-send with the same web-search setting. */
   webSearchAllowed?: boolean;
+  /**
+   * Machine-readable backend error code captured on a failed assistant turn (M7). The known
+   * value is "free_tier_exhausted" (docs/09 §3) — the chat surface watches for it to raise
+   * the BYOK upsell dialog. Undefined for a generic error or a successful turn.
+   */
+  errorCode?: string;
 }

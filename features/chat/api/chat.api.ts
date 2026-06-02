@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { request } from "@/lib/api/http-client";
 import { flags } from "@/lib/flags";
+import { getChatModelSelection } from "@/features/keys/store/provider.store";
 import {
   chatRequestSchema,
   chatResponseSchema,
@@ -34,6 +35,8 @@ export async function sendMessage(
     message,
     session_id: getSessionId(),
     web_search_allowed: webSearchAllowed,
+    // M7: optional provider/model. `{}` when no provider is selected ⇒ omitted entirely.
+    ...getChatModelSelection(),
   });
 
   const data = await request("/chat", {

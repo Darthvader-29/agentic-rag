@@ -5,12 +5,20 @@ const FeatureFlag = z
   .default("false")
   .transform((v) => v === "true");
 
+// BYOK is ON by default as of M7 — the P4 multi-provider key store + model picker ship.
+// An operator can still keep it env-gated by setting NEXT_PUBLIC_FEATURE_BYOK=false to hide
+// the Settings route, picker, disclaimer, and upsell (chat falls back to the free tier).
+const FeatureFlagDefaultOn = z
+  .enum(["true", "false"])
+  .default("true")
+  .transform((v) => v === "true");
+
 const envSchema = z.object({
   NEXT_PUBLIC_API_URL: z.string().url().default("http://localhost:8000/api"),
 
   NEXT_PUBLIC_FEATURE_STREAMING: FeatureFlag,
   NEXT_PUBLIC_FEATURE_AUTH: FeatureFlag,
-  NEXT_PUBLIC_FEATURE_BYOK: FeatureFlag,
+  NEXT_PUBLIC_FEATURE_BYOK: FeatureFlagDefaultOn,
   NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD: FeatureFlag,
   NEXT_PUBLIC_FEATURE_RICH_COMPONENTS: FeatureFlag,
 
