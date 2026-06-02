@@ -3,6 +3,8 @@
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Trash2, FileText } from "lucide-react";
+import { flags } from "@/lib/flags";
+import { UserMenu } from "@/features/auth/components/user-menu";
 
 interface SidebarProps {
   onClearSession: () => void;
@@ -99,6 +101,9 @@ export function Sidebar({ onClearSession, onToggle }: SidebarProps) {
           </div>
         </div>
       </div>
+
+      {/* Auth identity / guest-upgrade CTA — flag-gated; nothing renders when auth is off. */}
+      {flags.auth && <UserMenu />}
 
       <div className="border-border flex flex-col gap-2 border-t pt-4">
         <div className="flex justify-end px-1">

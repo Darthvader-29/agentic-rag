@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import { request } from "@/lib/api/http-client";
+import { flags } from "@/lib/flags";
 import {
   chatRequestSchema,
   chatResponseSchema,
@@ -40,6 +41,10 @@ export async function sendMessage(
     body: payload,
     schema: chatResponseSchema,
     signal,
+    // Flag-gated Bearer attach. The interceptor injects the token when auth is live; with
+    // the flag off this is `false` ⇒ exactly today's anonymous request. The session_id
+    // source is unchanged — the backend binds the supplied id to the authenticated user.
+    auth: flags.auth,
   });
 
   if (data.session_id) persistSessionId(data.session_id);
@@ -55,6 +60,7 @@ export async function uploadFile(file: File): Promise<UploadResponse> {
     method: "POST",
     body: formData,
     schema: uploadResponseSchema,
+    auth: flags.auth,
   });
 }
 
@@ -66,6 +72,7 @@ export async function cleanupSession(): Promise<void> {
       await request("/cleanup", {
         method: "POST",
         body: { session_id: sessionId, file_keys: [] as string[] },
+        auth: flags.auth,
       });
     } catch (e) {
       console.error("Cleanup failed", e);

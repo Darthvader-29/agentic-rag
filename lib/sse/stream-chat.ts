@@ -1,5 +1,7 @@
 // lib/sse/stream-chat.ts
 import { env } from "@/lib/env";
+import { flags } from "@/lib/flags";
+import { authStore } from "@/features/auth/store/auth.store";
 import { parseSSE } from "@/lib/sse/parser";
 import {
   SseStatusSchema,
@@ -44,15 +46,24 @@ export async function streamChat(
 ): Promise<void> {
   const { onStatus, onToken, onComponent, onDone, onError, signal } = handlers;
 
+  // M6: attach Bearer for the streaming POST too (it bypasses http-client and does its own
+  // fetch). Flag-gated — with auth OFF this header is never set (byte-for-byte today). The
+  // SSE path can't run the 401→refresh→retry dance (no re-fetch of an open stream), so a
+  // mid-stream 401 surfaces via onError; M9 owns any richer streaming-refresh handling.
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+  };
+  if (flags.auth) {
+    const token = authStore.getAccessToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+
   let res: Response;
   try {
     res = await fetch(`${env.NEXT_PUBLIC_API_URL}/chat`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        // M6 (Phase 3): the http-client auth interceptor injects Bearer here.
-      },
+      headers,
       body: JSON.stringify(payload),
       signal,
     });
