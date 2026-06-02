@@ -10,8 +10,27 @@ import {
   SseErrorSchema,
   SseComponentSchema,
   type SseRoute,
+  type SseStage,
   type SseComponent,
 } from "@/features/chat/api/chat.schemas";
+
+/**
+ * Carries the backend's machine-readable error `code` (e.g. "free_tier_exhausted")
+ * from BOTH delivery paths to the hook:
+ *   - a pre-stream HTTP 4xx whose JSON body is `{detail, code}` (guard tripped before
+ *     the stream opened), and
+ *   - a terminal in-band `event: error` with `{detail, code}`.
+ * The hook branches on `.code` (NOT the HTTP status, which is an API-layer detail) to
+ * decide between a generic error and the free-tier BYOK upsell.
+ */
+export class StreamError extends Error {
+  readonly code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = "StreamError";
+    this.code = code;
+  }
+}
 
 /** The POST body for /api/chat — identical to the blocking ChatRequest. */
 export interface StreamChatPayload {
@@ -22,14 +41,18 @@ export interface StreamChatPayload {
 
 export interface StreamChatHandlers {
   /** A status stage arrived (routing | retrieving | searching web | synthesizing). */
-  onStatus?: (stage: string) => void;
+  onStatus?: (stage: SseStage) => void;
   /** A token chunk arrived; `text` is the raw chunk to append to the body. */
   onToken?: (text: string) => void;
-  /** A whole rich-output component block arrived (09 `component` event). Dark until M10. */
+  /** A whole rich-output component block arrived (09 `component` event). Stored by M9; rendered by M10. */
   onComponent?: (component: SseComponent) => void;
   /** The stream completed with the final answer + backend route (flat enum, legacy tolerated). */
   onDone?: (result: { answer: string; route: SseRoute | null }) => void;
-  /** A typed `error` event OR a transport failure occurred. */
+  /**
+   * A typed `error` event OR a transport/HTTP failure occurred. For a free-tier-exhausted
+   * response (either delivery path) the Error is a `StreamError` whose `.code` is
+   * "free_tier_exhausted"; the hook branches on that to show the BYOK CTA.
+   */
   onError?: (error: Error) => void;
   /** AbortController.signal that powers the Stop button. */
   signal?: AbortSignal;
@@ -74,15 +97,24 @@ export async function streamChat(
   }
 
   if (!res.ok) {
-    // Non-stream HTTP error (auth/rate-limit raised BEFORE the stream opened).
+    // Non-stream HTTP error (auth / rate-limit / free-tier guard raised BEFORE the
+    // stream opened). Surface the machine-readable `code` off the JSON body so the hook
+    // can branch on it (e.g. free_tier_exhausted → BYOK CTA) — NOT on res.status.
     let detail = `Backend error: ${res.status}`;
+    let code: string | undefined;
     try {
       const body = await res.json();
-      if (body?.detail) detail = String(body.detail);
+      const parsed = SseErrorSchema.safeParse(body);
+      if (parsed.success) {
+        detail = parsed.data.detail;
+        code = parsed.data.code;
+      } else if (body?.detail) {
+        detail = String(body.detail);
+      }
     } catch {
       /* non-JSON error body */
     }
-    onError?.(new Error(detail));
+    onError?.(new StreamError(detail, code));
     return;
   }
 
@@ -123,9 +155,13 @@ export async function streamChat(
           return; // typed completion terminates the stream
         }
         case "error": {
+          // Terminal in-band error. Surface `detail` + the optional `code`
+          // (free_tier_exhausted etc.) on a StreamError so the hook can branch.
           const parsed = SseErrorSchema.safeParse(safeJson(data));
           onError?.(
-            new Error(parsed.success ? parsed.data.detail : "Stream error")
+            parsed.success
+              ? new StreamError(parsed.data.detail, parsed.data.code)
+              : new StreamError("Stream error")
           );
           return; // backend closes the stream cleanly after an error event
         }
