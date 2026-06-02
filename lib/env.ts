@@ -5,9 +5,9 @@ const FeatureFlag = z
   .default("false")
   .transform((v) => v === "true");
 
-// Streaming is ON by default as of M9 — the real P6 SSE backend is live. An operator can
-// still keep it env-gated by setting NEXT_PUBLIC_FEATURE_STREAMING=false to fall back to the
-// blocking path (the useChat facade switches strategies on this flag).
+// Default-ON flags (M9 streaming, M10 rich components): the matching backend P6 surface is
+// live, so these capabilities ship enabled. An operator can still keep one env-gated by
+// setting it to "false" (streaming → blocking path; rich components → raw-JSON fallback).
 const FeatureFlagDefaultOn = z
   .enum(["true", "false"])
   .default("true")
@@ -20,7 +20,11 @@ const envSchema = z.object({
   NEXT_PUBLIC_FEATURE_AUTH: FeatureFlag,
   NEXT_PUBLIC_FEATURE_BYOK: FeatureFlag,
   NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD: FeatureFlag,
-  NEXT_PUBLIC_FEATURE_RICH_COMPONENTS: FeatureFlag,
+
+  // Rich component rendering (table/chart/citation/code/callout/media) is ON by default as of
+  // M10 — the P6 `component` SSE event is live. Set NEXT_PUBLIC_FEATURE_RICH_COMPONENTS=false to
+  // keep it dark (each component degrades to a collapsed raw-JSON block inside the M3 code-block).
+  NEXT_PUBLIC_FEATURE_RICH_COMPONENTS: FeatureFlagDefaultOn,
 
   NODE_ENV: z
     .enum(["development", "test", "production"])

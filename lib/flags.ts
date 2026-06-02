@@ -8,7 +8,7 @@ import { env } from "@/lib/env";
  *   auth             -> M6 (backend P3 JWT auth + login/register)
  *   byok             -> M7 (backend P4 multi-provider BYOK + model picker)
  *   presignedUpload  -> M8 (backend P5 presigned S3 uploads + status polling)
- *   richComponents   -> M10 (backend P6 rich-output component event)
+ *   richComponents   -> M10 (backend P6 rich-output component event); flips ON by default
  */
 export const flags = {
   streaming: env.NEXT_PUBLIC_FEATURE_STREAMING,
