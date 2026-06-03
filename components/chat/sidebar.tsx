@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
-import { Trash2, FileText } from "lucide-react";
+import { Trash2, FileText, KeyRound } from "lucide-react";
 import { flags } from "@/lib/flags";
 import { UserMenu } from "@/features/auth/components/user-menu";
 
@@ -109,6 +110,19 @@ export function Sidebar({ onClearSession, onToggle }: SidebarProps) {
         <div className="flex justify-end px-1">
           <ThemeToggle />
         </div>
+        {/* BYOK key management — flag-gated; the settings screen owns auth gating. */}
+        {flags.byok && (
+          <Button
+            asChild
+            variant="ghost"
+            className="w-full justify-center gap-2"
+          >
+            <Link href="/settings">
+              <KeyRound className="h-4 w-4" />
+              API Keys
+            </Link>
+          </Button>
+        )}
         <Button
           variant="ghost"
           className="text-destructive hover:text-destructive hover:bg-destructive/10 w-full justify-center gap-2"

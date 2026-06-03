@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import { useChatStore } from "@/features/chat/store/chat.store";
 import { getSessionId } from "@/features/chat/api/chat.api";
 import { streamChat, StreamError } from "@/lib/sse/stream-chat";
+import { getChatModelSelection } from "@/features/keys/store/provider.store";
 import {
   FREE_TIER_EXHAUSTED,
   type SseRoute,
@@ -125,6 +126,9 @@ export function useStreamingChat() {
           message: text,
           session_id: getSessionId(),
           web_search_allowed: webSearchAllowed,
+          // M7: optional per-conversation provider/model. Spreads to nothing when no
+          // provider is selected ⇒ the backend default (free Gemini tier).
+          ...getChatModelSelection(),
         },
         {
           signal: controller.signal,
@@ -153,7 +157,7 @@ export function useStreamingChat() {
           onError: (error) => {
             pushStep(assistantId, { label: "error", state: "error" });
             setRoute(assistantId, "ERROR");
-            // Branch on the machine-readable CODE (09 §3), not the HTTP status. A
+            // Branch on the machine-readable CODE (docs/09 §3), not the HTTP status. A
             // free-tier-exhausted code (from either delivery path) is captured on the
             // message so M7's BYOK "add your own key" CTA can key off `errorCode`.
             const code = error instanceof StreamError ? error.code : undefined;

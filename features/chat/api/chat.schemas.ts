@@ -14,6 +14,11 @@ export const chatRequestSchema = z.object({
   message: z.string(),
   session_id: z.string(),
   web_search_allowed: z.boolean(),
+  // M7: optional per-conversation BYOK provider/model. Omitted when the picker is untouched
+  // ⇒ the backend uses its own default (free Gemini tier). The picker constrains `provider`
+  // to the catalog; keep the request schema tolerant (string) so the contract stays loose.
+  provider: z.enum(["gemini", "openai", "anthropic"]).optional(),
+  model: z.string().optional(),
 });
 
 export const chatResponseSchema = z.object({
@@ -134,9 +139,10 @@ export const SseComponentSchema = z
 export type SseComponent = z.infer<typeof SseComponentSchema>;
 
 /**
- * The machine-readable error code carried by the freemium guard (09 §3). The contract
- * names `free_tier_exhausted`; the field is a tolerant string so an unknown future code
- * still parses (the hook branches only on the known value).
+ * The machine-readable error code carried by the freemium guard (docs/09 §3 / contract
+ * Appendix C). The contract names `free_tier_exhausted`; the field is a tolerant string so
+ * an unknown future code still parses (the UI branches only on this known value to show
+ * the BYOK upsell). M7 introduces the code; M9 owns the richer streaming-error surface.
  */
 export const FREE_TIER_EXHAUSTED = "free_tier_exhausted" as const;
 

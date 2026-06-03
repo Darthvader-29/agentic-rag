@@ -21,7 +21,7 @@ import {
  *     the stream opened), and
  *   - a terminal in-band `event: error` with `{detail, code}`.
  * The hook branches on `.code` (NOT the HTTP status, which is an API-layer detail) to
- * decide between a generic error and the free-tier BYOK upsell.
+ * decide between a generic error and the free-tier BYOK upsell. (M7; M9 extends streaming-error.)
  */
 export class StreamError extends Error {
   readonly code?: string;
@@ -32,11 +32,15 @@ export class StreamError extends Error {
   }
 }
 
-/** The POST body for /api/chat — identical to the blocking ChatRequest. */
+/** The POST body for /api/chat — identical to the blocking ChatRequest, plus optional
+ * provider/model selection (M7). The optional fields are omitted when no provider is
+ * chosen, so the request is byte-for-byte today's when the picker is untouched. */
 export interface StreamChatPayload {
   message: string;
   session_id: string;
   web_search_allowed: boolean;
+  provider?: string;
+  model?: string;
 }
 
 export interface StreamChatHandlers {

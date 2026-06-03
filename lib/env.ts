@@ -5,9 +5,11 @@ const FeatureFlag = z
   .default("false")
   .transform((v) => v === "true");
 
-// Streaming is ON by default as of M9 — the real P6 SSE backend is live. An operator can
-// still keep it env-gated by setting NEXT_PUBLIC_FEATURE_STREAMING=false to fall back to the
-// blocking path (the useChat facade switches strategies on this flag).
+// Default-ON flags (M9 streaming, M7 BYOK): the matching backend phase is live, so these
+// capabilities ship enabled. An operator can still keep one env-gated by setting it to
+// "false": STREAMING=false falls back to the blocking path (the useChat facade switches
+// strategies on the flag); BYOK=false hides the Settings route, picker, disclaimer, and
+// upsell (chat falls back to the free tier).
 const FeatureFlagDefaultOn = z
   .enum(["true", "false"])
   .default("true")
@@ -18,7 +20,7 @@ const envSchema = z.object({
 
   NEXT_PUBLIC_FEATURE_STREAMING: FeatureFlagDefaultOn,
   NEXT_PUBLIC_FEATURE_AUTH: FeatureFlag,
-  NEXT_PUBLIC_FEATURE_BYOK: FeatureFlag,
+  NEXT_PUBLIC_FEATURE_BYOK: FeatureFlagDefaultOn,
   NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD: FeatureFlag,
   NEXT_PUBLIC_FEATURE_RICH_COMPONENTS: FeatureFlag,
 
