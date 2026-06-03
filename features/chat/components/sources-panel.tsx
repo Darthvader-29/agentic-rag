@@ -8,6 +8,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+import { ProvenanceBadge } from "@/features/chat/components/rich/provenance-badge";
 import type { Source } from "@/types";
 
 interface SourcesPanelProps {
@@ -65,8 +66,15 @@ export function SourcesPanel({ sources, count }: SourcesPanelProps) {
           >
             <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 flex-1">
-              <span className="text-foreground block truncate font-medium">
-                {s.title}
+              <span className="flex items-center gap-1.5">
+                <span className="text-foreground block truncate font-medium">
+                  {s.title}
+                </span>
+                {/* Phase 7: retrieval-layer provenance. Renders nothing when `layer` is absent
+                    (flag off / legacy contract). This is the SINGLE provenance-badge render
+                    site for BOTH the generic sources path and the citation path (which delegates
+                    here via CitationComponent), so R7's "never show provenance twice" holds. */}
+                <ProvenanceBadge layer={s.layer} />
               </span>
               {s.snippet && (
                 <span className="line-clamp-2 block">{s.snippet}</span>

@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
 import { Providers } from "@/app/providers";
 import { Toaster } from "@/components/ui/sonner";
+import { flags } from "@/lib/flags";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -37,6 +39,9 @@ export default function RootLayout({
       >
         <Providers>{children}</Providers>
         <Toaster />
+        {/* Phase 7 (FE-3): Vercel Web Analytics — flag-gated. Renders nothing when observability
+            is off; on Vercel it auto-detects the project, locally it's an inert no-op. */}
+        {flags.observability && <Analytics />}
       </body>
     </html>
   );

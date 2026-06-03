@@ -15,11 +15,16 @@ function toSources(spec: CitationSpec): Source[] {
     title: item.label,
     snippet: item.snippet,
     url: item.url, // only http(s) URLs survived the strict schema (z.string().url())
+    layer: item.layer, // Phase 7: optional retrieval-layer provenance → ProvenanceBadge
   }));
 }
 
 export function CitationComponent({ spec }: { spec: CitationSpec }) {
   const sources = toSources(spec);
   // Reuse the M3 sources panel: same collapsible "Referenced N …" + cards, one provenance UX.
+  // Phase 7: each Source now carries an optional `layer`; the <ProvenanceBadge> is rendered
+  // INSIDE SourcesPanel (see sources-panel.tsx). We deliberately do NOT render a second badge
+  // here — citations flow through the very same panel, so a per-source badge would appear twice
+  // (R7: provenance is shown exactly once per source).
   return <SourcesPanel sources={sources} count={sources.length} />;
 }

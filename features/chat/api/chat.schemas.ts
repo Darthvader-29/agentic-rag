@@ -79,6 +79,31 @@ export const SseTokenSchema = z.object({
 export type SseToken = z.infer<typeof SseTokenSchema>;
 
 /**
+ * Phase 7 retrieval-layer discriminant: which layer a source/citation came from. Carried
+ * OPTIONALLY on citation items and on done-event sources (additive, legacy-safe). Absent ⇒ the
+ * UI renders no provenance badge. Kept tolerant: an unknown future layer is dropped at the
+ * field level (`.optional().catch(undefined)`) rather than failing the whole frame.
+ */
+export const SseLayerSchema = z
+  .enum(["vector", "graph", "web", "memory"])
+  .optional()
+  .catch(undefined);
+export type SseLayer = z.infer<typeof SseLayerSchema>;
+
+/**
+ * One source in the done-event `sources` array (Phase 7). Loose by design — only `layer` is
+ * meaningful to FE-0/FE-4 here; identity/title fields are read tolerantly downstream. The
+ * authoritative provenance channel remains the `citation` component (09 §5); `done.sources` is
+ * a parallel, optional carrier so the layer can ride either path.
+ */
+export const SseDoneSourceSchema = z
+  .object({
+    layer: SseLayerSchema,
+  })
+  .passthrough();
+export type SseDoneSource = z.infer<typeof SseDoneSourceSchema>;
+
+/**
  * done.route — the authoritative FLAT enum (09 Appendix A / contract Appendix C):
  * exactly `RAG | WEB | BOTH | DIRECT`. The frontend badge mapping is RAG→"RAG",
  * WEB→"WEB", BOTH→"WEB+RAG", DIRECT→"DIRECT" (see mapRoute in use-streaming-chat).
@@ -102,11 +127,19 @@ export const SseRouteSchema = z.union([
 ]);
 export type SseRoute = z.infer<typeof SseRouteSchema>;
 
-/** event: done  →  data: {"answer": "...", "route": "RAG"|"WEB"|"BOTH"|"DIRECT"} */
+/**
+ * event: done  →  data: {"answer": "...", "route": "RAG"|"WEB"|"BOTH"|"DIRECT", "sources"?: [...]}
+ *
+ * Phase 7 adds an OPTIONAL `sources` array whose items MAY carry a `layer` (vector|graph|web|
+ * memory). Additive and legacy-safe: omitted/absent on the pre-Phase-7 contract, and each item
+ * is `.passthrough()` so non-layer fields are tolerated. `.optional().catch(undefined)` on the
+ * array means a malformed `sources` payload degrades to "no sources" rather than failing `done`.
+ */
 export const SseDoneSchema = z.object({
   answer: z.string(),
   // route may be null/omitted defensively; the contract always sends the flat enum.
   route: SseRouteSchema.nullable().optional(),
+  sources: z.array(SseDoneSourceSchema).optional().catch(undefined),
 });
 export type SseDone = z.infer<typeof SseDoneSchema>;
 

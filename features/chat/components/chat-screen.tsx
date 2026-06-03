@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { m } from "framer-motion";
 import { useChat, resetSession } from "@/features/chat/hooks/use-chat";
 import { useChatStore, createMessage } from "@/features/chat/store/chat.store";
 import { getSessionId } from "@/features/chat/api/chat.api";
 import { env } from "@/lib/env";
+import { flags } from "@/lib/flags";
 import { spring } from "@/lib/motion";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 
@@ -17,7 +19,7 @@ import { FreeTierBanner } from "@/features/keys/components/free-tier-banner";
 import { FreeTierExhaustedDialog } from "@/features/keys/components/free-tier-exhausted-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Menu } from "lucide-react";
+import { Menu, PanelRightClose, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 const sidebarVariants = {
@@ -25,13 +27,42 @@ const sidebarVariants = {
   closed: { width: 0, opacity: 0 },
 };
 
+// Right-hand "Insights" drawer width animation (mirrors the left sidebar spring).
+const insightsVariants = {
+  open: { width: 340, opacity: 1 },
+  closed: { width: 0, opacity: 0 },
+};
+
+// Phase 7 mount points — lazy + flag-gated. The dynamic imports are only ever evaluated when
+// their flag is on (the gate in the JSX short-circuits), so the chunks stay unfetched while the
+// features ship dark. Each panel is OWNED by its feature lane and must degrade to an empty state
+// when its backend endpoint 404s/errors.
+//   - GraphPanel uses react-force-graph (canvas + window) ⇒ ssr:false is REQUIRED.
+//   - MemoryPanel is plain markdown ⇒ no ssr:false needed.
+const GraphPanel = dynamic(
+  () => import("@/features/knowledge-graph/components/graph-panel"),
+  { ssr: false }
+);
+const MemoryPanel = dynamic(
+  () => import("@/features/memory/components/memory-panel")
+);
+
+// Whether ANY insights surface is enabled — gates the whole drawer + its toggle.
+const INSIGHTS_ENABLED = flags.knowledgeGraph || flags.memory;
+
 export function ChatScreen() {
   const { messages, sendMessage } = useChat();
   const isLoading = useChatStore((s) => s.isLoading);
   const addMessage = useChatStore((s) => s.addMessage);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  // Phase 7 Insights drawer — closed by default; only ever opened when a flag enables a panel.
+  const [isInsightsOpen, setIsInsightsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
+
+  // The session the panels fetch against. Empty string on the server (SSR-safe); the panels'
+  // own query gating + empty-state handle an empty id gracefully.
+  const sessionId = getSessionId();
 
   // Auto-scroll (ported from page.tsx:29-33).
   useEffect(() => {
@@ -89,6 +120,21 @@ export function ChatScreen() {
           </div>
         )}
 
+        {/* Phase 7: Insights drawer toggle — only shown when a panel flag is on. */}
+        {INSIGHTS_ENABLED && !isInsightsOpen && (
+          <div className="absolute top-4 right-4 z-10">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsInsightsOpen(true)}
+              aria-label="Open insights"
+              className="hover:bg-accent"
+            >
+              <Sparkles className="text-muted-foreground h-5 w-5" />
+            </Button>
+          </div>
+        )}
+
         {/* Free-tier disclaimer — flag-gated; visible only to keyless users (M7). */}
         <FreeTierBanner />
 
@@ -122,6 +168,45 @@ export function ChatScreen() {
           }}
         />
       </div>
+
+      {/* Phase 7 Insights drawer — right-hand panel hosting the knowledge-graph + memory panels.
+          The whole drawer is gated on INSIGHTS_ENABLED, so when both flags are off nothing here
+          (including the lazy imports) is ever evaluated. The spring-driven width mirrors the left
+          sidebar. Each panel is flag-gated INDIVIDUALLY and owns its own loading/empty/404 state. */}
+      {INSIGHTS_ENABLED && (
+        <m.div
+          initial={false}
+          animate={isInsightsOpen ? "open" : "closed"}
+          variants={insightsVariants}
+          transition={reduced ? { duration: 0 } : spring}
+          className="border-border bg-background h-full overflow-hidden border-l"
+        >
+          <div className="flex h-full w-[340px] flex-col">
+            <div className="border-border flex items-center justify-between border-b px-4 py-3">
+              <span className="text-foreground flex items-center gap-2 text-sm font-semibold">
+                <Sparkles className="h-4 w-4" />
+                Insights
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setIsInsightsOpen(false)}
+                aria-label="Close insights"
+              >
+                <PanelRightClose className="text-muted-foreground h-4 w-4" />
+              </Button>
+            </div>
+
+            <ScrollArea className="flex-1">
+              <div className="space-y-4 p-4">
+                {flags.knowledgeGraph && <GraphPanel sessionId={sessionId} />}
+                {flags.memory && <MemoryPanel sessionId={sessionId} />}
+              </div>
+            </ScrollArea>
+          </div>
+        </m.div>
+      )}
     </div>
   );
 }

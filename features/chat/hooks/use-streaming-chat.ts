@@ -7,12 +7,16 @@ import { useChatStore } from "@/features/chat/store/chat.store";
 import { getSessionId } from "@/features/chat/api/chat.api";
 import { streamChat, StreamError } from "@/lib/sse/stream-chat";
 import { getChatModelSelection } from "@/features/keys/store/provider.store";
+import { flags } from "@/lib/flags";
+import { traceIdFromTraceparent } from "@/lib/observability/trace";
 import {
   FREE_TIER_EXHAUSTED,
   type SseRoute,
   type SseComponent,
+  type SseDoneSource,
+  type SseLayer,
 } from "@/features/chat/api/chat.schemas";
-import type { RouteType, Source } from "@/types";
+import type { RouteType, Source, RetrievalLayer, MessageStats } from "@/types";
 
 /**
  * Map the backend `done.route` to the frontend RouteType union so a streamed Message
@@ -40,6 +44,15 @@ function mapRoute(route: SseRoute | null): RouteType {
  * the catalog `type` (M9), so each item is `unknown` until M10's strict per-type schema.
  * Malformed/absent items contribute nothing rather than throwing.
  */
+const LAYERS: readonly RetrievalLayer[] = ["vector", "graph", "web", "memory"];
+
+/** Narrow an unknown value to a RetrievalLayer (Phase 7), or undefined. Tolerant by design. */
+function asLayer(v: unknown): RetrievalLayer | undefined {
+  return typeof v === "string" && (LAYERS as readonly string[]).includes(v)
+    ? (v as RetrievalLayer)
+    : undefined;
+}
+
 function citationsToSources(citations: SseComponent[]): Source[] {
   const sources: Source[] = [];
   for (const c of citations) {
@@ -52,6 +65,7 @@ function citationsToSources(citations: SseComponent[]): Source[] {
         source_id?: unknown;
         snippet?: unknown;
         url?: unknown;
+        layer?: unknown;
       };
       const title =
         typeof item.label === "string" && item.label.length > 0
@@ -67,10 +81,30 @@ function citationsToSources(citations: SseComponent[]): Source[] {
         title,
         snippet: typeof item.snippet === "string" ? item.snippet : undefined,
         url: typeof item.url === "string" ? item.url : undefined,
+        // Phase 7: optional retrieval-layer provenance (citation item carries it).
+        layer: asLayer(item.layer),
       });
     }
   }
   return sources;
+}
+
+/**
+ * Phase 7: fold the optional `done.sources` layers onto citation-derived Sources. The citation
+ * component is the authoritative provenance channel; `done.sources` is a parallel carrier that
+ * MAY supply a `layer` the citation item lacked. We only FILL gaps (never override an explicit
+ * citation-item layer) and merge positionally — both arrays describe the same ordered sources.
+ */
+function applyDoneSourceLayers(
+  sources: Source[],
+  doneSources: SseDoneSource[] | undefined
+): Source[] {
+  if (!doneSources || doneSources.length === 0) return sources;
+  return sources.map((s, i) => {
+    if (s.layer) return s; // explicit citation-item layer wins
+    const layer = asLayer((doneSources[i] as { layer?: SseLayer })?.layer);
+    return layer ? { ...s, layer } : s;
+  });
 }
 
 export function useStreamingChat() {
@@ -80,6 +114,7 @@ export function useStreamingChat() {
   const addComponent = useChatStore((s) => s.addComponent);
   const setSources = useChatStore((s) => s.setSources);
   const setRoute = useChatStore((s) => s.setRoute);
+  const setStats = useChatStore((s) => s.setStats);
   const finalize = useChatStore((s) => s.finalize);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const isStreaming = useChatStore((s) => s.isStreaming);
@@ -121,6 +156,15 @@ export function useStreamingChat() {
       // the stream and flush to the sources panel on `done` — no status-derived guess.
       const citations: SseComponent[] = [];
 
+      // Phase 7 (FE-4): per-turn observability stats. Active ONLY when the flag is on; otherwise
+      // `stats` stays null and nothing is ever written (no behavioural change). Timings use
+      // performance.now() (monotonic), captured at request start and on each status stage.
+      const observe = flags.observability;
+      let stats: MessageStats | null = observe
+        ? { startedAtMs: performance.now(), stages: [] }
+        : null;
+      if (stats) setStats(assistantId, stats);
+
       await streamChat(
         {
           message: text,
@@ -132,9 +176,26 @@ export function useStreamingChat() {
         },
         {
           signal: controller.signal,
+          // Phase 7: stamp the trace id we sent (only fired when observability is on).
+          onTrace: (traceparent) => {
+            if (!stats) return;
+            stats = { ...stats, traceId: traceIdFromTraceparent(traceparent) };
+            setStats(assistantId, stats);
+          },
           onStatus: (stage) => {
             // status stage → a live thinking step (feeds ThinkingSteps panel)
             pushStep(assistantId, { label: stage, state: "active" });
+            // Phase 7: record the stage arrival offset for the stats panel.
+            if (stats) {
+              stats = {
+                ...stats,
+                stages: [
+                  ...stats.stages,
+                  { stage, atMs: performance.now() - stats.startedAtMs },
+                ],
+              };
+              setStats(assistantId, stats);
+            }
           },
           onToken: (chunk) => {
             // token chunk → append to the streaming body (+ M4 caret rides this)
@@ -146,13 +207,32 @@ export function useStreamingChat() {
             // A citation block is provenance → collect it for the sources panel.
             if (component.type === "citation") citations.push(component);
           },
-          onDone: ({ answer, route }) => {
+          onDone: ({ answer, route, sources: doneSources }) => {
             // Canonical final body is done.answer (== concatenated tokens).
-            setRoute(assistantId, mapRoute(route));
+            const mapped = mapRoute(route);
+            setRoute(assistantId, mapped);
             // Sources come ONLY from citation components; none → leave [] (no fabricated count).
-            const sources = citationsToSources(citations);
+            // Phase 7: fold any done-event source layers onto the citation-derived sources.
+            const sources = applyDoneSourceLayers(
+              citationsToSources(citations),
+              doneSources
+            );
             if (sources.length > 0) setSources(assistantId, sources);
-            finalize(assistantId, { content: answer });
+            // Phase 7: finalize the stats — totalMs, resolved route, tokens (null until the
+            // backend reports them on done), trace id already set via onTrace.
+            const patch: Partial<{ content: string; stats: MessageStats }> = {
+              content: answer,
+            };
+            if (stats) {
+              stats = {
+                ...stats,
+                totalMs: performance.now() - stats.startedAtMs,
+                route: mapped,
+                tokens: null,
+              };
+              patch.stats = stats;
+            }
+            finalize(assistantId, patch);
           },
           onError: (error) => {
             pushStep(assistantId, { label: "error", state: "error" });
@@ -184,6 +264,7 @@ export function useStreamingChat() {
       addComponent,
       setSources,
       setRoute,
+      setStats,
       finalize,
       setStreaming,
     ]

@@ -29,6 +29,20 @@ const envSchema = z.object({
   // keep it dark (each component degrades to a collapsed raw-JSON block inside the M3 code-block).
   NEXT_PUBLIC_FEATURE_RICH_COMPONENTS: FeatureFlagDefaultOn,
 
+  // ---- Phase 7 (memory & advanced observability) — DEFAULT OFF -------------------------------
+  // Each gates a forward-compat surface whose backend endpoint is still being built, so they
+  // ship dark and degrade cleanly (render nothing / empty state) on a 404/error.
+  //   memory          -> GET /api/sessions/{id}/memory  (conversation memory panel)
+  //   knowledgeGraph  -> GET /api/sessions/{id}/graph   (lazy react-force-graph panel, ssr:false)
+  //   observability   -> per-turn MessageStats + traceparent header + stats panel + analytics
+  NEXT_PUBLIC_FEATURE_MEMORY: FeatureFlag,
+  NEXT_PUBLIC_FEATURE_KNOWLEDGE_GRAPH: FeatureFlag,
+  NEXT_PUBLIC_FEATURE_OBSERVABILITY: FeatureFlag,
+
+  // Optional Sentry DSN. Absent ⇒ Sentry is a no-op (withSentryConfig passthrough, no client
+  // init), so local/dev builds never fail for a missing DSN or auth token.
+  NEXT_PUBLIC_SENTRY_DSN: z.string().optional(),
+
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
@@ -43,6 +57,12 @@ const parsed = envSchema.safeParse({
     process.env.NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD,
   NEXT_PUBLIC_FEATURE_RICH_COMPONENTS:
     process.env.NEXT_PUBLIC_FEATURE_RICH_COMPONENTS,
+  NEXT_PUBLIC_FEATURE_MEMORY: process.env.NEXT_PUBLIC_FEATURE_MEMORY,
+  NEXT_PUBLIC_FEATURE_KNOWLEDGE_GRAPH:
+    process.env.NEXT_PUBLIC_FEATURE_KNOWLEDGE_GRAPH,
+  NEXT_PUBLIC_FEATURE_OBSERVABILITY:
+    process.env.NEXT_PUBLIC_FEATURE_OBSERVABILITY,
+  NEXT_PUBLIC_SENTRY_DSN: process.env.NEXT_PUBLIC_SENTRY_DSN,
   NODE_ENV: process.env.NODE_ENV,
 });
 

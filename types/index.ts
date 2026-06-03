@@ -11,6 +11,32 @@ export type ChatResponse = z.infer<typeof chatResponseSchema>;
 
 export type MessageStatus = "pending" | "streaming" | "done" | "error";
 
+/**
+ * Which retrieval layer a source/citation came from (Phase 7 multi-layer retrieval). Carried
+ * optionally on citation items and done-event sources; absent ⇒ render no badge (legacy-safe).
+ */
+export type RetrievalLayer = "vector" | "graph" | "web" | "memory";
+
+/**
+ * Per-turn observability stats (Phase 7). Populated by use-streaming-chat when
+ * `flags.observability` is on; rendered by the assistant stats panel (FE-4). The timing fields
+ * are `performance.now()` milliseconds (monotonic, relative to navigation), NOT wall-clock.
+ *   startedAtMs  request start mark
+ *   stages       one entry per SSE status stage, with its arrival offset
+ *   totalMs      filled on `done` (now - startedAtMs)
+ *   route        the resolved RouteType (from done.route), for at-a-glance display
+ *   tokens       backend-reported token usage when present, else null (never undefined on done)
+ *   traceId      the trace-id segment of the W3C traceparent we sent, for cross-system lookup
+ */
+export interface MessageStats {
+  startedAtMs: number;
+  stages: { stage: string; atMs: number }[];
+  totalMs?: number;
+  route?: RouteType;
+  tokens?: { input?: number; output?: number } | null;
+  traceId?: string | null;
+}
+
 export interface Step {
   label: string;
   state: "active" | "complete" | "error";
@@ -22,6 +48,8 @@ export interface Source {
   title: string;
   snippet?: string;
   url?: string;
+  /** Phase 7: which retrieval layer produced this source. Absent ⇒ no provenance badge. */
+  layer?: RetrievalLayer;
 }
 
 /**
@@ -56,4 +84,10 @@ export interface Message {
    * (`errorCode === "free_tier_exhausted"`). Undefined on a generic error or a success.
    */
   errorCode?: string;
+  /**
+   * Phase 7 per-turn observability stats. Populated on assistant messages by use-streaming-chat
+   * when `flags.observability` is on (undefined otherwise / on the blocking path); rendered by
+   * the lazy stats panel (FE-4).
+   */
+  stats?: MessageStats;
 }

@@ -9,6 +9,9 @@ import { env } from "@/lib/env";
  *   byok             -> M7 flips true (backend P4 multi-provider BYOK + model picker)
  *   presignedUpload  -> M8 (backend P5 presigned S3 uploads + status polling)
  *   richComponents   -> M10 (backend P6 rich-output component event); flips ON by default
+ *   memory           -> Phase 7 (conversation-memory panel); DEFAULT OFF
+ *   knowledgeGraph   -> Phase 7 (knowledge-graph panel, lazy react-force-graph); DEFAULT OFF
+ *   observability    -> Phase 7 (per-turn stats, traceparent, stats panel, analytics); DEFAULT OFF
  */
 export const flags = {
   streaming: env.NEXT_PUBLIC_FEATURE_STREAMING,
@@ -16,6 +19,9 @@ export const flags = {
   byok: env.NEXT_PUBLIC_FEATURE_BYOK,
   presignedUpload: env.NEXT_PUBLIC_FEATURE_PRESIGNED_UPLOAD,
   richComponents: env.NEXT_PUBLIC_FEATURE_RICH_COMPONENTS,
+  memory: env.NEXT_PUBLIC_FEATURE_MEMORY,
+  knowledgeGraph: env.NEXT_PUBLIC_FEATURE_KNOWLEDGE_GRAPH,
+  observability: env.NEXT_PUBLIC_FEATURE_OBSERVABILITY,
 } as const;
 
 export type Flags = typeof flags;

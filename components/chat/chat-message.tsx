@@ -3,11 +3,13 @@
 import * as React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import dynamic from "next/dynamic";
 import { m } from "framer-motion";
 import { Bot, User } from "lucide-react";
 
 import { Message } from "@/types";
 import { cn } from "@/lib/utils";
+import { flags } from "@/lib/flags";
 import { messageVariants, reduceVariants, layoutSpring } from "@/lib/motion";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -19,6 +21,16 @@ import { MessageActions } from "@/features/chat/components/message-actions";
 import { StreamingCaret } from "@/features/chat/components/streaming-caret";
 import { ComponentBlock } from "@/features/chat/components/rich/component-block";
 import { normalizeComponents } from "@/features/chat/components/rich/component.schemas";
+
+// Phase 7 (FE-4): the per-turn observability stats panel is lazy-loaded and flag-gated. The
+// dynamic import means the chunk is never fetched when observability is off (the gate below
+// short-circuits before this renders). The feature lane creates stats-panel.tsx; until then the
+// flag stays OFF so this import is inert. ssr:false isn't needed (no canvas/window access), but
+// the component is purely client UI.
+const StatsPanel = dynamic(
+  () => import("@/features/chat/components/stats-panel"),
+  { ssr: false }
+);
 
 // Module-scope stable map — ReactMarkdown does not rebuild its renderer tree
 // on each streamed token (M9) or parent re-render.
@@ -169,6 +181,13 @@ function ChatMessageImpl({ message }: ChatMessageProps) {
         {!isUser && message.status !== "streaming" && (
           <MessageActions content={message.content} />
         )}
+
+        {/* Phase 7 (FE-4): per-turn observability stats. Flag-gated + lazy. Degrades to nothing
+            when observability is off or no stats were collected (blocking path / flag off).
+            The panel itself further guards on its props, so a partial `stats` is safe. */}
+        {!isUser && flags.observability && message.stats && (
+          <StatsPanel stats={message.stats} />
+        )}
       </div>
     </m.div>
   );
@@ -188,7 +207,10 @@ export const ChatMessage = React.memo(ChatMessageImpl, (prev, next) => {
     a.sources === b.sources &&
     // M10 (R8): addComponent appends a NEW array reference (immutable update), so a late-arriving
     // component block changes identity here and repaints. Without this it wouldn't render.
-    a.components === b.components
+    a.components === b.components &&
+    // Phase 7 (FE-4): setStats writes a NEW stats object each stage/done (immutable update), so
+    // identity-compare it here — otherwise the live stats panel wouldn't refresh as stages arrive.
+    a.stats === b.stats
   );
 });
 ChatMessage.displayName = "ChatMessage";

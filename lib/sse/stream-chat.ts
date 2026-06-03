@@ -3,6 +3,7 @@ import { env } from "@/lib/env";
 import { flags } from "@/lib/flags";
 import { authStore } from "@/features/auth/store/auth.store";
 import { parseSSE } from "@/lib/sse/parser";
+import { newTraceparent, setLastTraceId } from "@/lib/observability/trace";
 import {
   SseStatusSchema,
   SseTokenSchema,
@@ -12,6 +13,7 @@ import {
   type SseRoute,
   type SseStage,
   type SseComponent,
+  type SseDoneSource,
 } from "@/features/chat/api/chat.schemas";
 
 /**
@@ -50,8 +52,22 @@ export interface StreamChatHandlers {
   onToken?: (text: string) => void;
   /** A whole rich-output component block arrived (09 `component` event). Stored by M9; rendered by M10. */
   onComponent?: (component: SseComponent) => void;
-  /** The stream completed with the final answer + backend route (flat enum, legacy tolerated). */
-  onDone?: (result: { answer: string; route: SseRoute | null }) => void;
+  /**
+   * The stream completed with the final answer + backend route (flat enum, legacy tolerated).
+   * Phase 7: `sources` carries the optional done-event sources (each item MAY have a `layer`);
+   * undefined when the backend omits them (pre-Phase-7 contract).
+   */
+  onDone?: (result: {
+    answer: string;
+    route: SseRoute | null;
+    sources?: SseDoneSource[];
+  }) => void;
+  /**
+   * Phase 7 observability hook. Called once, immediately after the chat fetch is dispatched,
+   * with the W3C `traceparent` we attached (only when caller-provided traceparent is set). The
+   * hook uses it to stamp `MessageStats.traceId`. No-op caller ⇒ no behavioural change.
+   */
+  onTrace?: (traceparent: string) => void;
   /**
    * A typed `error` event OR a transport/HTTP failure occurred. For a free-tier-exhausted
    * response (either delivery path) the Error is a `StreamError` whose `.code` is
@@ -71,7 +87,8 @@ export async function streamChat(
   payload: StreamChatPayload,
   handlers: StreamChatHandlers
 ): Promise<void> {
-  const { onStatus, onToken, onComponent, onDone, onError, signal } = handlers;
+  const { onStatus, onToken, onComponent, onDone, onError, onTrace, signal } =
+    handlers;
 
   // M6: attach Bearer for the streaming POST too (it bypasses http-client and does its own
   // fetch). Flag-gated — with auth OFF this header is never set (byte-for-byte today). The
@@ -84,6 +101,17 @@ export async function streamChat(
   if (flags.auth) {
     const token = authStore.getAccessToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  // Phase 7 (FE-3): when observability is on, attach a fresh W3C `traceparent` so the backend
+  // can correlate this turn across systems. Flag-OFF ⇒ header never set (byte-for-byte today).
+  // We remember it globally (for ad-hoc lookup) and hand it to the hook via onTrace so the
+  // per-message MessageStats can record the trace id.
+  if (flags.observability) {
+    const traceparent = newTraceparent();
+    headers["traceparent"] = traceparent;
+    setLastTraceId(traceparent);
+    onTrace?.(traceparent);
   }
 
   let res: Response;
@@ -154,6 +182,8 @@ export async function streamChat(
             onDone?.({
               answer: parsed.data.answer,
               route: parsed.data.route ?? null,
+              // Phase 7: forward optional done-event sources (each item MAY carry a layer).
+              sources: parsed.data.sources,
             });
           }
           return; // typed completion terminates the stream

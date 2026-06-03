@@ -7,6 +7,7 @@ import type {
   RichComponent,
   MessageStatus,
   RouteType,
+  MessageStats,
 } from "@/types";
 
 interface ChatState {
@@ -19,9 +20,15 @@ interface ChatState {
   addMessage: (msg: Message) => void;
   appendContent: (id: string, chunk: string) => void;
   pushStep: (id: string, step: Step) => void;
+  /** Sets a message's sources. Each Source may carry an optional `layer` (Phase 7 provenance). */
   setSources: (id: string, sources: Source[]) => void;
   /** Legacy: sets sourcesCount for the unmodified chat-message.tsx footer. Dropped in M3. */
   setSourcesCount: (id: string, count: number) => void;
+  /**
+   * Set/replace a message's Phase 7 observability stats (FE-4 renders it). Whole-object set; the
+   * streaming hook accumulates stages locally and writes the snapshot here (and again on done).
+   */
+  setStats: (id: string, stats: MessageStats) => void;
   /** Append a backend P6 rich component. Dark in M1; rendered by M10. */
   addComponent: (id: string, component: RichComponent) => void;
   setStatus: (id: string, status: MessageStatus) => void;
@@ -97,6 +104,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setSources: (id, sources) =>
     set((s) => ({
       messages: updateMessage(s.messages, id, (m) => ({ ...m, sources })),
+    })),
+
+  setStats: (id, stats) =>
+    set((s) => ({
+      messages: updateMessage(s.messages, id, (m) => ({ ...m, stats })),
     })),
 
   setSourcesCount: (id, count) =>

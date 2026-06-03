@@ -46,6 +46,14 @@ export const citationItemSchema = z.object({
   snippet: z.string().optional(),
   // Web sources may carry a URL; retrieved chunks carry only a source_id.
   url: z.string().url().optional(),
+  // Phase 7 (FE-0): optional retrieval-layer provenance (vector|graph|web|memory). Additive and
+  // legacy-safe — absent on the pre-Phase-7 contract ⇒ no provenance badge. Tolerant at the
+  // field level (`.catch(undefined)`) so an unknown future layer drops to undefined instead of
+  // failing the whole citation block (which would silently suppress provenance).
+  layer: z
+    .enum(["vector", "graph", "web", "memory"])
+    .optional()
+    .catch(undefined),
 });
 export const citationSchema = z.object({
   type: z.literal("citation"),
