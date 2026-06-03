@@ -21,6 +21,7 @@ from config import Settings
 from database import repository as repo
 from database.models import DocumentStatus
 from database.session import build_engine, build_sessionmaker
+from observability.tracing import get_tracer
 from worker.celery_app import celery_app
 
 logger = structlog.get_logger(__name__)
@@ -62,13 +63,19 @@ async def _mark_failed(s3_key: str, settings: Settings) -> None:
 def ingest_document(*, document_id: str, s3_key: str, filename: str, session_id: str) -> None:
     settings = Settings()  # type: ignore[call-arg]  # pydantic-settings reads env, not kwargs
     logger.info("ingest_task_start", document_id=document_id, s3_key=s3_key)
-    try:
-        asyncio.run(_run_pipeline(s3_key, filename, session_id, settings))
-        logger.info("ingest_task_done", document_id=document_id)
-    except Exception:
-        logger.error("ingest_task_failed", document_id=document_id, exc_info=True)
+    # Phase 7: span nests under the propagated request trace (CeleryInstrumentor carries context).
+    with get_tracer().start_as_current_span("ingest.document") as span:
+        span.set_attribute("doc.id", document_id)
+        span.set_attribute("session.id", session_id)
         try:
-            asyncio.run(_mark_failed(s3_key, settings))
+            asyncio.run(_run_pipeline(s3_key, filename, session_id, settings))
+            logger.info("ingest_task_done", document_id=document_id)
         except Exception:
-            logger.error("ingest_task_status_update_failed", document_id=document_id, exc_info=True)
-        raise
+            logger.error("ingest_task_failed", document_id=document_id, exc_info=True)
+            try:
+                asyncio.run(_mark_failed(s3_key, settings))
+            except Exception:
+                logger.error(
+                    "ingest_task_status_update_failed", document_id=document_id, exc_info=True
+                )
+            raise

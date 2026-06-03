@@ -41,6 +41,7 @@ from integrations.s3.client import S3Client
 from llm.base import LLMProvider
 from llm.dependencies import get_llm_provider
 from logging_config import configure_logging
+from observability.tracing import get_tracer, init_tracing
 from sse import sse_event
 from worker.tasks import ingest_document
 
@@ -57,6 +58,11 @@ async def lifespan(app: FastAPI):
     app.state.web = DuckDuckGoClient()
     app.state.db_engine = build_engine(settings)
     app.state.db_sessionmaker = build_sessionmaker(app.state.db_engine)
+    if settings.OTEL_ENABLED:
+        # SQLAlchemy spans need the engine; instrument the sync engine behind the async one.
+        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
+        SQLAlchemyInstrumentor().instrument(engine=app.state.db_engine.sync_engine)
     # Phase 5: one pooled Redis client per process (lazy from_url — no network here)
     app.state.redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
     # Phase 6: compile the agentic chat graph ONCE per process (pure + stateless — shared)
@@ -75,6 +81,22 @@ app = FastAPI(
 )
 
 app.add_exception_handler(AppException, app_exception_handler)
+
+# ── Phase 7: OpenTelemetry (gated). Auto-instrumentation + OTLP export only when OTEL_ENABLED;
+# the explicit chat.request / agent.* / memory.* / ingest.document spans are emitted
+# unconditionally (a no-op tracer when disabled) so trace-emission tests can capture them. The
+# SSE path is covered by the FastAPI ASGI span (it stays open until the stream finishes), so the
+# explicit chat.request span lives on the JSON path only — avoiding a span that straddles an async
+# generator's yields.
+init_tracing(settings)
+if settings.OTEL_ENABLED:
+    from opentelemetry.instrumentation.celery import CeleryInstrumentor
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.instrumentation.redis import RedisInstrumentor
+
+    FastAPIInstrumentor.instrument_app(app)
+    RedisInstrumentor().instrument()
+    CeleryInstrumentor().instrument()  # API side: inject trace context into enqueued tasks
 
 # Phase 3: explicit allow-list — "*" + allow_credentials is rejected by browsers
 app.add_middleware(
@@ -533,26 +555,30 @@ async def chat(
         )
 
     # JSON path: run the graph to completion and persist on the request-scoped session.
-    try:
-        result = await graph.ainvoke(state)
-    except (AppException, HTTPException):
-        raise
-    except Exception as e:
-        logger.error("chat_failed", exc_info=True)
-        raise AppException(
-            status_code=500, detail="free tier Limit Reached for API please try again later"
-        ) from e
+    with get_tracer().start_as_current_span("chat.request") as span:
+        span.set_attribute("session.id", session_id)
+        span.set_attribute("user.id", str(current_user.id))
+        span.set_attribute("transport", "json")
+        try:
+            result = await graph.ainvoke(state)
+        except (AppException, HTTPException):
+            raise
+        except Exception as e:
+            logger.error("chat_failed", exc_info=True)
+            raise AppException(
+                status_code=500, detail="free tier Limit Reached for API please try again later"
+            ) from e
 
-    answer = result.get("answer", "")
-    await repo.save_message(db, session_id=session_id, role="user", content=payload.message)
-    if answer:
-        await repo.save_message(db, session_id=session_id, role="assistant", content=answer)
-    return {
-        "answer": answer,
-        "route": result.get("route"),
-        "context_count": _count_context_chunks(result),
-        "session_id": session_id,
-    }
+        answer = result.get("answer", "")
+        await repo.save_message(db, session_id=session_id, role="user", content=payload.message)
+        if answer:
+            await repo.save_message(db, session_id=session_id, role="assistant", content=answer)
+        return {
+            "answer": answer,
+            "route": result.get("route"),
+            "context_count": _count_context_chunks(result),
+            "session_id": session_id,
+        }
 
 
 # ========= CLEANUP =========

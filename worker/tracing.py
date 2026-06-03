@@ -1,0 +1,50 @@
+"""Phase 7: worker-side tracing.
+
+A Celery worker is a separate process that never imports ``app.py``, so it bootstraps its own
+``TracerProvider`` + ``CeleryInstrumentor`` on ``worker_process_init``. With ``CeleryInstrumentor``
+instrumented on BOTH the API process (where ``ingest_document.delay(...)`` is enqueued) and here,
+the active trace context rides the task message headers automatically, so ``ingest.document`` and
+its children nest under the originating request's trace rather than orphaning.
+
+``inject_trace_context`` / ``extract_trace_context`` wrap the W3C propagator for explicit,
+unit-tested propagation across any boundary the auto-instrumentor doesn't cover.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from celery.signals import worker_process_init
+from opentelemetry import propagate
+from opentelemetry.context import Context
+
+from config import Settings
+from config import settings as _settings
+
+
+def inject_trace_context(carrier: dict[str, Any]) -> dict[str, Any]:
+    """Write the active trace context (``traceparent``/``tracestate``) into ``carrier``."""
+    propagate.inject(carrier)
+    return carrier
+
+
+def extract_trace_context(carrier: dict[str, Any] | None) -> Context:
+    """Return an OTEL ``Context`` extracted from a carrier dict (e.g. Celery task headers)."""
+    return propagate.extract(carrier or {})
+
+
+def init_worker_tracing(settings: Settings | None = None) -> None:
+    """Install tracing + Celery instrumentation in a worker process (gated on ``OTEL_ENABLED``)."""
+    s = settings or _settings
+    from observability.tracing import init_tracing
+
+    init_tracing(s)
+    if s.OTEL_ENABLED:
+        from opentelemetry.instrumentation.celery import CeleryInstrumentor
+
+        CeleryInstrumentor().instrument()
+
+
+@worker_process_init.connect
+def _on_worker_process_init(**_: Any) -> None:  # pragma: no cover - only fires in a real worker
+    init_worker_tracing()

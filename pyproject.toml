@@ -36,6 +36,15 @@ dependencies = [
     "redis>=8.0.0",
     "celery>=5.6.3",
     "slowapi>=0.1.9",
+    "opentelemetry-api>=1.42.1",
+    "opentelemetry-sdk>=1.42.1",
+    "opentelemetry-exporter-otlp>=1.42.1",
+    "opentelemetry-instrumentation-fastapi>=0.63b1",
+    "opentelemetry-instrumentation-sqlalchemy>=0.63b1",
+    "opentelemetry-instrumentation-redis>=0.63b1",
+    "opentelemetry-instrumentation-celery>=0.63b1",
+    "networkx>=3.6.1",
+    "langfuse>=4.7.1",
 ]
 
 [dependency-groups]
@@ -129,7 +138,7 @@ addopts = "-q --cov-fail-under=82"
 
 [tool.coverage.run]
 branch = true
-source = ["app", "config", "exceptions", "logging_config", "components", "database", "integrations", "auth", "llm", "worker"]
+source = ["app", "config", "exceptions", "logging_config", "components", "database", "integrations", "auth", "llm", "worker", "observability"]
 omit = ["test/*", "integrations/uploadthing/*"]
 
 [tool.coverage.report]

@@ -14,6 +14,11 @@ from celery import Celery
 
 from config import settings
 
+# Phase 7: importing registers the worker_process_init tracing signal so `celery -A worker` wires
+# OpenTelemetry without importing the FastAPI app (a no-op until a real worker starts, and only
+# active when OTEL_ENABLED).
+from worker import tracing as _worker_tracing  # noqa: E402,F401
+
 celery_app = Celery(
     "rag",
     broker=settings.celery_broker_url,
