@@ -34,6 +34,19 @@ class MarkdownMemory:
                 ).scalar_one_or_none()
                 return row.content if row else ""
 
+    async def read_with_updated(self, session_id: str) -> tuple[str, str | None]:
+        """Return ``(content, updated_at_iso)`` for the GET /memory endpoint; ``("", None)`` if absent."""
+        with get_tracer().start_as_current_span("memory.markdown.read"):
+            async with self._session_factory() as db:
+                row = (
+                    await db.execute(
+                        select(SessionMemory).where(SessionMemory.session_id == session_id)
+                    )
+                ).scalar_one_or_none()
+                if row is None:
+                    return "", None
+                return row.content, (row.updated_at.isoformat() if row.updated_at else None)
+
     async def append(self, session_id: str, note: str) -> None:
         """Append a note under a row lock, keeping only the last ``max_chars`` (bounded summary)."""
         with get_tracer().start_as_current_span("memory.markdown.append"):

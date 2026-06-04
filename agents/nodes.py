@@ -31,6 +31,7 @@ from agents.state import GraphState, Route, Turn
 from components.generation import build_synthesis_query
 from components.retrieval import format_context, retrieve_vector, retrieve_web
 from components.router import decide_agentic_route
+from observability.tracing import get_tracer
 
 logger = structlog.get_logger(__name__)
 
@@ -99,16 +100,17 @@ async def vector_node(state: GraphState) -> dict[str, Any]:
     Below threshold (or on empty/failed search) it reports ``docs_relevant=False`` and drops the weak
     context so synthesis falls back to web (``BOTH``) or general knowledge (``RAG``).
     """
-    query = state.get("rewritten_query") or state["query"]
-    chunks, docs_relevant = await retrieve_vector(
-        query, state["session_id"], state["pinecone"], state["embedder"]
-    )
-    context = format_context(chunks) if chunks else ""
-    return {
-        "vector_result": context,
-        "context": context,
-        "docs_relevant": docs_relevant,
-    }
+    with get_tracer().start_as_current_span("agent.retrieval"):
+        query = state.get("rewritten_query") or state["query"]
+        chunks, docs_relevant = await retrieve_vector(
+            query, state["session_id"], state["pinecone"], state["embedder"]
+        )
+        context = format_context(chunks) if chunks else ""
+        return {
+            "vector_result": context,
+            "context": context,
+            "docs_relevant": docs_relevant,
+        }
 
 
 # ── web ───────────────────────────────────────────────────────────────────────
@@ -164,54 +166,87 @@ def _should_stream(config: RunnableConfig | None) -> bool:
     return bool(config.get("configurable", {}).get("stream"))
 
 
+async def _assemble_context(
+    state: GraphState, doc_context: str, web_result: str
+) -> tuple[str, list[str]]:
+    """Phase 7: merge vector+web context with graph+markdown via the hybrid retriever.
+
+    Returns ``(merged_context, contributing_layers)``. Falls back to a plain vector+web merge when no
+    hybrid retriever is wired in (parity tests) or if hybrid retrieval fails — synthesis must never
+    break because an enrichment layer errored.
+    """
+    base = _merge_context(doc_context, web_result)
+    layers: list[str] = []
+    if doc_context:
+        layers.append("vector")
+    if web_result:
+        layers.append("web")
+    hybrid = state.get("hybrid_retriever")
+    if hybrid is None:
+        return base, layers
+    try:
+        vector_hits = [(doc_context, 1.0)] if doc_context else []
+        hits = await hybrid.retrieve(state["query"], state["session_id"], vector_hits=vector_hits)
+        extra = [h.text for h in hits if h.source in ("graph", "memory")]
+        for h in hits:
+            if h.source in ("graph", "memory") and h.source not in layers:
+                layers.append(h.source)
+        merged = "\n\n".join(p for p in [base, *extra] if p)
+        return merged, layers
+    except Exception:
+        logger.error("hybrid_retrieve_failed", exc_info=True)
+        return base, layers
+
+
 async def synthesis_node(
     state: GraphState,
     writer: StreamWriter,
     config: RunnableConfig,
 ) -> dict[str, Any]:
-    """Rich-Markdown synthesis. Streams when asked, else one-shot; returns ``{answer, components}``.
+    """Rich-Markdown synthesis. Streams when asked, else one-shot; returns ``{answer, components, layers}``.
 
-    Streaming path (``config.configurable.stream``): iterate ``provider.stream``, feed each delta to a
-    ``ComponentStreamSplitter``; emit ``{"kind":"token","text":...}`` for prose and
-    ``{"kind":"component","data":...}`` for each completed/validated component to ``writer``; flush at
-    the end. Prose is accumulated into ``answer`` and components into the list so the returned state
-    matches the streamed output. Non-streaming path: ``provider.generate`` → ``parse_components``.
+    Phase 7: context is the hybrid merge of vector + web + knowledge-graph + markdown memory
+    (``_assemble_context``); ``layers`` records which retrieval layers fed the answer. Streaming path
+    (``config.configurable.stream``): iterate ``provider.stream``, feed each delta to a
+    ``ComponentStreamSplitter``; emit ``{"kind":"token"...}`` / ``{"kind":"component"...}`` to
+    ``writer``. Non-streaming path: ``provider.generate`` → ``parse_components``.
     """
-    provider = state["provider"]
-    doc_context = state.get("context", "") or ""
-    web_result = state.get("web_result", "") or ""
-    merged = _merge_context(doc_context, web_result)
-    decision = _resolve_decision(state, doc_context, web_result)
-    synth_query = build_synthesis_query(state["query"])
+    with get_tracer().start_as_current_span("agent.synthesis"):
+        provider = state["provider"]
+        doc_context = state.get("context", "") or ""
+        web_result = state.get("web_result", "") or ""
+        merged, layers = await _assemble_context(state, doc_context, web_result)
+        decision = _resolve_decision(state, doc_context, web_result)
+        synth_query = build_synthesis_query(state["query"])
 
-    if _should_stream(config):
-        splitter = ComponentStreamSplitter()
-        prose_parts: list[str] = []
-        components: list[dict] = []
+        if _should_stream(config):
+            splitter = ComponentStreamSplitter()
+            prose_parts: list[str] = []
+            components: list[dict] = []
 
-        def _emit(events: list[tuple[str, Any]]) -> None:
-            for kind, value in events:
-                if kind == "token":
-                    prose_parts.append(value)
-                    writer({"kind": "token", "text": value})
-                else:  # "component"
-                    components.append(value)
-                    writer({"kind": "component", "data": value})
+            def _emit(events: list[tuple[str, Any]]) -> None:
+                for kind, value in events:
+                    if kind == "token":
+                        prose_parts.append(value)
+                        writer({"kind": "token", "text": value})
+                    else:  # "component"
+                        components.append(value)
+                        writer({"kind": "component", "data": value})
 
-        async for delta in provider.stream(synth_query, merged, decision):
-            _emit(splitter.feed(delta))
-        _emit(splitter.flush())
+            async for delta in provider.stream(synth_query, merged, decision):
+                _emit(splitter.feed(delta))
+            _emit(splitter.flush())
 
-        answer = "".join(prose_parts).strip()
-        await _persist_markdown(state, answer)
-        logger.info("synthesis_streamed", decision=decision, components=len(components))
-        return {"answer": answer, "components": components}
+            answer = "".join(prose_parts).strip()
+            await _persist_markdown(state, answer)
+            logger.info("synthesis_streamed", decision=decision, components=len(components))
+            return {"answer": answer, "components": components, "layers": layers}
 
-    raw = await provider.generate(synth_query, merged, decision)
-    prose, components = parse_components(raw)
-    await _persist_markdown(state, prose)
-    logger.info("synthesis_generated", decision=decision, components=len(components))
-    return {"answer": prose, "components": components}
+        raw = await provider.generate(synth_query, merged, decision)
+        prose, components = parse_components(raw)
+        await _persist_markdown(state, prose)
+        logger.info("synthesis_generated", decision=decision, components=len(components))
+        return {"answer": prose, "components": components, "layers": layers}
 
 
 async def _persist_markdown(state: GraphState, answer: str) -> None:

@@ -56,3 +56,13 @@ async def get_db_session(request: Request) -> AsyncIterator[AsyncSession]:
 def get_db_sessionmaker(request: Request):
     """Return the session factory for background tasks that cannot use Depends."""
     return request.app.state.db_sessionmaker
+
+
+def get_markdown_memory(request: Request):
+    """Phase 7: the per-session markdown memory store (built once in lifespan)."""
+    return request.app.state.markdown_memory
+
+
+def get_knowledge_graph(request: Request):
+    """Phase 7: the per-session knowledge-graph store (built once in lifespan)."""
+    return request.app.state.knowledge_graph

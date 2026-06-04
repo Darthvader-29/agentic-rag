@@ -93,11 +93,6 @@ module = ["config"]
 ignore_errors = true
 
 [[tool.mypy.overrides]]
-# structlog processor signature not fully typed in stubs — tech debt: fix in Phase 7
-module = ["logging_config"]
-ignore_errors = true
-
-[[tool.mypy.overrides]]
 # google-generativeai stubs are incomplete (GenerationConfigDict not typed) — tech debt
 module = ["components.generation"]
 ignore_errors = true
@@ -131,10 +126,10 @@ ignore_errors = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["test"]
-# Coverage baseline: 82 (Phase 6, measured 2026-06-02, with TEST_DATABASE_URL → 82.36%). Ratchet
+# Coverage baseline: 83 (Phase 7, measured 2026-06-04, with TEST_DATABASE_URL → 83.57%). Ratchet
 # upward only. The DB-gated tests must run (TEST_DATABASE_URL set) to reach this floor; CI without a
 # DB stays at the lower 72 floor in the Jenkinsfile.
-addopts = "-q --cov-fail-under=82"
+addopts = "-q --cov-fail-under=83"
 
 [tool.coverage.run]
 branch = true

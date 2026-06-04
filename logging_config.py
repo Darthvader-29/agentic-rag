@@ -5,6 +5,7 @@ import logging
 import sys
 
 import structlog
+from structlog.typing import Processor
 
 
 def configure_logging(json_logs: bool | None = None) -> None:
@@ -13,14 +14,14 @@ def configure_logging(json_logs: bool | None = None) -> None:
 
         json_logs = settings.LOG_JSON
     logging.basicConfig(format="%(message)s", stream=sys.stdout, level=logging.INFO)
-    shared = [
+    shared: list[Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
     ]
-    renderer = (
+    renderer: Processor = (
         structlog.processors.JSONRenderer()
         if json_logs
         else structlog.dev.ConsoleRenderer(colors=False)

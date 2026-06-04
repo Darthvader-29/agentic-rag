@@ -30,6 +30,8 @@ from dependencies import (
     get_db_session,
     get_embedding_client,
     get_graph,
+    get_knowledge_graph,
+    get_markdown_memory,
     get_pinecone_client,
     get_s3_client,
     get_web_search_client,
@@ -41,7 +43,10 @@ from integrations.s3.client import S3Client
 from llm.base import LLMProvider
 from llm.dependencies import get_llm_provider
 from logging_config import configure_logging
+from memory.graph import KnowledgeGraph
+from memory.hybrid import HybridRetriever
 from memory.markdown import MarkdownMemory
+from observability.langfuse import init_langfuse
 from observability.tracing import get_tracer, init_tracing
 from sse import sse_event
 from worker.tasks import ingest_document
@@ -70,6 +75,18 @@ async def lifespan(app: FastAPI):
     )
     # Phase 5: one pooled Redis client per process (lazy from_url — no network here)
     app.state.redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    # Phase 7: knowledge graph (Redis-locked) + hybrid retriever (vector+graph+markdown) + Langfuse
+    app.state.knowledge_graph = KnowledgeGraph(app.state.db_sessionmaker, app.state.redis)
+    app.state.hybrid_retriever = HybridRetriever(
+        app.state.knowledge_graph,
+        app.state.markdown_memory,
+        {
+            "vector": settings.HYBRID_WEIGHTS_VECTOR,
+            "graph": settings.HYBRID_WEIGHTS_GRAPH,
+            "markdown": settings.HYBRID_WEIGHTS_MARKDOWN,
+        },
+    )
+    init_langfuse(settings)
     # Phase 6: compile the agentic chat graph ONCE per process (pure + stateless — shared)
     app.state.graph = build_graph()
     logger.info("clients_initialized", environment=settings.ENVIRONMENT)
@@ -383,6 +400,45 @@ async def get_document_status(
     )
 
 
+# ========= PHASE 7: MEMORY + GRAPH (read-only, frontend Insights panels) =========
+
+
+async def _require_owned_session(db: AsyncSession, session_id: str, current_user: User) -> None:
+    """404 unless the session exists and belongs to the caller (or is unowned)."""
+    session = await repo.get_session(db, session_id)
+    if session is None or (session.user_id is not None and session.user_id != current_user.id):
+        raise HTTPException(404, "session not found")
+
+
+@app.get("/api/sessions/{session_id}/memory")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
+async def get_session_memory(
+    request: Request,
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+    markdown: MarkdownMemory = Depends(get_markdown_memory),
+):
+    """Phase 7: per-session markdown memory (running notes). 404 if not the caller's session."""
+    await _require_owned_session(db, session_id, current_user)
+    content, updated_at = await markdown.read_with_updated(session_id)
+    return {"session_id": session_id, "content": content, "updated_at": updated_at}
+
+
+@app.get("/api/sessions/{session_id}/graph")
+@limiter.limit(settings.RATE_LIMIT_DEFAULT)
+async def get_session_graph(
+    request: Request,
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+    graph_store: KnowledgeGraph = Depends(get_knowledge_graph),
+):
+    """Phase 7: per-session knowledge graph as networkx node-link JSON (``{nodes, links}``)."""
+    await _require_owned_session(db, session_id, current_user)
+    return await graph_store.export(session_id)
+
+
 # ========= CHAT =========
 
 
@@ -500,8 +556,9 @@ async def chat(
     state = await _build_graph_state(
         payload, session_id, current_user, provider, pinecone, embedder, web, db
     )
-    # Phase 7: thread the per-session markdown memory store into the graph (None-safe for tests)
+    # Phase 7: thread the memory collaborators into the graph (None-safe for tests)
     state["markdown_memory"] = getattr(request.app.state, "markdown_memory", None)
+    state["hybrid_retriever"] = getattr(request.app.state, "hybrid_retriever", None)
 
     if "text/event-stream" in request.headers.get("accept", ""):
         sessionmaker = request.app.state.db_sessionmaker
@@ -510,6 +567,7 @@ async def chat(
             seen_stages: set[str] = set()
             tokens: list[str] = []
             route: str | None = None
+            layers: list[str] = []
             answered = False
             try:
                 async for mode, chunk in graph.astream(
@@ -534,9 +592,11 @@ async def chat(
                                 yield sse_event("status", {"stage": stage})
                             if node == "supervisor" and isinstance(partial, dict):
                                 route = partial.get("route", route)
+                            if node == "synthesis" and isinstance(partial, dict):
+                                layers = partial.get("layers", layers)
                 final_answer = "".join(tokens).strip()
                 answered = bool(final_answer)
-                yield sse_event("done", {"answer": final_answer, "route": route})
+                yield sse_event("done", {"answer": final_answer, "route": route, "layers": layers})
             except Exception as exc:
                 logger.error("chat_stream_failed", exc_info=True)
                 err: dict = {"detail": str(exc)}
@@ -585,6 +645,7 @@ async def chat(
             "route": result.get("route"),
             "context_count": _count_context_chunks(result),
             "session_id": session_id,
+            "layers": result.get("layers", []),
         }
 
 

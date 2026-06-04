@@ -39,6 +39,7 @@ class GraphState(TypedDict):
     web_search_allowed: bool
     # Phase 7 memory collaborators (set per-request by app.py; optional so parity tests can omit)
     markdown_memory: NotRequired[Any]  # MarkdownMemory store — synthesis appends each turn
+    hybrid_retriever: NotRequired[Any]  # HybridRetriever — synthesis merges graph+markdown context
 
     # --- produced by nodes (disjoint keys for safe parallel fan-out) ---
     rewritten_query: NotRequired[str]  # supervisor: context-resolved query
@@ -49,3 +50,6 @@ class GraphState(TypedDict):
     context: NotRequired[str]  # context fed to synthesis
     answer: NotRequired[str]  # synthesis: Markdown prose (component blocks stripped)
     components: NotRequired[list[dict]]  # synthesis: validated component specs
+    layers: NotRequired[
+        list[str]
+    ]  # Phase 7: retrieval layers that fed synthesis (vector/web/graph/memory)
