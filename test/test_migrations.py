@@ -56,7 +56,8 @@ def test_alembic_upgrade_head_creates_schema():
                         "SELECT table_name FROM information_schema.tables "
                         "WHERE table_schema = 'public' "
                         "AND table_name IN "
-                        "('sessions', 'documents', 'users', 'user_llm_keys')"
+                        "('sessions', 'documents', 'users', 'user_llm_keys', "
+                        "'messages', 'session_memory')"
                     )
                 )
                 tables = {row[0] for row in result}
@@ -64,9 +65,14 @@ def test_alembic_upgrade_head_creates_schema():
             return tables
 
         tables = asyncio.run(_check())
-        assert {"sessions", "documents", "users", "user_llm_keys"} <= tables, (
-            f"Missing expected tables after upgrade head: {tables}"
-        )
+        assert {
+            "sessions",
+            "documents",
+            "users",
+            "user_llm_keys",
+            "messages",
+            "session_memory",
+        } <= tables, f"Missing expected tables after upgrade head: {tables}"
 
     finally:
         # Leave DB at head state — do NOT downgrade. Subsequent db_session tests will

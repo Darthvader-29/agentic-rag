@@ -41,6 +41,7 @@ from integrations.s3.client import S3Client
 from llm.base import LLMProvider
 from llm.dependencies import get_llm_provider
 from logging_config import configure_logging
+from memory.markdown import MarkdownMemory
 from observability.tracing import get_tracer, init_tracing
 from sse import sse_event
 from worker.tasks import ingest_document
@@ -63,6 +64,10 @@ async def lifespan(app: FastAPI):
         from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
         SQLAlchemyInstrumentor().instrument(engine=app.state.db_engine.sync_engine)
+    # Phase 7: per-session markdown memory store (wraps the fresh sessionmaker — safe mid-stream)
+    app.state.markdown_memory = MarkdownMemory(
+        app.state.db_sessionmaker, settings.MEMORY_MARKDOWN_MAX_CHARS
+    )
     # Phase 5: one pooled Redis client per process (lazy from_url — no network here)
     app.state.redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
     # Phase 6: compile the agentic chat graph ONCE per process (pure + stateless — shared)
@@ -495,6 +500,8 @@ async def chat(
     state = await _build_graph_state(
         payload, session_id, current_user, provider, pinecone, embedder, web, db
     )
+    # Phase 7: thread the per-session markdown memory store into the graph (None-safe for tests)
+    state["markdown_memory"] = getattr(request.app.state, "markdown_memory", None)
 
     if "text/event-stream" in request.headers.get("accept", ""):
         sessionmaker = request.app.state.db_sessionmaker

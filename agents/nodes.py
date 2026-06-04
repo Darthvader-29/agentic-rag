@@ -203,13 +203,30 @@ async def synthesis_node(
         _emit(splitter.flush())
 
         answer = "".join(prose_parts).strip()
+        await _persist_markdown(state, answer)
         logger.info("synthesis_streamed", decision=decision, components=len(components))
         return {"answer": answer, "components": components}
 
     raw = await provider.generate(synth_query, merged, decision)
     prose, components = parse_components(raw)
+    await _persist_markdown(state, prose)
     logger.info("synthesis_generated", decision=decision, components=len(components))
     return {"answer": prose, "components": components}
+
+
+async def _persist_markdown(state: GraphState, answer: str) -> None:
+    """Phase 7: append this turn's Q/A to the per-session markdown memory, if a store is wired in.
+
+    Best-effort and non-fatal — a memory write must never break answer delivery. The store opens
+    its own fresh session, which is safe mid-stream when the request session is already closing.
+    """
+    memory = state.get("markdown_memory")
+    if memory is None or not answer:
+        return
+    try:
+        await memory.append(state["session_id"], f"Q: {state['query']}\nA: {answer}")
+    except Exception:
+        logger.error("markdown_memory_append_failed", exc_info=True)
 
 
 # ── conditional edge ──────────────────────────────────────────────────────────

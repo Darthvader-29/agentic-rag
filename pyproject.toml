@@ -138,7 +138,7 @@ addopts = "-q --cov-fail-under=82"
 
 [tool.coverage.run]
 branch = true
-source = ["app", "config", "exceptions", "logging_config", "components", "database", "integrations", "auth", "llm", "worker", "observability"]
+source = ["app", "config", "exceptions", "logging_config", "components", "database", "integrations", "auth", "llm", "worker", "observability", "memory"]
 omit = ["test/*", "integrations/uploadthing/*"]
 
 [tool.coverage.report]

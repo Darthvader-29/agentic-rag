@@ -37,6 +37,8 @@ class GraphState(TypedDict):
     history: list[Turn]  # last-N turns, verbatim
     has_documents: bool
     web_search_allowed: bool
+    # Phase 7 memory collaborators (set per-request by app.py; optional so parity tests can omit)
+    markdown_memory: NotRequired[Any]  # MarkdownMemory store — synthesis appends each turn
 
     # --- produced by nodes (disjoint keys for safe parallel fan-out) ---
     rewritten_query: NotRequired[str]  # supervisor: context-resolved query

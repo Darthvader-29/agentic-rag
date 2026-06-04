@@ -88,6 +88,13 @@ class Session(Base):
     messages: Mapped[list["Message"]] = relationship(
         back_populates="session", cascade="all, delete-orphan", passive_deletes=True
     )
+    # Phase 7: one-to-one per-session markdown memory (bounded running notes)
+    memory: Mapped["SessionMemory | None"] = relationship(
+        back_populates="session",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class Document(Base):
@@ -137,3 +144,22 @@ class Message(Base):
     )
 
     session: Mapped["Session"] = relationship(back_populates="messages")
+
+
+# ── Phase 7: per-session markdown memory (running notes) ─────────────────────
+
+
+class SessionMemory(Base):
+    """A bounded running markdown summary, one row per session (synthesis appends each turn)."""
+
+    __tablename__ = "session_memory"
+
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    content: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    session: Mapped["Session"] = relationship(back_populates="memory")
