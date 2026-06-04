@@ -27,8 +27,10 @@ from worker.celery_app import celery_app
 logger = structlog.get_logger(__name__)
 
 
-async def _run_pipeline(s3_key: str, filename: str, session_id: str, settings: Settings) -> None:
-    """Build worker-owned clients and run the existing ingestion pipeline."""
+async def _run_pipeline(
+    document_id: str, s3_key: str, filename: str, session_id: str, settings: Settings
+) -> None:
+    """Build worker-owned clients, run ingestion, then the Phase 7 entity-extraction pass."""
     from components.preprocessing import process_file_pipeline
     from database.db_manager import PineconeClient
     from integrations.huggingface.client import HuggingFaceClient
@@ -40,11 +42,45 @@ async def _run_pipeline(s3_key: str, filename: str, session_id: str, settings: S
     embedder = HuggingFaceClient.from_settings(settings)
     pinecone = PineconeClient.from_settings(settings)
     try:
-        await process_file_pipeline(
+        raw_text = await process_file_pipeline(
             s3_key, filename, session_id, s3, embedder, pinecone, session_factory
         )
+        await _maybe_extract_graph(document_id, session_id, raw_text, session_factory, settings)
     finally:
         await engine.dispose()
+
+
+async def _maybe_extract_graph(
+    document_id: str,
+    session_id: str,
+    raw_text: str,
+    session_factory,
+    settings: Settings,
+) -> None:
+    """Phase 7: entity-extraction pass → per-session knowledge graph.
+
+    Best-effort and non-fatal: a failure here (LLM error, graph write) must never fail ingestion.
+    Skipped entirely when extraction is disabled (no operator fallback key) or the doc had no text.
+    """
+    if not raw_text or not settings.entity_extraction_active:
+        return
+    import redis.asyncio as aioredis
+
+    from memory.extract import extract_triples
+    from memory.graph import KnowledgeGraph
+
+    redis = aioredis.from_url(settings.REDIS_URL)
+    try:
+        triples = await extract_triples(raw_text, settings)
+        if triples:
+            await KnowledgeGraph(session_factory, redis).add_entities(
+                session_id, document_id, triples
+            )
+        logger.info("entity_extraction_done", document_id=document_id, triples=len(triples))
+    except Exception:
+        logger.error("entity_extraction_failed", document_id=document_id, exc_info=True)
+    finally:
+        await redis.aclose()
 
 
 async def _mark_failed(s3_key: str, settings: Settings) -> None:
@@ -68,7 +104,7 @@ def ingest_document(*, document_id: str, s3_key: str, filename: str, session_id:
         span.set_attribute("doc.id", document_id)
         span.set_attribute("session.id", session_id)
         try:
-            asyncio.run(_run_pipeline(s3_key, filename, session_id, settings))
+            asyncio.run(_run_pipeline(document_id, s3_key, filename, session_id, settings))
             logger.info("ingest_task_done", document_id=document_id)
         except Exception:
             logger.error("ingest_task_failed", document_id=document_id, exc_info=True)

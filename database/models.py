@@ -95,6 +95,13 @@ class Session(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    # Phase 7: one-to-one per-session knowledge graph (networkx node-link JSON)
+    graph: Mapped["SessionGraph | None"] = relationship(
+        back_populates="session",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class Document(Base):
@@ -163,3 +170,26 @@ class SessionMemory(Base):
     )
 
     session: Mapped["Session"] = relationship(back_populates="memory")
+
+
+# ── Phase 7: per-session knowledge graph (networkx node-link JSON) ───────────
+
+
+class SessionGraph(Base):
+    """Per-session knowledge graph serialized as networkx node-link JSON (Phase 7).
+
+    Built by the Celery ingestion task's entity-extraction pass; read by the hybrid retriever and
+    exposed to the frontend via GET /api/sessions/{id}/graph. One row per session.
+    """
+
+    __tablename__ = "session_graph"
+
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    data: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    session: Mapped["Session"] = relationship(back_populates="graph")

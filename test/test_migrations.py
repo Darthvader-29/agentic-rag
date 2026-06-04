@@ -57,7 +57,7 @@ def test_alembic_upgrade_head_creates_schema():
                         "WHERE table_schema = 'public' "
                         "AND table_name IN "
                         "('sessions', 'documents', 'users', 'user_llm_keys', "
-                        "'messages', 'session_memory')"
+                        "'messages', 'session_memory', 'session_graph')"
                     )
                 )
                 tables = {row[0] for row in result}
@@ -72,6 +72,7 @@ def test_alembic_upgrade_head_creates_schema():
             "user_llm_keys",
             "messages",
             "session_memory",
+            "session_graph",
         } <= tables, f"Missing expected tables after upgrade head: {tables}"
 
     finally:

@@ -32,7 +32,7 @@ async def process_file_pipeline(
     embedder: "HuggingFaceClient",
     pinecone: "PineconeClient",
     session_factory,
-) -> None:
+) -> str:
     """
     1. Mark document PROCESSING in Postgres
     2. Download from S3
@@ -61,7 +61,7 @@ async def process_file_pipeline(
             async with session_factory() as db:
                 await repo.set_document_status(db, s3_key=file_key, status=DocumentStatus.READY)
                 await db.commit()
-            return
+            return ""
 
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=200, separators=["\n\n", "\n", ". ", " ", ""]
@@ -74,7 +74,7 @@ async def process_file_pipeline(
             async with session_factory() as db:
                 await repo.set_document_status(db, s3_key=file_key, status=DocumentStatus.READY)
                 await db.commit()
-            return
+            return raw_text
 
         logger.info("ingestion_embedding_start")
         embeddings = await embedder.embed_batch(chunks, batch_size=32)
@@ -113,6 +113,8 @@ async def process_file_pipeline(
         async with session_factory() as db:
             await repo.set_document_status(db, s3_key=file_key, status=DocumentStatus.READY)
             await db.commit()
+
+        return raw_text  # Phase 7: hand the parsed text back for the entity-extraction pass
 
     except Exception as e:
         logger.error("ingestion_failed", error=str(e), exc_info=True)
