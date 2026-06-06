@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 
 // Replay a scripted SSE sequence by invoking the handlers streamChat would call.
 // Scripts the 09 contract: a whole `component` block + a FLAT-enum done.route.
@@ -26,10 +28,16 @@ vi.mock("@/lib/sse/stream-chat", () => ({
 import { useChatStore } from "@/features/chat/store/chat.store";
 import { useStreamingChat } from "@/features/chat/hooks/use-streaming-chat";
 
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <QueryClientProvider client={new QueryClient()}>
+    {children}
+  </QueryClientProvider>
+);
+
 describe("useStreamingChat end-to-end", () => {
   it("ends with a finalized assistant Message of the canonical shape", async () => {
     useChatStore.setState({ messages: [], isStreaming: false });
-    const { result } = renderHook(() => useStreamingChat());
+    const { result } = renderHook(() => useStreamingChat(), { wrapper });
 
     await act(async () => {
       await result.current.sendMessage("what is X?", false);

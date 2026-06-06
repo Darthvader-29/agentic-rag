@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 
 import { StreamError } from "@/lib/sse/stream-chat";
 
@@ -21,6 +23,12 @@ vi.mock("@/lib/sse/stream-chat", async () => {
 import { useChatStore } from "@/features/chat/store/chat.store";
 import { useStreamingChat } from "@/features/chat/hooks/use-streaming-chat";
 
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <QueryClientProvider client={new QueryClient()}>
+    {children}
+  </QueryClientProvider>
+);
+
 describe("useStreamingChat — free_tier_exhausted + citation sources", () => {
   beforeEach(() => {
     useChatStore.setState({ messages: [], isStreaming: false });
@@ -33,7 +41,7 @@ describe("useStreamingChat — free_tier_exhausted + citation sources", () => {
         new StreamError("Free tier exhausted", "free_tier_exhausted")
       );
     };
-    const { result } = renderHook(() => useStreamingChat());
+    const { result } = renderHook(() => useStreamingChat(), { wrapper });
     await act(async () => {
       await result.current.sendMessage("q", false);
     });
@@ -51,7 +59,7 @@ describe("useStreamingChat — free_tier_exhausted + citation sources", () => {
 
   it("leaves errorCode undefined for a generic error", async () => {
     script = (h) => h.onError?.(new StreamError("boom"));
-    const { result } = renderHook(() => useStreamingChat());
+    const { result } = renderHook(() => useStreamingChat(), { wrapper });
     await act(async () => {
       await result.current.sendMessage("q", false);
     });
@@ -73,7 +81,7 @@ describe("useStreamingChat — free_tier_exhausted + citation sources", () => {
       });
       h.onDone?.({ answer: "grounded", route: "RAG" });
     };
-    const { result } = renderHook(() => useStreamingChat());
+    const { result } = renderHook(() => useStreamingChat(), { wrapper });
     await act(async () => {
       await result.current.sendMessage("q", false);
     });
@@ -95,7 +103,7 @@ describe("useStreamingChat — free_tier_exhausted + citation sources", () => {
 
   it("leaves sources empty (no fabricated count) when a turn emits no citation", async () => {
     script = (h) => h.onDone?.({ answer: "direct answer", route: "DIRECT" });
-    const { result } = renderHook(() => useStreamingChat());
+    const { result } = renderHook(() => useStreamingChat(), { wrapper });
     await act(async () => {
       await result.current.sendMessage("q", false);
     });

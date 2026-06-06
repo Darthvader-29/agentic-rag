@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { useChatStore, errorToTurn } from "@/features/chat/store/chat.store";
 import { getSessionId } from "@/features/chat/api/chat.api";
+import { invalidateSessionMemory } from "@/features/memory/hooks/use-session-memory";
 import { streamChat } from "@/lib/sse/stream-chat";
 import { getChatModelSelection } from "@/features/keys/store/provider.store";
 import { flags } from "@/lib/flags";
@@ -115,12 +117,22 @@ export function useStreamingChat() {
   const finalize = useChatStore((s) => s.finalize);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const isStreaming = useChatStore((s) => s.isStreaming);
+  const queryClient = useQueryClient();
 
   // One in-flight stream at a time; the controller powers the Stop button.
   const abortRef = useRef<AbortController | null>(null);
 
+  // Abort any in-flight stream when the hook unmounts (e.g. navigating away mid-stream) so the
+  // fetch doesn't dangle; the turn is then finalized by sendMessage's post-stream safety net.
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   const sendMessage = useCallback(
     async (text: string, webSearchAllowed: boolean) => {
+      // The composer isn't disabled mid-stream, so a second send can arrive while one is still
+      // in flight. Abort the previous stream first so its controller can't be orphaned — its own
+      // turn is finalized by that call's post-stream safety net below.
+      abortRef.current?.abort();
+
       // Optimistic two-message bootstrap (user "done" + empty assistant "streaming"), shared
       // with the blocking strategy so the two builders can't drift. Returns the assistant id
       // we stream INTO.
@@ -129,6 +141,9 @@ export function useStreamingChat() {
       const controller = new AbortController();
       abortRef.current = controller;
       setStreaming(true);
+
+      // Set by onDone/onError; the post-stream safety net finalizes the turn iff neither ran.
+      let finalized = false;
 
       // The `citation` components are the SOURCES channel (09 §5). Collect them across
       // the stream and flush to the sources panel on `done` — no status-derived guess.
@@ -211,6 +226,9 @@ export function useStreamingChat() {
               patch.stats = stats;
             }
             finalize(assistantId, patch);
+            finalized = true;
+            // A finalized turn means the backend rewrote this session's memory — refresh the panel.
+            invalidateSessionMemory(queryClient, getSessionId());
           },
           onError: (error) => {
             pushStep(assistantId, { label: "error", state: "error" });
@@ -221,12 +239,22 @@ export function useStreamingChat() {
             // keeps its own store-writes (setRoute + finalize); only the derivation is shared.
             const { content, errorCode } = errorToTurn(error);
             finalize(assistantId, { errorCode, content });
+            finalized = true;
           },
         }
       );
 
-      abortRef.current = null;
-      setStreaming(false);
+      // Safety net: if the stream ended without finalizing the turn — Stop pressed mid-stream, a
+      // malformed `done` the lib/sse layer dropped, or a body that closed without a terminal event
+      // — the message would otherwise hang in "streaming" forever. Finalize it with what streamed.
+      if (!finalized) finalize(assistantId);
+
+      // Only clear the shared stream state if WE are still the active stream: a newer sendMessage
+      // may have replaced abortRef while we awaited (see the abort-previous guard above).
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setStreaming(false);
+      }
     },
     [
       beginTurn,
@@ -238,6 +266,7 @@ export function useStreamingChat() {
       setStats,
       finalize,
       setStreaming,
+      queryClient,
     ]
   );
 

@@ -187,4 +187,26 @@ describe("streamChat", () => {
     );
     expect(onError).not.toHaveBeenCalled();
   });
+
+  it("drops a malformed done event (no onDone, no onError) — the hook's safety net then finalizes", async () => {
+    // Contract the useStreamingChat safety net relies on: a `done` whose payload fails
+    // SseDoneSchema is dropped and the stream just ends. Neither onDone nor onError fires, so
+    // the hook must finalize the turn itself (otherwise the message hangs on "streaming").
+    mockFetchOnce(
+      streamFromChunks([
+        'event: token\ndata: {"text": "partial"}\n\n',
+        "event: done\ndata: {malformed json\n\n",
+      ])
+    );
+    const onDone = vi.fn();
+    const onError = vi.fn();
+    let body = "";
+    await streamChat(
+      { message: "q", session_id: "s", web_search_allowed: false },
+      { onToken: (t) => (body += t), onDone, onError }
+    );
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect(body).toBe("partial"); // streamed tokens survive for the hook to finalize with
+  });
 });

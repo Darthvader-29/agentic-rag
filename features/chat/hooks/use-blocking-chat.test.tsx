@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 vi.mock("@/features/chat/api/chat.api", () => ({
   sendMessage: vi.fn(),
+  getSessionId: () => "s1", // success path invalidates the session-memory query
 }));
 
 import { sendMessage } from "@/features/chat/api/chat.api";

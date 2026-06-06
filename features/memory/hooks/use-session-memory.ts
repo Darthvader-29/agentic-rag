@@ -8,10 +8,12 @@
 // is nothing to fetch without a session id. When the gate is closed the hook returns the empty,
 // non-loading baseline (no network, no error), so the panel degrades cleanly to its empty state.
 //
-// `refetch` is surfaced deliberately: memory is (re)written by the backend as a side effect of a chat
-// turn, so the panel can re-pull fresh memory when a turn finalizes (the caller wires this — e.g. in a
-// done-event effect). Otherwise it follows the global staleTime.
+// `refetch` is surfaced deliberately, and the chat strategies call `invalidateSessionMemory` (below)
+// when a turn finalizes so an enabled panel re-pulls fresh memory immediately. Absent that, it would
+// only refresh on the global staleTime or a manual refresh.
 "use client";
+
+import type { QueryClient } from "@tanstack/react-query";
 
 import { flags } from "@/lib/flags";
 import { fetchSessionMemory } from "@/features/memory/api/memory.api";
@@ -22,11 +24,28 @@ import {
 import { useFlaggedSessionQuery } from "@/features/_shared/use-flagged-session-query";
 
 /**
- * Stable query-key factory so a future mutation/invalidation can target a session's memory. Used
- * only inside this hook today (non-exported); promote to an export if a mutation needs to target it.
+ * Stable query-key factory. Exported so the chat strategies can invalidate this query when a turn
+ * finalizes (see `invalidateSessionMemory`) — the single source of the key for fetch + invalidation.
  */
-const sessionMemoryQueryKey = (sessionId: string) =>
+export const sessionMemoryQueryKey = (sessionId: string) =>
   ["session-memory", sessionId] as const;
+
+/**
+ * Invalidate a session's memory query so an ENABLED MemoryPanel re-pulls the running summary right
+ * after a chat turn finalizes — the backend rewrites the markdown memory as a side effect of a turn,
+ * so without this the panel only updates on the 30s staleTime or a manual refresh. Flag-gated and
+ * id-guarded (no-op when the memory feature is dark or there's no session), so the chat hooks can
+ * call it unconditionally on their success paths.
+ */
+export function invalidateSessionMemory(
+  queryClient: QueryClient,
+  sessionId: string
+): void {
+  if (!flags.memory || !sessionId) return;
+  void queryClient.invalidateQueries({
+    queryKey: sessionMemoryQueryKey(sessionId),
+  });
+}
 
 export function useSessionMemory(sessionId: string) {
   // Shared mechanics: flag + session gate → enabled, session-scoped key, 30s stale window, and the

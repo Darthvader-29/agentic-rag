@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act, render, renderHook, screen } from "@testing-library/react";
 import { LazyMotion, domAnimation } from "framer-motion";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 
 // End-to-end: a scripted SSE stream emits a whole `component` block mid-stream, the M9 plumbing
 // (onComponent → addComponent) stores it on message.components, and M10's <ComponentBlock> renders
@@ -40,8 +42,16 @@ function setFlag(on: boolean) {
   (flags as { richComponents: boolean }).richComponents = on;
 }
 
+const queryWrapper = ({ children }: { children: ReactNode }) => (
+  <QueryClientProvider client={new QueryClient()}>
+    {children}
+  </QueryClientProvider>
+);
+
 async function runStream(): Promise<Message> {
-  const { result } = renderHook(() => useStreamingChat());
+  const { result } = renderHook(() => useStreamingChat(), {
+    wrapper: queryWrapper,
+  });
   await act(async () => {
     await result.current.sendMessage("show me a table", false);
   });

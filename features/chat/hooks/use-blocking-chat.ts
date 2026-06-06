@@ -1,6 +1,7 @@
-import { useMutation } from "@tanstack/react-query";
-import { sendMessage } from "@/features/chat/api/chat.api";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { sendMessage, getSessionId } from "@/features/chat/api/chat.api";
 import { useChatStore, errorToTurn } from "@/features/chat/store/chat.store";
+import { invalidateSessionMemory } from "@/features/memory/hooks/use-session-memory";
 import type { ChatResponse } from "@/features/chat/api/chat.schemas";
 import type { Source } from "@/types";
 
@@ -33,6 +34,7 @@ export function useBlockingChat() {
   const setErrorCode = useChatStore((s) => s.setErrorCode);
   const finalize = useChatStore((s) => s.finalize);
   const setLoading = useChatStore((s) => s.setLoading);
+  const queryClient = useQueryClient();
 
   const mutation = useMutation<ChatResponse, unknown, SendVars, Ctx>({
     mutationFn: ({ text, webSearch }) => sendMessage(text, webSearch),
@@ -52,6 +54,8 @@ export function useBlockingChat() {
       setSourcesCount(assistantId, res.context_count);
       pushStep(assistantId, { label: "done", state: "complete" });
       finalize(assistantId);
+      // A finalized turn means the backend rewrote this session's memory — refresh the panel.
+      invalidateSessionMemory(queryClient, getSessionId());
     },
 
     onError: (err, _vars, ctx) => {
