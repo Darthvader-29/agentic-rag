@@ -14,9 +14,12 @@ the cache hit rate (caching skill, "prefix changes" sharp edge).
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING
 
-Route = Literal["RAG", "WEB", "DIRECT"]
+if TYPE_CHECKING:
+    # Single source of truth lives in llm.base; imported here only for annotations
+    # (runtime import would be circular: base.py imports the builders from this module).
+    from llm.base import Route
 
 
 # ── Routing ───────────────────────────────────────────────────────────────────
@@ -54,15 +57,6 @@ def routing_user(query: str, has_documents: bool, web_allowed: bool) -> str:
         f"Web search: {web_status}\n\n"
         "Respond with ONLY one word: RAG, WEB, or DIRECT."
     )
-
-
-def routing_prompt(query: str, has_documents: bool, web_allowed: bool) -> str:
-    """Single-string routing prompt (stable rubric first, variable suffix last).
-
-    Used by providers that take one combined prompt (Gemini, Anthropic). Keeping the stable
-    rubric as the leading prefix preserves implicit/automatic prefix caching.
-    """
-    return f"{ROUTING_SYSTEM}\n\n{routing_user(query, has_documents, web_allowed)}"
 
 
 def normalize_decision(text: str) -> Route:
@@ -124,14 +118,9 @@ def generation_user(decision: str, query: str, context: str) -> str:
 
 
 def generation_system_user(decision: str, query: str, context: str) -> tuple[str, str]:
-    """Split generation prompt into (stable system, variable user) — used by OpenAI/Anthropic."""
-    return generation_system(decision), generation_user(decision, query, context)
+    """Split generation prompt into (stable system, variable user).
 
-
-def generation_prompt(decision: str, query: str, context: str) -> str:
-    """Single-string generation prompt (stable system prefix first, variable suffix last).
-
-    Used by providers that take one combined prompt (Gemini). The stable role/format contract
-    leads so implicit prefix caching can match it across same-route requests.
+    Adapters that take one combined prompt (Gemini) join these as ``f"{system}\\n\\n{user}"``,
+    which keeps the stable role/format contract leading so implicit prefix caching matches it.
     """
-    return f"{generation_system(decision)}\n\n{generation_user(decision, query, context)}"
+    return generation_system(decision), generation_user(decision, query, context)

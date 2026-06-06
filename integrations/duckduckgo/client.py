@@ -7,17 +7,15 @@ import asyncio
 
 import structlog
 from duckduckgo_search import DDGS
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry
+
+from integrations._retry import RETRY_KW
 
 logger = structlog.get_logger(__name__)
 
-_RETRY = dict(
-    stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, max=8), reraise=True
-)
-
 
 class DuckDuckGoClient:
-    @retry(**_RETRY)
+    @retry(**RETRY_KW)
     def _search_sync(self, query: str, max_results: int) -> list[dict[str, str]]:
         try:
             with DDGS() as ddgs:

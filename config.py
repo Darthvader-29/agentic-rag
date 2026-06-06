@@ -115,21 +115,31 @@ class Settings(BaseSettings):
             return self.ENTITY_EXTRACTION_ENABLED
         return bool(self.LLM_FALLBACK_API_KEY.get_secret_value())
 
+    def _tier_model(self, provider: str, mapping: dict[str, str]) -> str:
+        """Look up a per-provider tier model id, falling back to DEFAULT_LLM_MODEL."""
+        return mapping.get(provider.lower(), self.DEFAULT_LLM_MODEL)
+
     def tier_route_model(self, provider: str) -> str:
         """BYOK cheap-tier model id for routing, by provider (falls back to DEFAULT_LLM_MODEL)."""
-        return {
-            "gemini": self.TIER_ROUTE_MODEL_GEMINI,
-            "openai": self.TIER_ROUTE_MODEL_OPENAI,
-            "anthropic": self.TIER_ROUTE_MODEL_ANTHROPIC,
-        }.get(provider.lower(), self.DEFAULT_LLM_MODEL)
+        return self._tier_model(
+            provider,
+            {
+                "gemini": self.TIER_ROUTE_MODEL_GEMINI,
+                "openai": self.TIER_ROUTE_MODEL_OPENAI,
+                "anthropic": self.TIER_ROUTE_MODEL_ANTHROPIC,
+            },
+        )
 
     def tier_synth_model(self, provider: str) -> str:
         """BYOK strong-tier model id for synthesis, by provider (falls back to DEFAULT_LLM_MODEL)."""
-        return {
-            "gemini": self.TIER_SYNTH_MODEL_GEMINI,
-            "openai": self.TIER_SYNTH_MODEL_OPENAI,
-            "anthropic": self.TIER_SYNTH_MODEL_ANTHROPIC,
-        }.get(provider.lower(), self.DEFAULT_LLM_MODEL)
+        return self._tier_model(
+            provider,
+            {
+                "gemini": self.TIER_SYNTH_MODEL_GEMINI,
+                "openai": self.TIER_SYNTH_MODEL_OPENAI,
+                "anthropic": self.TIER_SYNTH_MODEL_ANTHROPIC,
+            },
+        )
 
     @field_validator("LLM_KEY_ENCRYPTION_KEY")
     @classmethod

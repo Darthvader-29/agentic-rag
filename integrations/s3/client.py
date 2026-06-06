@@ -16,16 +16,11 @@ import os
 import uuid
 
 import boto3
-import structlog
 from botocore.config import Config
 from botocore.exceptions import ClientError
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry
 
-logger = structlog.get_logger(__name__)
-
-_RETRY = dict(
-    stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, max=8), reraise=True
-)
+from integrations._retry import RETRY_KW
 
 
 class S3Client:
@@ -75,9 +70,10 @@ class S3Client:
     @staticmethod
     def make_user_key(user_id: object, filename: str) -> str:
         """Phase 5 presigned-upload key, scoped under the owning user."""
-        return f"uploads/{user_id}/{uuid.uuid4()}_{filename}"
+        # Same `uploads/{uuid}_{filename}` tail as _make_key, nested under the user_id.
+        return f"uploads/{user_id}/{S3Client._make_key(filename).removeprefix('uploads/')}"
 
-    @retry(**_RETRY)
+    @retry(**RETRY_KW)
     def _upload_sync(self, file_obj, key: str) -> None:
         self._client.upload_fileobj(file_obj, self._bucket, key)
 
@@ -86,7 +82,7 @@ class S3Client:
         await asyncio.to_thread(self._upload_sync, file_obj, key)
         return key
 
-    @retry(**_RETRY)
+    @retry(**RETRY_KW)
     def _download_sync(self, key: str) -> str:
         tmp_dir = "tmp_uploads"
         os.makedirs(tmp_dir, exist_ok=True)
@@ -98,7 +94,7 @@ class S3Client:
     async def download_to_temp(self, key: str) -> str:
         return await asyncio.to_thread(self._download_sync, key)
 
-    @retry(**_RETRY)
+    @retry(**RETRY_KW)
     def _delete_sync(self, keys: list[str]) -> None:
         if not keys:
             return
@@ -112,7 +108,7 @@ class S3Client:
 
     # ── Phase 5: presigned PUT + existence check (client uploads direct to storage) ──
 
-    @retry(**_RETRY)
+    @retry(**RETRY_KW)
     def _presign_put_sync(self, key: str, expires_in: int) -> str:
         url: str = self._client.generate_presigned_url(
             "put_object",

@@ -18,10 +18,14 @@ if TYPE_CHECKING:
     from integrations.huggingface.client import HuggingFaceClient
     from integrations.s3.client import S3Client
 
-# IMPORTANT: Must match Pinecone index dimension (MiniLM output is 384)
-EMBEDDING_DIM = 384
-
 logger = structlog.get_logger(__name__)
+
+
+async def _set_status(session_factory, s3_key: str, status: "DocumentStatus") -> None:
+    """Open a short-lived session, set the document's ingestion status, and commit."""
+    async with session_factory() as db:
+        await repo.set_document_status(db, s3_key=s3_key, status=status)
+        await db.commit()
 
 
 async def process_file_pipeline(
@@ -46,9 +50,7 @@ async def process_file_pipeline(
     try:
         logger.info("ingestion_start", filename=filename, s3_key=file_key)
 
-        async with session_factory() as db:
-            await repo.set_document_status(db, s3_key=file_key, status=DocumentStatus.PROCESSING)
-            await db.commit()
+        await _set_status(session_factory, file_key, DocumentStatus.PROCESSING)
 
         temp_path = await s3.download_to_temp(file_key)
         logger.info("ingestion_downloaded", temp_path=temp_path)
@@ -58,9 +60,7 @@ async def process_file_pipeline(
 
         if not raw_text.strip():
             logger.info("ingestion_empty", reason="no text extracted from document")
-            async with session_factory() as db:
-                await repo.set_document_status(db, s3_key=file_key, status=DocumentStatus.READY)
-                await db.commit()
+            await _set_status(session_factory, file_key, DocumentStatus.READY)
             return ""
 
         splitter = RecursiveCharacterTextSplitter(
@@ -71,9 +71,7 @@ async def process_file_pipeline(
 
         if not chunks:
             logger.info("ingestion_empty", reason="no valid chunks created")
-            async with session_factory() as db:
-                await repo.set_document_status(db, s3_key=file_key, status=DocumentStatus.READY)
-                await db.commit()
+            await _set_status(session_factory, file_key, DocumentStatus.READY)
             return raw_text
 
         logger.info("ingestion_embedding_start")
@@ -110,18 +108,14 @@ async def process_file_pipeline(
         await pinecone.save_vectors(vectors)
         logger.info("ingestion_complete", vectors_saved=len(vectors))
 
-        async with session_factory() as db:
-            await repo.set_document_status(db, s3_key=file_key, status=DocumentStatus.READY)
-            await db.commit()
+        await _set_status(session_factory, file_key, DocumentStatus.READY)
 
         return raw_text  # Phase 7: hand the parsed text back for the entity-extraction pass
 
     except Exception as e:
         logger.error("ingestion_failed", error=str(e), exc_info=True)
         try:
-            async with session_factory() as db:
-                await repo.set_document_status(db, s3_key=file_key, status=DocumentStatus.FAILED)
-                await db.commit()
+            await _set_status(session_factory, file_key, DocumentStatus.FAILED)
         except Exception:
             logger.error("ingestion_status_update_failed", exc_info=True)
         raise

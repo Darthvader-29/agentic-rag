@@ -84,10 +84,6 @@ namespace_packages = true
 follow_imports = "silent"
 
 [[tool.mypy.overrides]]
-module = ["integrations.uploadthing.*"]
-ignore_errors = true
-
-[[tool.mypy.overrides]]
 # pydantic-settings: mypy doesn't understand that Settings() reads from env — false positive
 module = ["config"]
 ignore_errors = true
@@ -134,7 +130,7 @@ addopts = "-q --cov-fail-under=83"
 [tool.coverage.run]
 branch = true
 source = ["app", "config", "exceptions", "logging_config", "components", "database", "integrations", "auth", "llm", "worker", "observability", "memory"]
-omit = ["test/*", "integrations/uploadthing/*"]
+omit = ["test/*"]
 
 [tool.coverage.report]
 show_missing = true

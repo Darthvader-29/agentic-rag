@@ -7,15 +7,11 @@ so the event loop is never blocked.
 import asyncio
 
 import numpy as np
-import structlog
 from huggingface_hub import InferenceClient
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry
 
-logger = structlog.get_logger(__name__)
+from integrations._retry import RETRY_KW
 
-_RETRY = dict(
-    stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, max=8), reraise=True
-)
 _MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
@@ -27,7 +23,7 @@ class HuggingFaceClient:
     def from_settings(cls, settings) -> "HuggingFaceClient":
         return cls(token=settings.HUGGINGFACE_TOKEN)
 
-    @retry(**_RETRY)
+    @retry(**RETRY_KW)
     def _embed_batch_sync(self, texts: list[str], batch_size: int = 32) -> list[list[float]]:
         if not texts:
             return []

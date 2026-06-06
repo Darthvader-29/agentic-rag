@@ -20,7 +20,6 @@ from auth.dependencies import get_current_user
 from auth.keys_router import router as keys_router
 from auth.router import router as auth_router
 from auth.security import decode_token
-from components.preprocessing import EMBEDDING_DIM
 from config import settings
 from database import repository as repo
 from database.db_manager import PineconeClient
@@ -213,12 +212,6 @@ class DocumentStatusResponse(BaseModel):
 RAG_THRESHOLD = 0.4
 
 
-async def get_query_embedding(text: str, embedder: HuggingFaceClient) -> list[float]:
-    """Get a single 384-dim embedding using the same model as ingestion."""
-    embs = await embedder.embed_batch([text], batch_size=1)
-    return embs[0] if embs else [0.0] * EMBEDDING_DIM
-
-
 async def check_docs_relevant(
     query: str,
     session_id: str,
@@ -227,7 +220,7 @@ async def check_docs_relevant(
 ) -> tuple[bool, bool]:
     """Returns (has_documents, docs_relevant)."""
     try:
-        q_emb = await get_query_embedding(query, embedder)
+        q_emb = await embedder.embed_single(query)
         results = await pinecone.search_vectors(q_emb, top_k=3, session_id=session_id)
         if not results:
             return False, False
@@ -269,6 +262,15 @@ def decide_combined_route(
 # ========= UPLOAD + INGEST =========
 
 
+def _session_accessible(session, current_user: User) -> bool:
+    """The shared ownership predicate: the session exists and is either unowned or the caller's.
+
+    Callers layer their own outward behavior on top (return bool / raise 404 / raise 403) — this
+    only unifies the duplicated "unowned OR owned by caller" check, not the error semantics.
+    """
+    return session is not None and (session.user_id is None or session.user_id == current_user.id)
+
+
 async def _resolve_session(db: AsyncSession, session_id: str | None, current_user: User) -> str:
     """Create or verify a session owned by the current user; return the session_id."""
     sid = session_id or str(uuid.uuid4())
@@ -285,7 +287,7 @@ async def _resolve_session(db: AsyncSession, session_id: str | None, current_use
 async def _owns_document(db: AsyncSession, doc, current_user: User) -> bool:
     """A document is the caller's if its session is unowned or owned by the caller."""
     session = await repo.get_session(db, doc.session_id)
-    return session is None or session.user_id is None or session.user_id == current_user.id
+    return _session_accessible(session, current_user)
 
 
 async def _upload_multipart(request: Request, current_user: User, s3: S3Client, db: AsyncSession):
@@ -406,7 +408,7 @@ async def get_document_status(
 async def _require_owned_session(db: AsyncSession, session_id: str, current_user: User) -> None:
     """404 unless the session exists and belongs to the caller (or is unowned)."""
     session = await repo.get_session(db, session_id)
-    if session is None or (session.user_id is not None and session.user_id != current_user.id):
+    if not _session_accessible(session, current_user):
         raise HTTPException(404, "session not found")
 
 
@@ -545,13 +547,7 @@ async def chat(
     )
 
     # Phase 3: ownership check — create session with owner or verify existing ownership.
-    existing = await repo.get_session(db, session_id)
-    if existing is None:
-        await repo.create_session(db, session_id, current_user.id)
-    elif existing.user_id is not None and existing.user_id != current_user.id:
-        raise HTTPException(403, "session does not belong to the current user")
-    elif existing.user_id is None:
-        existing.user_id = current_user.id
+    session_id = await _resolve_session(db, session_id, current_user)
 
     state = await _build_graph_state(
         payload, session_id, current_user, provider, pinecone, embedder, web, db
@@ -666,11 +662,11 @@ async def cleanup_session(
     try:
         logger.info("cleanup_request", session_id=payload.session_id)
 
-        # Phase 3: ownership check
+        # Phase 3: ownership check — 404 if the session is missing, 403 if it's another user's.
         session = await repo.get_session(db, payload.session_id)
         if session is None:
             raise HTTPException(404, "session not found")
-        if session.user_id is not None and session.user_id != current_user.id:
+        if not _session_accessible(session, current_user):
             raise HTTPException(403, "session does not belong to the current user")
 
         keys = await repo.list_s3_keys_for_session(db, payload.session_id)

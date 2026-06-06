@@ -16,48 +16,24 @@ from collections.abc import AsyncIterator
 from openai import APIStatusError as OpenAIStatusError
 from openai import AsyncOpenAI, AuthenticationError, PermissionDeniedError, RateLimitError
 
-from exceptions import LLMAuthError, LLMRateLimitError, LLMResponseError, LLMUnavailableError
-from llm._prompts import (
-    ROUTING_SYSTEM,
-    Route,
-    generation_system_user,
-    normalize_decision,
-    routing_user,
-)
-
-_DEFAULT_MODEL = "gpt-4o-mini"
+from llm.base import BaseLLMProvider
 
 
-class OpenAIProvider:
-    def __init__(
-        self,
-        api_key: str,
-        model: str | None = None,
-        *,
-        route_model: str | None = None,
-        synth_model: str | None = None,
-    ) -> None:
-        # api_key is used only to construct the client; it is never stored on self.
+class OpenAIProvider(BaseLLMProvider):
+    _DEFAULT_MODEL = "gpt-4o-mini"
+
+    _AUTH_EXCS = (AuthenticationError, PermissionDeniedError)
+    _RATELIMIT_EXCS = (RateLimitError,)
+    _STATUS_EXC = OpenAIStatusError
+    _UNAVAILABLE_STATUSES = frozenset({500, 502, 503})
+
+    def _build_client(self, api_key: str) -> None:
         self._client = AsyncOpenAI(api_key=api_key)
-        self._route_model = route_model or model or _DEFAULT_MODEL
-        self._synth_model = synth_model or model or _DEFAULT_MODEL
 
-    def __repr__(self) -> str:
-        return (
-            f"OpenAIProvider(route_model={self._route_model!r}, synth_model={self._synth_model!r})"
-        )
-
-    def _map_error(self, exc: Exception) -> Exception:
-        if isinstance(exc, (AuthenticationError, PermissionDeniedError)):
-            return LLMAuthError()
-        if isinstance(exc, RateLimitError):
-            return LLMRateLimitError()
-        if isinstance(exc, OpenAIStatusError) and exc.status_code in (500, 502, 503):
-            return LLMUnavailableError()
-        return LLMResponseError()
-
-    async def _chat(self, model: str, system: str, user: str) -> str:
-        try:
+    async def _call(
+        self, model: str, system: str, user: str, *, max_tokens: int | None = None
+    ) -> str:
+        with self._guard():
             resp = await self._client.chat.completions.create(
                 model=model,
                 messages=[
@@ -66,29 +42,16 @@ class OpenAIProvider:
                 ],
             )
             return (resp.choices[0].message.content or "").strip()
-        except (LLMAuthError, LLMRateLimitError, LLMUnavailableError, LLMResponseError):
-            raise
-        except Exception as e:  # noqa: BLE001
-            raise self._map_error(e) from e
 
-    async def route(self, query: str, *, has_documents: bool, web_allowed: bool) -> Route:
-        text = await self._chat(
-            self._route_model, ROUTING_SYSTEM, routing_user(query, has_documents, web_allowed)
-        )
-        return normalize_decision(text)
-
-    async def generate(self, query: str, context: str, decision: Route) -> str:
-        sys_msg, usr_msg = generation_system_user(decision, query, context)
-        return await self._chat(self._synth_model, sys_msg, usr_msg)
-
-    async def stream(self, query: str, context: str, decision: Route) -> AsyncIterator[str]:  # type: ignore[override]
-        sys_msg, usr_msg = generation_system_user(decision, query, context)
-        try:
+    async def _stream_call(
+        self, model: str, system: str, user: str, *, max_tokens: int | None = None
+    ) -> AsyncIterator[str]:
+        with self._guard():
             stream_resp = await self._client.chat.completions.create(
-                model=self._synth_model,
+                model=model,
                 messages=[
-                    {"role": "system", "content": sys_msg},  # stable prefix → auto-cached
-                    {"role": "user", "content": usr_msg},  # variable suffix
+                    {"role": "system", "content": system},  # stable prefix → auto-cached
+                    {"role": "user", "content": user},  # variable suffix
                 ],
                 stream=True,
             )
@@ -96,7 +59,3 @@ class OpenAIProvider:
                 delta = event.choices[0].delta.content
                 if delta:
                     yield delta
-        except (LLMAuthError, LLMRateLimitError, LLMUnavailableError, LLMResponseError):
-            raise
-        except Exception as e:  # noqa: BLE001
-            raise self._map_error(e) from e

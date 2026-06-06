@@ -25,14 +25,9 @@ class MarkdownMemory:
         self._max_chars = max_chars
 
     async def read(self, session_id: str) -> str:
-        with get_tracer().start_as_current_span("memory.markdown.read"):
-            async with self._session_factory() as db:
-                row = (
-                    await db.execute(
-                        select(SessionMemory).where(SessionMemory.session_id == session_id)
-                    )
-                ).scalar_one_or_none()
-                return row.content if row else ""
+        # Delegate to the single query path; callers wanting just the body discard the timestamp.
+        content, _ = await self.read_with_updated(session_id)
+        return content
 
     async def read_with_updated(self, session_id: str) -> tuple[str, str | None]:
         """Return ``(content, updated_at_iso)`` for the GET /memory endpoint; ``("", None)`` if absent."""
