@@ -8,9 +8,9 @@
 // Persisted so a reload keeps the chosen model. It is intentionally a SEPARATE store from
 // the auth/keys data layer — this is pure UI selection state, not server state.
 import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
 import type { Provider } from "@/features/keys/api/keys.schemas";
 import { defaultModelFor } from "@/features/keys/models";
+import { persistLocal, STORAGE_KEYS } from "@/lib/store/persist";
 
 interface ProviderState {
   /** Selected provider, or null = "use the backend default" (no provider/model sent). */
@@ -20,32 +20,23 @@ interface ProviderState {
 
   /** Pick a provider; seeds its default model unless an explicit one is supplied. */
   setProvider: (provider: Provider | null, model?: string) => void;
-  /** Refine the model within the current provider. */
-  setModel: (model: string) => void;
   /** Reset to the backend default (no explicit provider/model). */
   clearSelection: () => void;
 }
 
 export const useProviderStore = create<ProviderState>()(
-  persist(
-    (set) => ({
-      provider: null,
-      model: null,
+  persistLocal<ProviderState>(STORAGE_KEYS.providerSelection, (set) => ({
+    provider: null,
+    model: null,
 
-      setProvider: (provider, model) =>
-        set({
-          provider,
-          // null provider → no model; otherwise seed (or use the supplied) model.
-          model: provider ? (model ?? defaultModelFor(provider) ?? null) : null,
-        }),
-      setModel: (model) => set({ model }),
-      clearSelection: () => set({ provider: null, model: null }),
-    }),
-    {
-      name: "rag_provider_selection",
-      storage: createJSONStorage(() => localStorage),
-    }
-  )
+    setProvider: (provider, model) =>
+      set({
+        provider,
+        // null provider → no model; otherwise seed (or use the supplied) model.
+        model: provider ? (model ?? defaultModelFor(provider) ?? null) : null,
+      }),
+    clearSelection: () => set({ provider: null, model: null }),
+  }))
 );
 
 /**

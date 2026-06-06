@@ -1,16 +1,15 @@
 "use client";
 
 import { useCallback, useRef } from "react";
-import { v4 as uuidv4 } from "uuid";
 
-import { useChatStore } from "@/features/chat/store/chat.store";
+import { useChatStore, errorToTurn } from "@/features/chat/store/chat.store";
 import { getSessionId } from "@/features/chat/api/chat.api";
-import { streamChat, StreamError } from "@/lib/sse/stream-chat";
+import { streamChat } from "@/lib/sse/stream-chat";
 import { getChatModelSelection } from "@/features/keys/store/provider.store";
 import { flags } from "@/lib/flags";
 import { traceIdFromTraceparent } from "@/lib/observability/trace";
 import {
-  FREE_TIER_EXHAUSTED,
+  SSE_LAYERS,
   type SseRoute,
   type SseComponent,
   type SseDoneSource,
@@ -44,11 +43,9 @@ function mapRoute(route: SseRoute | null): RouteType {
  * the catalog `type` (M9), so each item is `unknown` until M10's strict per-type schema.
  * Malformed/absent items contribute nothing rather than throwing.
  */
-const LAYERS: readonly RetrievalLayer[] = ["vector", "graph", "web", "memory"];
-
 /** Narrow an unknown value to a RetrievalLayer (Phase 7), or undefined. Tolerant by design. */
 function asLayer(v: unknown): RetrievalLayer | undefined {
-  return typeof v === "string" && (LAYERS as readonly string[]).includes(v)
+  return typeof v === "string" && (SSE_LAYERS as readonly string[]).includes(v)
     ? (v as RetrievalLayer)
     : undefined;
 }
@@ -108,7 +105,7 @@ function applyDoneSourceLayers(
 }
 
 export function useStreamingChat() {
-  const addMessage = useChatStore((s) => s.addMessage);
+  const beginTurn = useChatStore((s) => s.beginTurn);
   const appendContent = useChatStore((s) => s.appendContent);
   const pushStep = useChatStore((s) => s.pushStep);
   const addComponent = useChatStore((s) => s.addComponent);
@@ -124,29 +121,10 @@ export function useStreamingChat() {
 
   const sendMessage = useCallback(
     async (text: string, webSearchAllowed: boolean) => {
-      // 1) user message
-      addMessage({
-        id: uuidv4(),
-        role: "user",
-        content: text,
-        status: "done",
-        steps: [],
-        sources: [],
-        timestamp: Date.now(),
-        webSearchAllowed,
-      });
-
-      // 2) empty assistant message we stream INTO
-      const assistantId = uuidv4();
-      addMessage({
-        id: assistantId,
-        role: "assistant",
-        content: "",
-        steps: [],
-        sources: [],
-        status: "streaming",
-        timestamp: Date.now(),
-      });
+      // Optimistic two-message bootstrap (user "done" + empty assistant "streaming"), shared
+      // with the blocking strategy so the two builders can't drift. Returns the assistant id
+      // we stream INTO.
+      const assistantId = beginTurn(text, webSearchAllowed);
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -237,19 +215,12 @@ export function useStreamingChat() {
           onError: (error) => {
             pushStep(assistantId, { label: "error", state: "error" });
             setRoute(assistantId, "ERROR");
-            // Branch on the machine-readable CODE (docs/09 §3), not the HTTP status. A
-            // free-tier-exhausted code (from either delivery path) is captured on the
-            // message so M7's BYOK "add your own key" CTA can key off `errorCode`.
-            const code = error instanceof StreamError ? error.code : undefined;
-            finalize(assistantId, {
-              errorCode: code,
-              content:
-                code === FREE_TIER_EXHAUSTED
-                  ? error.message ||
-                    "You've used up the free Gemini tier. Add your own API key to continue."
-                  : error.message ||
-                    "The AI service returned an error. Please try again later.",
-            });
+            // Shared error→turn recipe (branches on the machine-readable CODE, docs/09 §3, not
+            // the HTTP status). A free-tier-exhausted code (from either delivery path) is captured
+            // on the message so M7's BYOK "add your own key" CTA can key off `errorCode`. This hook
+            // keeps its own store-writes (setRoute + finalize); only the derivation is shared.
+            const { content, errorCode } = errorToTurn(error);
+            finalize(assistantId, { errorCode, content });
           },
         }
       );
@@ -258,7 +229,7 @@ export function useStreamingChat() {
       setStreaming(false);
     },
     [
-      addMessage,
+      beginTurn,
       appendContent,
       pushStep,
       addComponent,

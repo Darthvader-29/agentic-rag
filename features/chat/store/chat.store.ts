@@ -1,5 +1,11 @@
 import { create } from "zustand";
 import { v4 as uuidv4 } from "uuid";
+import { isApiError } from "@/lib/api/api-error";
+import {
+  FREE_TIER_EXHAUSTED,
+  SseErrorSchema,
+} from "@/features/chat/api/chat.schemas";
+import { StreamError } from "@/lib/sse/stream-chat";
 import type {
   Message,
   Step,
@@ -18,6 +24,13 @@ interface ChatState {
   isStreaming: boolean;
 
   addMessage: (msg: Message) => void;
+  /**
+   * Optimistic two-message bootstrap shared by both chat strategies: push the user message
+   * (status "done") then an empty assistant message (status "streaming") and return the
+   * assistant id the caller streams/writes into. Single source for the optimistic turn so the
+   * blocking and streaming hooks can't drift. Both messages are built via `createMessage`.
+   */
+  beginTurn: (content: string, webSearchAllowed: boolean) => string;
   appendContent: (id: string, chunk: string) => void;
   pushStep: (id: string, step: Step) => void;
   /** Sets a message's sources. Each Source may carry an optional `layer` (Phase 7 provenance). */
@@ -66,6 +79,48 @@ export function createMessage(
   };
 }
 
+/** Generic user-facing fallback shared by both chat strategies' error paths. */
+const GENERIC_ERROR =
+  "The AI service returned an error. Please try again later.";
+
+/**
+ * Single source for the error → user-facing turn recipe shared by both chat strategies.
+ * Derives the message body + optional machine-readable `errorCode` from a failed request,
+ * covering both delivery paths:
+ *   - blocking: the free-tier guard arrives as an HTTP 4xx `ApiError` whose JSON body
+ *     `{detail, code}` is stashed on `.payload`; `userMessage` is the body's detail.
+ *   - streaming: a terminal `error` event / pre-stream 4xx surfaces as a `StreamError`
+ *     whose `.code` distinguishes free-tier-exhausted (BYOK upsell copy) from a generic error.
+ * Each hook keeps its own store-write calls; only this value-derivation is shared. Returns
+ * undefined `errorCode` for a generic error so the BYOK CTA stays off.
+ */
+export function errorToTurn(err: unknown): {
+  content: string;
+  errorCode?: string;
+} {
+  if (isApiError(err)) {
+    const parsed = SseErrorSchema.safeParse(err.payload);
+    return {
+      content: err.userMessage,
+      errorCode: parsed.success ? parsed.data.code : undefined,
+    };
+  }
+  if (err instanceof StreamError) {
+    return {
+      content:
+        err.code === FREE_TIER_EXHAUSTED
+          ? err.message ||
+            "You've used up the free Gemini tier. Add your own API key to continue."
+          : err.message || GENERIC_ERROR,
+      errorCode: err.code,
+    };
+  }
+  if (err instanceof Error) {
+    return { content: err.message || GENERIC_ERROR };
+  }
+  return { content: GENERIC_ERROR };
+}
+
 const updateMessage = (
   messages: Message[],
   id: string,
@@ -80,6 +135,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isStreaming: false,
 
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
+
+  beginTurn: (content, webSearchAllowed) => {
+    const { addMessage } = get();
+    addMessage(
+      createMessage({
+        role: "user",
+        content,
+        status: "done",
+        webSearchAllowed,
+      })
+    );
+    const assistant = createMessage({
+      role: "assistant",
+      content: "",
+      status: "streaming",
+    });
+    addMessage(assistant);
+    return assistant.id;
+  },
 
   appendContent: (id, chunk) =>
     set((s) => ({

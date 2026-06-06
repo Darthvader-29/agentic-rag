@@ -1,21 +1,22 @@
-import { z } from "zod";
-import {
-  routeTypeSchema,
-  chatRequestSchema,
-  chatResponseSchema,
-} from "@/features/chat/api/chat.schemas";
+import type { z } from "zod";
+import { SseLayerEnum } from "@/features/chat/api/chat.schemas";
 
-export type RouteType = z.infer<typeof routeTypeSchema>;
-export type ChatRequest = z.infer<typeof chatRequestSchema>;
-export type ChatResponse = z.infer<typeof chatResponseSchema>;
+// Re-exported (not re-inferred) from the chat schemas so these can't drift from their source.
+export type {
+  RouteType,
+  ChatRequest,
+  ChatResponse,
+} from "@/features/chat/api/chat.schemas";
+import type { RouteType } from "@/features/chat/api/chat.schemas";
 
 export type MessageStatus = "pending" | "streaming" | "done" | "error";
 
 /**
  * Which retrieval layer a source/citation came from (Phase 7 multi-layer retrieval). Carried
  * optionally on citation items and done-event sources; absent ⇒ render no badge (legacy-safe).
+ * Derived from the chat schemas' `SseLayerEnum` (single source) so it can't drift.
  */
-export type RetrievalLayer = "vector" | "graph" | "web" | "memory";
+export type RetrievalLayer = z.infer<typeof SseLayerEnum>;
 
 /**
  * Per-turn observability stats (Phase 7). Populated by use-streaming-chat when
@@ -55,6 +56,10 @@ export interface Source {
 /**
  * Opaque forward-compat carrier for the backend Phase-6 `component` SSE event.
  * Refined into a validated discriminated union by M10; nothing in M1/M2 reads a typed shape.
+ *
+ * NOTE: intentionally NOT aliased to chat.schemas' `SseComponent` — narrowing `.type` to the
+ * catalog enum would reject deliberately-invalid `type` literals that consumers construct (e.g.
+ * the rich-component drop-unknown test builds `{ type: "widget" }`), breaking compilation.
  */
 export interface RichComponent {
   type: string;

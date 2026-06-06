@@ -10,16 +10,19 @@
 // control (the graph grows as the conversation ingests documents).
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { graphApi } from "@/features/knowledge-graph/api/graph.api";
 import {
   EMPTY_GRAPH,
   type GraphData,
 } from "@/features/knowledge-graph/api/graph.schemas";
 import { flags } from "@/lib/flags";
+import { useFlaggedSessionQuery } from "@/features/_shared/use-flagged-session-query";
 
-/** Stable, session-scoped query key. */
-export const graphQueryKey = (sessionId: string) =>
+/**
+ * Stable, session-scoped query key. Used only inside this hook today (non-exported); promote to an
+ * export if a mutation/invalidation needs to target a session's graph.
+ */
+const graphQueryKey = (sessionId: string) =>
   ["knowledge-graph", sessionId] as const;
 
 export interface UseKnowledgeGraph {
@@ -42,19 +45,21 @@ export interface UseKnowledgeGraph {
  * render its empty/loading state without special-casing `undefined`.
  */
 export function useKnowledgeGraph(sessionId: string): UseKnowledgeGraph {
-  const enabled = flags.knowledgeGraph && Boolean(sessionId);
-
-  const query = useQuery({
-    queryKey: graphQueryKey(sessionId),
-    queryFn: ({ signal }) => graphApi.fetchGraph(sessionId, signal),
-    enabled,
-    staleTime: 30_000,
-  });
+  // Shared mechanics: flag + session gate → enabled, session-scoped key, 30s stale window, and the
+  // `data ?? EMPTY_GRAPH` normalization + enabled-gated isLoading. (See useFlaggedSessionQuery.)
+  const { data, isLoading, enabled, query } = useFlaggedSessionQuery<GraphData>(
+    {
+      flagOn: flags.knowledgeGraph,
+      sessionId,
+      queryKey: graphQueryKey(sessionId),
+      queryFn: ({ signal }) => graphApi.fetchGraph(sessionId, signal),
+      fallback: EMPTY_GRAPH,
+    }
+  );
 
   return {
-    graph: query.data ?? EMPTY_GRAPH,
-    // Gate the loading flag so a disabled query (idle, never fetched) never reports loading.
-    isLoading: enabled && query.isLoading,
+    graph: data,
+    isLoading,
     isFetching: query.isFetching,
     isError: query.isError,
     error: query.error,

@@ -23,6 +23,7 @@ import { Brain, RefreshCw, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AsyncPanel } from "@/components/async-panel";
 import { useSessionMemory } from "@/features/memory/hooks/use-session-memory";
 
 interface MemoryPanelProps {
@@ -32,6 +33,12 @@ interface MemoryPanelProps {
 
 // Module-scope stable renderer map — keeps react-markdown from rebuilding its tree on re-render.
 // Compact, prose-friendly variants sized for the narrow Insights drawer.
+//
+// NOT switched to the shared @/lib/markdown/components map (which mirrors chat-message.tsx): this
+// panel's `code` renderer is inline-only (always a styled <code>), whereas the shared/chat map
+// routes FENCED code through <CodeBlock> (language detection + a heavier block). Adopting the shared
+// map would change how fenced code in memory renders — a behavior change — so the local map stays.
+// The a/ul/ol entries ARE identical to the shared map; only `code` diverges.
 const markdownComponents: Components = {
   a: ({ children, ...props }) => (
     <a
@@ -144,79 +151,93 @@ function MemoryPanelImpl({ sessionId }: MemoryPanelProps) {
     }
   }, [refetch]);
 
-  // Loading: enabled query in flight. Skeleton lines stand in for the markdown body.
-  if (isLoading) {
-    return (
-      <PanelShell>
-        <div className="space-y-2" aria-busy="true" aria-live="polite">
-          <Skeleton className="h-3 w-4/5" />
-          <Skeleton className="h-3 w-full" />
-          <Skeleton className="h-3 w-2/3" />
-        </div>
-      </PanelShell>
-    );
-  }
-
-  // Error: any failure other than the 404 the api layer already absorbed into the empty state.
-  if (isError) {
-    return (
-      <PanelShell onRefresh={handleRefresh} refreshing={refreshing} showRefresh>
-        <div className="text-muted-foreground flex flex-col items-start gap-2 text-xs">
-          <span className="text-destructive flex items-center gap-1.5">
-            <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
-            Couldn&apos;t load memory.
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7"
-            onClick={handleRefresh}
-            disabled={refreshing}
-          >
-            <RefreshCw
-              className={cn(
-                "h-3.5 w-3.5",
-                refreshing && "animate-spin motion-reduce:animate-none"
-              )}
-              aria-hidden="true"
-            />
-            Retry
-          </Button>
-        </div>
-      </PanelShell>
-    );
-  }
-
-  const trimmed = content.trim();
-
-  // Empty: no memory yet (404 → EMPTY_MEMORY, or a blank body). The dark-launch-safe default.
-  if (!trimmed) {
-    return (
-      <PanelShell onRefresh={handleRefresh} refreshing={refreshing} showRefresh>
-        <p className="text-muted-foreground text-xs">No memory yet</p>
-      </PanelShell>
-    );
-  }
-
-  const relative = formatRelativeTime(updatedAt);
-
+  // loading → error → empty → data ladder (shared branch order via <AsyncPanel>). Each slot keeps
+  // this panel's own <PanelShell> chrome verbatim, so the rendered markup/aria are unchanged — only
+  // the duplicated branch sequence is hoisted out. Memory does NOT pass `disabled`: chat-screen
+  // gates the mount, so the panel renders its shell whenever mounted (today's behavior preserved).
   return (
-    <PanelShell onRefresh={handleRefresh} refreshing={refreshing} showRefresh>
-      <div className="prose prose-sm dark:prose-invert text-muted-foreground max-w-none text-xs leading-relaxed break-words">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={markdownComponents}
-        >
-          {content}
-        </ReactMarkdown>
-      </div>
-      {relative && (
-        <p className="text-muted-foreground/70 mt-2 text-[10px]">
-          Updated {relative}
-        </p>
+    <AsyncPanel
+      isLoading={isLoading}
+      isError={isError}
+      // Empty: no memory yet (404 → EMPTY_MEMORY, or a blank/whitespace-only body).
+      isEmpty={!content.trim()}
+      // Loading: enabled query in flight. Skeleton lines stand in for the markdown body.
+      renderLoading={() => (
+        <PanelShell>
+          <div className="space-y-2" aria-busy="true" aria-live="polite">
+            <Skeleton className="h-3 w-4/5" />
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-2/3" />
+          </div>
+        </PanelShell>
       )}
-    </PanelShell>
+      // Error: any failure other than the 404 the api layer already absorbed into the empty state.
+      renderError={() => (
+        <PanelShell
+          onRefresh={handleRefresh}
+          refreshing={refreshing}
+          showRefresh
+        >
+          <div className="text-muted-foreground flex flex-col items-start gap-2 text-xs">
+            <span className="text-destructive flex items-center gap-1.5">
+              <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+              Couldn&apos;t load memory.
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7"
+              onClick={handleRefresh}
+              disabled={refreshing}
+            >
+              <RefreshCw
+                className={cn(
+                  "h-3.5 w-3.5",
+                  refreshing && "animate-spin motion-reduce:animate-none"
+                )}
+                aria-hidden="true"
+              />
+              Retry
+            </Button>
+          </div>
+        </PanelShell>
+      )}
+      // Empty: no memory yet. The dark-launch-safe default.
+      renderEmpty={() => (
+        <PanelShell
+          onRefresh={handleRefresh}
+          refreshing={refreshing}
+          showRefresh
+        >
+          <p className="text-muted-foreground text-xs">No memory yet</p>
+        </PanelShell>
+      )}
+      renderData={() => {
+        const relative = formatRelativeTime(updatedAt);
+        return (
+          <PanelShell
+            onRefresh={handleRefresh}
+            refreshing={refreshing}
+            showRefresh
+          >
+            <div className="prose prose-sm dark:prose-invert text-muted-foreground max-w-none text-xs leading-relaxed break-words">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={markdownComponents}
+              >
+                {content}
+              </ReactMarkdown>
+            </div>
+            {relative && (
+              <p className="text-muted-foreground/70 mt-2 text-[10px]">
+                Updated {relative}
+              </p>
+            )}
+          </PanelShell>
+        );
+      }}
+    />
   );
 }
 

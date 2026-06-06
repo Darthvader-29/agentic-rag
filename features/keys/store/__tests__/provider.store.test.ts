@@ -31,12 +31,6 @@ describe("provider.store", () => {
     expect(useProviderStore.getState().model).toBe("gpt-4o");
   });
 
-  it("setModel refines the model within the current provider", () => {
-    useProviderStore.getState().setProvider("gemini");
-    useProviderStore.getState().setModel("gemini-2.5-pro");
-    expect(useProviderStore.getState().model).toBe("gemini-2.5-pro");
-  });
-
   it("clearSelection returns to the backend default", () => {
     useProviderStore.getState().setProvider("openai", "gpt-4o");
     useProviderStore.getState().clearSelection();

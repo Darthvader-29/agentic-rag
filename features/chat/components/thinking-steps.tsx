@@ -11,6 +11,7 @@ import {
   CircleDot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { COLLAPSIBLE_TRIGGER_CLASS } from "@/components/ui/collapsible-section";
 import {
   collapseVariants,
   stepsContainerVariants,
@@ -46,7 +47,7 @@ export function ThinkingSteps({ steps }: ThinkingStepsProps) {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label="Toggle reasoning steps"
-        className="text-muted-foreground hover:text-foreground flex w-full items-center gap-2 px-3 py-2 text-xs font-medium transition-colors motion-reduce:transition-none"
+        className={cn(COLLAPSIBLE_TRIGGER_CLASS, "px-3 py-2")}
       >
         <Brain className="h-3.5 w-3.5" />
         <span>{hasActive ? "Thinking…" : "Reasoning"}</span>

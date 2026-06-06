@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProviderSchema } from "@/features/keys/api/keys.schemas";
 
 export const routeTypeSchema = z.enum([
   "RAG",
@@ -17,7 +18,7 @@ export const chatRequestSchema = z.object({
   // M7: optional per-conversation BYOK provider/model. Omitted when the picker is untouched
   // ⇒ the backend uses its own default (free Gemini tier). The picker constrains `provider`
   // to the catalog; keep the request schema tolerant (string) so the contract stays loose.
-  provider: z.enum(["gemini", "openai", "anthropic"]).optional(),
+  provider: ProviderSchema.optional(),
   model: z.string().optional(),
 });
 
@@ -84,10 +85,16 @@ export type SseToken = z.infer<typeof SseTokenSchema>;
  * UI renders no provenance badge. Kept tolerant: an unknown future layer is dropped at the
  * field level (`.optional().catch(undefined)`) rather than failing the whole frame.
  */
-export const SseLayerSchema = z
-  .enum(["vector", "graph", "web", "memory"])
-  .optional()
-  .catch(undefined);
+/**
+ * The retrieval-layer catalog as a bare enum — the SINGLE SOURCE for the four layer literals.
+ * Consumers that need the strict enum (component.schemas' citation `layer`) reuse this; the wire
+ * gate below wraps it tolerantly. `SSE_LAYERS` exposes the runtime list so a hooks file can
+ * iterate the layers without re-spelling them.
+ */
+export const SseLayerEnum = z.enum(["vector", "graph", "web", "memory"]);
+export const SSE_LAYERS = SseLayerEnum.options;
+
+export const SseLayerSchema = SseLayerEnum.optional().catch(undefined);
 export type SseLayer = z.infer<typeof SseLayerSchema>;
 
 /**
@@ -147,14 +154,15 @@ export type SseDone = z.infer<typeof SseDoneSchema>;
  * The component catalog discriminant (09 Appendix C). Exactly these six types; a `type`
  * outside the catalog is dropped (never thrown) so an unknown block degrades to prose-only.
  */
-export const SseComponentTypeSchema = z.enum([
+export const COMPONENT_TYPES = [
   "table",
   "chart",
   "citation",
   "code",
   "callout",
   "media",
-]);
+] as const;
+export const SseComponentTypeSchema = z.enum(COMPONENT_TYPES);
 export type SseComponentType = z.infer<typeof SseComponentTypeSchema>;
 
 /**

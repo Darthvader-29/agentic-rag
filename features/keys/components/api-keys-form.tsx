@@ -5,6 +5,8 @@ import { Check, KeyRound, Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { FormError } from "@/components/ui/form-error";
+import { firstIssueMessage } from "@/lib/zod-error";
 import {
   Card,
   CardContent,
@@ -50,7 +52,7 @@ function ProviderKeyRow({
       api_key: value.trim(),
     });
     if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? "Enter a valid key.");
+      setError(firstIssueMessage(parsed.error, "Enter a valid key."));
       return;
     }
     setError(null);
@@ -121,11 +123,7 @@ function ProviderKeyRow({
             </Button>
           )}
         </div>
-        {error && (
-          <p role="alert" className="text-destructive text-sm">
-            {error}
-          </p>
-        )}
+        <FormError message={error} />
       </CardContent>
     </Card>
   );
@@ -149,11 +147,13 @@ export function ApiKeysForm() {
           <Loader2 className="h-4 w-4 animate-spin" /> Loading your keys…
         </p>
       )}
-      {isError && (
-        <p role="alert" className="text-destructive text-sm">
-          Could not load your stored keys. You can still add a new one below.
-        </p>
-      )}
+      <FormError
+        message={
+          isError
+            ? "Could not load your stored keys. You can still add a new one below."
+            : null
+        }
+      />
       {PROVIDERS.map((p) => (
         <ProviderKeyRow
           key={p.provider}

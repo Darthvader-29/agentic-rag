@@ -22,8 +22,10 @@ import { Network, RefreshCw, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { AsyncPanel } from "@/components/async-panel";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { useKnowledgeGraph } from "@/features/knowledge-graph/hooks/use-knowledge-graph";
+import { PanelStateMessage } from "@/features/knowledge-graph/components/panel-state-message";
 import type { GraphData } from "@/features/knowledge-graph/api/graph.schemas";
 
 // force-graph mutates nodes/links in place (adds x/y; resolves source/target to node objects), so
@@ -137,110 +139,101 @@ export default function GraphPanel({ sessionId }: GraphPanelProps) {
     [graph]
   );
 
-  // Disabled (flag off / no session): render nothing so the drawer collapses cleanly.
-  if (!enabled) return null;
-
-  if (isLoading) {
-    return (
-      <div aria-label="Knowledge graph" aria-busy="true">
-        <GraphSkeleton />
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <GraphShell ariaLabel="Knowledge graph">
-        <TriangleAlert className="h-5 w-5" aria-hidden="true" />
-        <span>Couldn&apos;t load the knowledge graph.</span>
-        <Button
-          variant="outline"
-          size="sm"
-          className="mt-1 gap-1"
-          onClick={() => refetch()}
-        >
-          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-          Retry
-        </Button>
-      </GraphShell>
-    );
-  }
-
-  if (graph.nodes.length === 0) {
-    return (
-      <GraphShell ariaLabel="Knowledge graph">
-        <Network className="h-5 w-5" aria-hidden="true" />
-        <span>
-          No knowledge graph yet — it grows as documents are ingested.
-        </span>
-        <Button
-          variant="outline"
-          size="sm"
-          className="mt-1 gap-1"
-          onClick={() => refetch()}
-        >
-          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-          Refresh
-        </Button>
-      </GraphShell>
-    );
-  }
-
+  // disabled → loading → error → empty → data ladder (shared branch order via <AsyncPanel>). Each
+  // slot keeps this panel's own chrome verbatim (bare aria-busy div + GraphSkeleton for loading,
+  // the dashed GraphShell + PanelStateMessage for error/empty, the bespoke <section> + canvas for
+  // data), so the rendered markup/aria are unchanged — only the duplicated branch sequence is
+  // hoisted out. `disabled` reproduces the old `if (!enabled) return null` guard exactly.
   return (
-    <section aria-label="Knowledge graph" className="flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
-          <Network className="h-3.5 w-3.5" aria-hidden="true" />
-          {graph.nodes.length} entities · {graph.links.length} relations
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          aria-label="Refresh knowledge graph"
-          onClick={() => refetch()}
-        >
-          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-        </Button>
-      </div>
-
-      <div
-        ref={containerRef}
-        className={cn(
-          "border-border bg-muted/20 overflow-hidden rounded-lg border"
-        )}
-        style={{ height: PANEL_HEIGHT }}
-      >
-        {width > 0 && (
-          <ForceGraph2D
-            width={width}
-            height={PANEL_HEIGHT}
-            graphData={graph}
-            nodeId="id"
-            nodeRelSize={NODE_REL_SIZE}
-            // Label = entity id (shown on hover).
-            nodeLabel={(n: FGNode) => String(n.id ?? "")}
-            // Size by degree: 1 + degree, so isolated nodes are still visible.
-            nodeVal={(n: FGNode) => 1 + (degree.get(String(n.id ?? "")) ?? 0)}
-            // Color by degree (cool → warm).
-            nodeColor={(n: FGNode) =>
-              degreeColor(degree.get(String(n.id ?? "")) ?? 0, maxDegree)
-            }
-            // Link label = relation (falls back to nothing when absent).
-            linkLabel={(l: FGLink) =>
-              typeof l.relation === "string" ? l.relation : ""
-            }
-            linkDirectionalArrowLength={3}
-            linkDirectionalArrowRelPos={1}
-            linkColor={() => "hsl(215 16% 47% / 0.4)"}
-            enableNodeDrag={!reducedMotion}
-            // Reduced motion: settle the simulation in one synchronous pass (no animated layout).
-            warmupTicks={reducedMotion ? 60 : 0}
-            cooldownTicks={reducedMotion ? 0 : undefined}
-            cooldownTime={reducedMotion ? 0 : undefined}
+    <AsyncPanel
+      disabled={!enabled}
+      isLoading={isLoading}
+      isError={isError}
+      isEmpty={graph.nodes.length === 0}
+      renderLoading={() => (
+        <div aria-label="Knowledge graph" aria-busy="true">
+          <GraphSkeleton />
+        </div>
+      )}
+      renderError={() => (
+        <GraphShell ariaLabel="Knowledge graph">
+          <PanelStateMessage
+            icon={<TriangleAlert className="h-5 w-5" aria-hidden="true" />}
+            message="Couldn't load the knowledge graph."
+            actionLabel="Retry"
+            onAction={() => refetch()}
           />
-        )}
-      </div>
-    </section>
+        </GraphShell>
+      )}
+      renderEmpty={() => (
+        <GraphShell ariaLabel="Knowledge graph">
+          <PanelStateMessage
+            icon={<Network className="h-5 w-5" aria-hidden="true" />}
+            message="No knowledge graph yet — it grows as documents are ingested."
+            actionLabel="Refresh"
+            onAction={() => refetch()}
+          />
+        </GraphShell>
+      )}
+      renderData={() => (
+        <section aria-label="Knowledge graph" className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
+              <Network className="h-3.5 w-3.5" aria-hidden="true" />
+              {graph.nodes.length} entities · {graph.links.length} relations
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              aria-label="Refresh knowledge graph"
+              onClick={() => refetch()}
+            >
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </div>
+
+          <div
+            ref={containerRef}
+            className={cn(
+              "border-border bg-muted/20 overflow-hidden rounded-lg border"
+            )}
+            style={{ height: PANEL_HEIGHT }}
+          >
+            {width > 0 && (
+              <ForceGraph2D
+                width={width}
+                height={PANEL_HEIGHT}
+                graphData={graph}
+                nodeId="id"
+                nodeRelSize={NODE_REL_SIZE}
+                // Label = entity id (shown on hover).
+                nodeLabel={(n: FGNode) => String(n.id ?? "")}
+                // Size by degree: 1 + degree, so isolated nodes are still visible.
+                nodeVal={(n: FGNode) =>
+                  1 + (degree.get(String(n.id ?? "")) ?? 0)
+                }
+                // Color by degree (cool → warm).
+                nodeColor={(n: FGNode) =>
+                  degreeColor(degree.get(String(n.id ?? "")) ?? 0, maxDegree)
+                }
+                // Link label = relation (falls back to nothing when absent).
+                linkLabel={(l: FGLink) =>
+                  typeof l.relation === "string" ? l.relation : ""
+                }
+                linkDirectionalArrowLength={3}
+                linkDirectionalArrowRelPos={1}
+                linkColor={() => "hsl(215 16% 47% / 0.4)"}
+                enableNodeDrag={!reducedMotion}
+                // Reduced motion: settle the simulation in one synchronous pass (no animated layout).
+                warmupTicks={reducedMotion ? 60 : 0}
+                cooldownTicks={reducedMotion ? 0 : undefined}
+                cooldownTime={reducedMotion ? 0 : undefined}
+              />
+            )}
+          </div>
+        </section>
+      )}
+    />
   );
 }

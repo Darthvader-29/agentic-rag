@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import dynamic from "next/dynamic";
 import { m } from "framer-motion";
@@ -10,10 +10,10 @@ import { Bot, User } from "lucide-react";
 import { Message } from "@/types";
 import { cn } from "@/lib/utils";
 import { flags } from "@/lib/flags";
+import { markdownComponents } from "@/lib/markdown/components";
 import { messageVariants, reduceVariants, layoutSpring } from "@/lib/motion";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { CodeBlock } from "@/features/chat/components/code-block";
 import { RouteBadge } from "@/features/chat/components/route-badge";
 import { ThinkingSteps } from "@/features/chat/components/thinking-steps";
 import { SourcesPanel } from "@/features/chat/components/sources-panel";
@@ -31,45 +31,6 @@ const StatsPanel = dynamic(
   () => import("@/features/chat/components/stats-panel"),
   { ssr: false }
 );
-
-// Module-scope stable map — ReactMarkdown does not rebuild its renderer tree
-// on each streamed token (M9) or parent re-render.
-const markdownComponents: Components = {
-  code({ className, children, ...props }) {
-    const match = /language-(\w+)/.exec(className ?? "");
-    const isInline = !match;
-    if (isInline) {
-      return (
-        <code
-          className="bg-muted text-foreground rounded px-1 py-0.5 font-mono text-xs"
-          {...props}
-        >
-          {children}
-        </code>
-      );
-    }
-    return (
-      <CodeBlock
-        language={match?.[1]}
-        value={String(children).replace(/\n$/, "")}
-      />
-    );
-  },
-  a: ({ children, ...props }) => (
-    <a
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-primary underline-offset-2 hover:underline"
-      {...props}
-    >
-      {children}
-    </a>
-  ),
-  ul: ({ ...props }) => <ul className="list-disc space-y-1 pl-4" {...props} />,
-  ol: ({ ...props }) => (
-    <ol className="list-decimal space-y-1 pl-4" {...props} />
-  ),
-};
 
 interface ChatMessageProps {
   message: Message;

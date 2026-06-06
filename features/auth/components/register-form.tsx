@@ -4,10 +4,12 @@ import { useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FormError } from "@/components/ui/form-error";
 import { useRegister } from "@/features/auth/hooks/use-register";
 import { useUpgrade } from "@/features/auth/hooks/use-upgrade";
 import { useAuth } from "@/features/auth/hooks/use-auth";
 import { RegisterRequestSchema } from "@/features/auth/api/auth.schemas";
+import { firstIssueMessage } from "@/lib/zod-error";
 
 /**
  * Create-account form. If the visitor is currently a GUEST, submitting upgrades the same
@@ -33,7 +35,7 @@ export function RegisterForm() {
       password,
     });
     if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? "Check your details.");
+      setError(firstIssueMessage(parsed.error, "Check your details."));
       return;
     }
     setError(null);
@@ -80,11 +82,7 @@ export function RegisterForm() {
           aria-invalid={Boolean(error)}
         />
       </div>
-      {error && (
-        <p role="alert" className="text-destructive text-sm">
-          {error}
-        </p>
-      )}
+      <FormError message={error} />
       <Button type="submit" className="w-full" disabled={pending}>
         {pending ? "Creating…" : "Create account"}
       </Button>

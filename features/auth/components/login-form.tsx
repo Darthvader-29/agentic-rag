@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FormError } from "@/components/ui/form-error";
 import { useLogin } from "@/features/auth/hooks/use-login";
 import { LoginRequestSchema } from "@/features/auth/api/auth.schemas";
 
@@ -52,11 +53,7 @@ export function LoginForm() {
           aria-invalid={Boolean(error)}
         />
       </div>
-      {error && (
-        <p role="alert" className="text-destructive text-sm">
-          {error}
-        </p>
-      )}
+      <FormError message={error} />
       <Button type="submit" className="w-full" disabled={login.isPending}>
         {login.isPending ? "Signing in…" : "Sign in"}
       </Button>

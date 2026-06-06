@@ -53,13 +53,3 @@ export const TokenPairSchema = z.object({
   user_id: z.string().optional(),
 });
 export type TokenPair = z.infer<typeof TokenPairSchema>;
-
-// Optional UserOut shape — Phase 6 login/register do not echo a user object, but a
-// future backend (or /auth/me) might. Kept so identity typing is stable; unused on the
-// happy path (the store derives identity from the typed email + guest user_id).
-export const UserSchema = z.object({
-  id: z.string(),
-  email: z.string().email(),
-  username: z.string(),
-});
-export type User = z.infer<typeof UserSchema>;

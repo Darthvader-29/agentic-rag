@@ -13,10 +13,19 @@
 // and DROP anything that doesn't match, mirroring the backend's "invalid block dropped, never a
 // 500" rule (09 §5 / M10 §2.5). This is the only place the renderer trusts a spec's shape.
 import { z } from "zod";
+import {
+  COMPONENT_TYPES,
+  SseLayerEnum,
+} from "@/features/chat/api/chat.schemas";
+
+// Single-source the 6 catalog discriminants from chat.schemas' COMPONENT_TYPES (the loose wire
+// gate's enum is derived from the SAME const), so the type names are spelled exactly once. Indexed
+// access keeps each `z.literal(...)` a precise literal type for the discriminated union below.
+const T = COMPONENT_TYPES;
 
 /** SYNC 09 Appendix C — table: {"type":"table","columns":[...],"rows":[[...],[...]]}. */
 export const tableSchema = z.object({
-  type: z.literal("table"),
+  type: z.literal(T[0]),
   columns: z.array(z.string()),
   // Cells are scalars; coerce-tolerant (string|number|boolean|null) and rendered as text only.
   rows: z.array(
@@ -31,7 +40,7 @@ export const chartSeriesSchema = z.object({
   y: z.array(z.number()),
 });
 export const chartSchema = z.object({
-  type: z.literal("chart"),
+  type: z.literal(T[1]),
   // Appendix C shows "bar"; line/area are reasonable supersets the renderer also handles.
   chart: z.enum(["bar", "line", "pie", "area"]).default("bar"),
   x: z.array(z.union([z.string(), z.number()])),
@@ -50,19 +59,16 @@ export const citationItemSchema = z.object({
   // legacy-safe — absent on the pre-Phase-7 contract ⇒ no provenance badge. Tolerant at the
   // field level (`.catch(undefined)`) so an unknown future layer drops to undefined instead of
   // failing the whole citation block (which would silently suppress provenance).
-  layer: z
-    .enum(["vector", "graph", "web", "memory"])
-    .optional()
-    .catch(undefined),
+  layer: SseLayerEnum.optional().catch(undefined),
 });
 export const citationSchema = z.object({
-  type: z.literal("citation"),
+  type: z.literal(T[2]),
   items: z.array(citationItemSchema).min(1),
 });
 
 /** SYNC 09 Appendix C — callout: {"type":"callout","level":"info"|"warning"|"tip","text":...}. */
 export const calloutSchema = z.object({
-  type: z.literal("callout"),
+  type: z.literal(T[4]),
   level: z.enum(["info", "warning", "tip"]).default("info"),
   text: z.string(),
   title: z.string().optional(),
@@ -70,7 +76,7 @@ export const calloutSchema = z.object({
 
 /** SYNC ASSUMED (09 §9 open; M10 §2.4) — code: {"type":"code","language":...,"code":...}. */
 export const codeSchema = z.object({
-  type: z.literal("code"),
+  type: z.literal(T[3]),
   language: z.string().optional(),
   code: z.string(),
 });
@@ -82,7 +88,7 @@ export const mediaItemSchema = z.object({
   caption: z.string().optional(),
 });
 export const mediaSchema = z.object({
-  type: z.literal("media"),
+  type: z.literal(T[5]),
   items: z.array(mediaItemSchema).min(1),
 });
 

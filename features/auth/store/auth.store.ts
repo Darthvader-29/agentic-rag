@@ -10,8 +10,8 @@
 // lightweight identity — the typed `email` and, for a freshly minted guest, `userId` +
 // `isGuest`. `hasHydrated` lets the guard / bootstrap wait for rehydration before acting.
 import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
 import type { TokenPair } from "@/features/auth/api/auth.schemas";
+import { persistLocal, STORAGE_KEYS } from "@/lib/store/persist";
 
 interface AuthState {
   accessToken: string | null;
@@ -32,8 +32,15 @@ interface AuthState {
   setHasHydrated: (v: boolean) => void;
 }
 
+/** Subset of AuthState written to localStorage (see `partialize` below). */
+type PersistedAuth = Pick<
+  AuthState,
+  "accessToken" | "refreshToken" | "userId" | "email" | "isGuest"
+>;
+
 export const useAuthStore = create<AuthState>()(
-  persist(
+  persistLocal<AuthState, PersistedAuth>(
+    STORAGE_KEYS.auth,
     (set) => ({
       accessToken: null,
       refreshToken: null,
@@ -64,8 +71,6 @@ export const useAuthStore = create<AuthState>()(
       setHasHydrated: (v) => set({ hasHydrated: v }),
     }),
     {
-      name: "rag_auth",
-      storage: createJSONStorage(() => localStorage),
       // Persist identity + tokens; never persist the transient hydration flag.
       partialize: (s) => ({
         accessToken: s.accessToken,

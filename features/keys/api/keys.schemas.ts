@@ -11,6 +11,7 @@
 // raw key is write-only (last4 is the sole hint the backend returns). Schemas are tolerant
 // (label / last4 / created_at optional) so a leaner backend response still validates.
 import { z } from "zod";
+import { coercedId } from "@/lib/zod";
 
 /**
  * The three BYOK providers the backend's multi-provider LLM abstraction supports
@@ -40,7 +41,7 @@ export type SaveKeyRequest = z.infer<typeof SaveKeyRequestSchema>;
  * (when present) is the only display hint. `created_at` is an ISO string when present.
  */
 export const KeyMetaSchema = z.object({
-  id: z.union([z.string(), z.number()]).transform(String),
+  id: coercedId,
   provider: ProviderSchema,
   label: z.string().optional(),
   last4: z.string().optional(),
@@ -53,7 +54,7 @@ export type KeyList = z.infer<typeof KeyListSchema>;
 
 /** POST/PUT echo — the saved key's id + provider (the secret is never returned). */
 export const SaveKeyResponseSchema = z.object({
-  id: z.union([z.string(), z.number()]).transform(String),
+  id: coercedId,
   provider: ProviderSchema,
 });
 export type SaveKeyResponse = z.infer<typeof SaveKeyResponseSchema>;

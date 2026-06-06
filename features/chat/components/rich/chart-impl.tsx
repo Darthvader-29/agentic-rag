@@ -41,6 +41,18 @@ function color(i: number): string {
   return SERIES_COLORS[i % SERIES_COLORS.length];
 }
 
+// Shared recharts Tooltip + Legend styling. Identical for the axes-based charts (line/area/bar)
+// and the pie chart, so both live in one place and are referenced from both branches.
+const TOOLTIP_CONTENT_STYLE = {
+  background: "var(--color-popover)",
+  border: "1px solid var(--color-border)",
+  borderRadius: 8,
+  color: "var(--color-popover-foreground)",
+  fontSize: 12,
+} as const;
+
+const LEGEND_WRAPPER_STYLE = { fontSize: 12 } as const;
+
 /** Pivot {x, series[]} → recharts row objects: [{ x, [seriesName]: y }]. */
 function toRows(spec: ChartSpec): Array<Record<string, string | number>> {
   return spec.x.map((label, i) => {
@@ -56,7 +68,7 @@ function toRows(spec: ChartSpec): Array<Record<string, string | number>> {
 function toPieData(spec: ChartSpec): Array<{ name: string; value: number }> {
   const first = spec.series[0];
   return spec.x.map((label, i) => ({
-    name: typeof label === "number" ? String(label) : String(label),
+    name: String(label),
     value: first.y[i] ?? 0,
   }));
 }
@@ -75,16 +87,8 @@ export default function ChartImpl({ spec }: { spec: ChartSpec }) {
         tick={{ fontSize: 12, fill: "var(--color-muted-foreground)" }}
       />
       <YAxis tick={{ fontSize: 12, fill: "var(--color-muted-foreground)" }} />
-      <Tooltip
-        contentStyle={{
-          background: "var(--color-popover)",
-          border: "1px solid var(--color-border)",
-          borderRadius: 8,
-          color: "var(--color-popover-foreground)",
-          fontSize: 12,
-        }}
-      />
-      <Legend wrapperStyle={{ fontSize: 12 }} />
+      <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} />
+      <Legend wrapperStyle={LEGEND_WRAPPER_STYLE} />
     </>
   );
 
@@ -121,16 +125,8 @@ export default function ChartImpl({ spec }: { spec: ChartSpec }) {
         </AreaChart>
       ) : spec.chart === "pie" ? (
         <PieChart>
-          <Tooltip
-            contentStyle={{
-              background: "var(--color-popover)",
-              border: "1px solid var(--color-border)",
-              borderRadius: 8,
-              color: "var(--color-popover-foreground)",
-              fontSize: 12,
-            }}
-          />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} />
+          <Legend wrapperStyle={LEGEND_WRAPPER_STYLE} />
           <Pie
             data={pieData}
             dataKey="value"

@@ -13,6 +13,7 @@
 // an empty/partial render instead of an error. Node ids are coerced to string (force-graph keys
 // nodes by id) and any extra per-node/per-link fields are passed through untouched.
 import { z } from "zod";
+import { coercedId } from "@/lib/zod";
 
 /**
  * One graph node. `id` is the entity identifier (string label shown on the node). networkx may
@@ -21,7 +22,7 @@ import { z } from "zod";
  */
 export const GraphNodeSchema = z
   .object({
-    id: z.union([z.string(), z.number()]).transform(String),
+    id: coercedId,
   })
   .passthrough();
 export type GraphNode = z.infer<typeof GraphNodeSchema>;
@@ -33,8 +34,8 @@ export type GraphNode = z.infer<typeof GraphNodeSchema>;
  */
 export const GraphLinkSchema = z
   .object({
-    source: z.union([z.string(), z.number()]).transform(String),
-    target: z.union([z.string(), z.number()]).transform(String),
+    source: coercedId,
+    target: coercedId,
     relation: z.string().optional(),
     doc_id: z.string().optional(),
   })
@@ -55,14 +56,12 @@ export const GraphResponseSchema = z
 export type GraphResponse = z.infer<typeof GraphResponseSchema>;
 
 /**
- * The shape react-force-graph-2d's `graphData` prop consumes directly. Identical to the parsed
- * response's `{ nodes, links }`; named separately so the hook/component depend on the consumer
- * contract, not the wire envelope.
+ * The shape react-force-graph-2d's `graphData` prop consumes directly. DERIVED from the parsed
+ * response's `{ nodes, links }` (the `.default([])` outputs make both keys present + non-optional),
+ * so it can't drift from the wire envelope; named separately so the hook/component depend on the
+ * consumer contract, not the full envelope.
  */
-export interface GraphData {
-  nodes: GraphNode[];
-  links: GraphLink[];
-}
+export type GraphData = Pick<GraphResponse, "nodes" | "links">;
 
 /** The canonical empty graph (404 / disabled / pre-fetch). */
 export const EMPTY_GRAPH: GraphData = { nodes: [], links: [] };

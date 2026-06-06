@@ -1,20 +1,20 @@
 import { z } from "zod";
 
-const FeatureFlag = z
-  .enum(["true", "false"])
-  .default("false")
-  .transform((v) => v === "true");
+// A boolean feature flag parsed from the "true"/"false" env string, defaulting per call site.
+// Default-OFF flags ship dark; default-ON flags (M9 streaming, M7 BYOK, M10 rich components)
+// ship enabled because the matching backend phase is live. An operator can still env-gate a
+// default-ON capability by setting it to "false": STREAMING=false falls back to the blocking
+// path (the useChat facade switches strategies on the flag); BYOK=false hides the Settings
+// route, picker, disclaimer, and upsell (chat falls back to the free tier); RICH_COMPONENTS=false
+// degrades each block to a collapsed raw-JSON fallback.
+const featureFlag = (defaultOn: boolean) =>
+  z
+    .enum(["true", "false"])
+    .default(defaultOn ? "true" : "false")
+    .transform((v) => v === "true");
 
-// Default-ON flags (M9 streaming, M7 BYOK, M10 rich components): the matching backend phase
-// is live, so these capabilities ship enabled. An operator can still keep one env-gated by
-// setting it to "false": STREAMING=false falls back to the blocking path (the useChat facade
-// switches strategies on the flag); BYOK=false hides the Settings route, picker, disclaimer,
-// and upsell (chat falls back to the free tier); RICH_COMPONENTS=false degrades each block to
-// a collapsed raw-JSON fallback.
-const FeatureFlagDefaultOn = z
-  .enum(["true", "false"])
-  .default("true")
-  .transform((v) => v === "true");
+const FeatureFlag = featureFlag(false);
+const FeatureFlagDefaultOn = featureFlag(true);
 
 const envSchema = z.object({
   NEXT_PUBLIC_API_URL: z.string().url().default("http://localhost:8000/api"),
