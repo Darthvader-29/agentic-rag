@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dynamic RAG Engine</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <!-- ── Auth overlay (shown when not logged in) ───────────────────────── -->
+  <div class="auth-overlay" id="auth-overlay">
+    <div class="auth-card">
+      <h2 id="auth-title">Sign in</h2>
+
+      <div class="auth-tabs">
+        <button class="tab-btn active" id="tab-login" onclick="switchTab('login')">Login</button>
+        <button class="tab-btn" id="tab-register" onclick="switchTab('register')">Register</button>
+      </div>
+
+      <form id="auth-form" onsubmit="handleAuth(event)">
+        <div id="register-fields" style="display:none">
+          <input class="auth-input" id="username" type="text" placeholder="Username" autocomplete="username" />
+        </div>
+        <input class="auth-input" id="email" type="email" placeholder="Email" autocomplete="email" required />
+        <input class="auth-input" id="password" type="password" placeholder="Password" autocomplete="current-password" required />
+        <p class="auth-error" id="auth-error"></p>
+        <button class="auth-submit" type="submit" id="auth-submit-btn">Sign in</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Main chat UI (hidden until logged in) ─────────────────────────── -->
+  <div class="app-container" id="app-container" style="display:none">
+    <div class="chat-header">
+      <span id="user-label"></span>
+      <button class="logout-btn" onclick="logout()">Sign out</button>
+    </div>
+
+    <div class="chat-window" id="chat-window">
+      <!-- Messages appended here -->
+    </div>
+
+    <div class="input-bar">
+      <button id="upload-btn">📄 Upload</button>
+
+      <label class="toggle">
+        <input type="checkbox" id="web-toggle" checked />
+        <span>Web Search</span>
+      </label>
+
+      <input
+        id="user-input"
+        type="text"
+        placeholder="Type your question..."
+        autocomplete="off"
+      />
+
+      <button id="send-btn">➤</button>
+    </div>
+  </div>
+
+  <input id="file-input" type="file" accept=".pdf,.docx" style="display:none" />
+
+  <script src="/static/script.js"></script>
+</body>
+</html>

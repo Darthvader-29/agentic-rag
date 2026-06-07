@@ -1,0 +1,136 @@
+[project]
+name = "agentic-rag-backend"
+version = "1.0.0"
+description = "Multi-agent RAG backend (FastAPI, Pinecone, S3, Gemini)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "pydantic[email]",
+    "pydantic-settings",
+    "python-dotenv",
+    "structlog",
+    "google-generativeai",
+    "pinecone",
+    "boto3",
+    "httpx",
+    "requests",
+    "huggingface_hub",
+    "numpy",
+    "langchain-text-splitters",
+    "langgraph",
+    "openai",
+    "tenacity",
+    "python-docx",
+    "pymupdf",
+    "duckduckgo-search",
+    "sqlalchemy>=2.0.50",
+    "alembic>=1.18.4",
+    "asyncpg>=0.31.0",
+    "cryptography>=48.0.0",
+    "pyjwt>=2.13.0",
+    "bcrypt>=5.0.0",
+    "anthropic>=0.105.2",
+    "google-genai>=2.7.0",
+    "redis>=8.0.0",
+    "celery>=5.6.3",
+    "slowapi>=0.1.9",
+    "opentelemetry-api>=1.42.1",
+    "opentelemetry-sdk>=1.42.1",
+    "opentelemetry-exporter-otlp>=1.42.1",
+    "opentelemetry-instrumentation-fastapi>=0.63b1",
+    "opentelemetry-instrumentation-sqlalchemy>=0.63b1",
+    "opentelemetry-instrumentation-redis>=0.63b1",
+    "opentelemetry-instrumentation-celery>=0.63b1",
+    "networkx>=3.6.1",
+    "langfuse>=4.7.1",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pre-commit",
+    "fakeredis>=2.36.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["."]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"test/*" = ["F401", "F811", "B017"]
+"test/**/*" = ["F401", "F811", "B017"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+mypy_path = "."
+explicit_package_bases = true
+namespace_packages = true
+follow_imports = "silent"
+
+[[tool.mypy.overrides]]
+# pydantic-settings: mypy doesn't understand that Settings() reads from env — false positive
+module = ["config"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# google-generativeai stubs are incomplete (GenerationConfigDict not typed) — tech debt
+module = ["components.generation"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# google-generativeai Client API stubs incomplete; anyio.to_thread not fully typed
+module = ["llm.gemini", "llm._prompts", "llm.base", "llm.dependencies"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# FastAPI exception handler overload + UploadFile.filename nullability — tech debt
+module = ["app"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# bcrypt stubs don't cover all internal types — tech debt
+module = ["bcrypt"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# tenacity stubs don't support @retry(**dict) spread (call-overload false positive) — tech debt:
+# revisit when tenacity stubs gain generic overload support or switch to explicit kwargs
+module = [
+    "database.db_manager",
+    "integrations.s3.client",
+    "integrations.huggingface.client",
+    "integrations.duckduckgo.client",
+]
+ignore_errors = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["test"]
+# Coverage baseline: 83 (Phase 7, measured 2026-06-04, with TEST_DATABASE_URL → 83.57%). Ratchet
+# upward only. The DB-gated tests must run (TEST_DATABASE_URL set) to reach this floor; CI without a
+# DB stays at the lower 72 floor in the Jenkinsfile.
+addopts = "-q --cov-fail-under=83"
+
+[tool.coverage.run]
+branch = true
+source = ["app", "config", "exceptions", "logging_config", "components", "database", "integrations", "auth", "llm", "worker", "observability", "memory"]
+omit = ["test/*"]
+
+[tool.coverage.report]
+show_missing = true
