@@ -35,6 +35,7 @@ async def retrieve_vector(
     pinecone: PineconeClient,
     embedder: HuggingFaceClient,
     *,
+    user_id: str | None = None,
     top_k: int = RELEVANCE_TOP_K,
     threshold: float = RAG_THRESHOLD,
 ) -> tuple[list[str], bool]:
@@ -48,7 +49,7 @@ async def retrieve_vector(
     try:
         query_embedding = await embedder.embed_single(query)
         results = await pinecone.search_vectors(
-            query_vector=query_embedding, top_k=top_k, session_id=session_id
+            query_vector=query_embedding, top_k=top_k, session_id=session_id, user_id=user_id
         )
     except Exception:
         logger.error("vector_retrieval_failed", exc_info=True)

@@ -36,6 +36,7 @@ async def process_file_pipeline(
     embedder: "HuggingFaceClient",
     pinecone: "PineconeClient",
     session_factory,
+    user_id: str | None = None,
 ) -> str:
     """
     1. Mark document PROCESSING in Postgres
@@ -100,6 +101,9 @@ async def process_file_pipeline(
                     "session_id": session_id,
                     "chunk_index": i,
                     "s3_key": file_key,
+                    # Tenant scoping: stamp the owner so search can filter by user_id. Pinecone
+                    # rejects null metadata, so only set it when the owner is known.
+                    **({"user_id": user_id} if user_id else {}),
                 },
             }
             for i, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=False))

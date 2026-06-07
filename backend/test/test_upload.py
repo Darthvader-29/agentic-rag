@@ -140,7 +140,7 @@ def test_confirm_409_when_object_missing(up_client, fake_user):
     with (
         patch("app.repo.get_document", new_callable=AsyncMock, return_value=_doc()),
         patch("app.repo.get_session", new_callable=AsyncMock, return_value=owned_session),
-        patch("app.repo.set_document_status", new_callable=AsyncMock) as mark,
+        patch("app.repo.set_document_status_by_id", new_callable=AsyncMock) as mark,
         patch.object(app_module, "ingest_document") as task,
     ):
         resp = client.post(
@@ -176,6 +176,30 @@ def test_confirm_404_when_not_owner(up_client):
             json={"document_id": "doc-123", "s3_key": "k"},
         )
     assert resp.status_code == 404
+
+
+def test_confirm_ignores_client_s3_key_and_uses_owned_doc(up_client, fake_user):
+    """C2: the existence probe + ingest derive from the OWNED document's s3_key, never the
+    client-supplied one — a forged s3_key cannot probe/ingest another tenant's object."""
+    client, fake_s3 = up_client
+    owned_session = MagicMock()
+    owned_session.user_id = fake_user.id
+    doc = _doc(s3_key="uploads/owner/real.pdf")
+    with (
+        patch("app.repo.get_document", new_callable=AsyncMock, return_value=doc),
+        patch("app.repo.get_session", new_callable=AsyncMock, return_value=owned_session),
+        patch.object(app_module, "ingest_document") as task,
+    ):
+        resp = client.post(
+            "/api/upload/confirm",
+            json={"document_id": "doc-123", "s3_key": "uploads/victim/secret.pdf"},
+        )
+
+    assert resp.status_code == 200
+    # the forged body s3_key is ignored; doc.s3_key is authoritative
+    fake_s3.object_exists.assert_awaited_once_with("uploads/owner/real.pdf")
+    assert task.delay.call_args.kwargs["s3_key"] == "uploads/owner/real.pdf"
+    assert task.delay.call_args.kwargs["user_id"] == str(fake_user.id)
 
 
 # ── document status poll ───────────────────────────────────────────────────────

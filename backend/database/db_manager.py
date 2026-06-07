@@ -67,12 +67,24 @@ class PineconeClient:
 
     @retry(**_RETRY)
     def _search_vectors_sync(
-        self, query_vector: list[float], top_k: int = 5, session_id: str | None = None
+        self,
+        query_vector: list[float],
+        top_k: int = 5,
+        session_id: str | None = None,
+        user_id: str | None = None,
     ) -> list[dict]:
         index = self._index_or_raise()
         params: dict = {"vector": query_vector, "top_k": top_k, "include_metadata": True}
+        # Tenant scoping: filter by session_id AND user_id (defense-in-depth — the DB ownership
+        # check already gates which session_id a caller may search). Vectors written before this
+        # change carry no user_id and won't match a user_id filter; that is the accepted tradeoff.
+        flt: dict = {}
         if session_id:
-            params["filter"] = {"session_id": {"$eq": session_id}}
+            flt["session_id"] = {"$eq": session_id}
+        if user_id:
+            flt["user_id"] = {"$eq": user_id}
+        if flt:
+            params["filter"] = flt
         results = index.query(**params)
         return [
             {
@@ -85,9 +97,15 @@ class PineconeClient:
         ]
 
     async def search_vectors(
-        self, query_vector: list[float], top_k: int = 5, session_id: str | None = None
+        self,
+        query_vector: list[float],
+        top_k: int = 5,
+        session_id: str | None = None,
+        user_id: str | None = None,
     ) -> list[dict]:
-        return await asyncio.to_thread(self._search_vectors_sync, query_vector, top_k, session_id)
+        return await asyncio.to_thread(
+            self._search_vectors_sync, query_vector, top_k, session_id, user_id
+        )
 
     @retry(**_RETRY)
     def _delete_vectors_sync(self, session_id: str) -> None:

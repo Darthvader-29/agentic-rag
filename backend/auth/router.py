@@ -9,13 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import get_current_user
 from auth.schemas import (
+    AuthTokenPair,
     GuestTokenPair,
     LoginIn,
     RefreshIn,
     RegisterIn,
     TokenPair,
     UpgradeIn,
-    UserOut,
 )
 from auth.security import (
     create_access_token,
@@ -33,11 +33,11 @@ from exceptions import InvalidTokenTypeError
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-@router.post("/register", status_code=201, response_model=UserOut)
+@router.post("/register", status_code=201, response_model=AuthTokenPair)
 async def register(
     body: RegisterIn,
     db: AsyncSession = Depends(get_db_session),
-) -> UserOut:
+) -> AuthTokenPair:
     repo = UserRepository(db)
     if await repo.get_by_email(body.email):
         raise HTTPException(409, "email already registered")
@@ -48,7 +48,14 @@ async def register(
         username=body.username,
         hashed_password=hash_password(body.password),
     )
-    return UserOut.model_validate(user)
+    # Phase 6: registration mints a NON-guest token pair (the frontend signs the user straight in
+    # and validates a TokenPair). user_id lets the client persist the new identity.
+    sub = str(user.id)
+    return AuthTokenPair(
+        access_token=create_access_token(sub),
+        refresh_token=create_refresh_token(sub),
+        user_id=sub,
+    )
 
 
 @router.post("/guest", status_code=201, response_model=GuestTokenPair)
@@ -76,16 +83,17 @@ async def guest(
     )
 
 
-@router.post("/upgrade", status_code=200, response_model=UserOut)
+@router.post("/upgrade", status_code=200, response_model=AuthTokenPair)
 async def upgrade(
     body: UpgradeIn,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
-) -> UserOut:
+) -> AuthTokenPair:
     """Promote the bearer's guest account to a registered one, in place (Phase 6).
 
     Preserves the user_id, their sessions, and their BYOK keys. Rejects (409) if the caller is
-    already registered, or if the requested email/username is taken by a different user.
+    already registered, or if the requested email/username is taken by a different user. Returns a
+    fresh NON-guest token pair so the client can swap its guest tokens for registered ones.
     """
     if not current_user.is_guest:
         raise HTTPException(409, "account is already registered")
@@ -102,7 +110,12 @@ async def upgrade(
         username=body.username,
         hashed_password=hash_password(body.password),
     )
-    return UserOut.model_validate(user)
+    sub = str(user.id)
+    return AuthTokenPair(
+        access_token=create_access_token(sub),
+        refresh_token=create_refresh_token(sub),
+        user_id=sub,
+    )
 
 
 @router.post("/login", response_model=TokenPair)

@@ -28,7 +28,12 @@ logger = structlog.get_logger(__name__)
 
 
 async def _run_pipeline(
-    document_id: str, s3_key: str, filename: str, session_id: str, settings: Settings
+    document_id: str,
+    s3_key: str,
+    filename: str,
+    session_id: str,
+    user_id: str | None,
+    settings: Settings,
 ) -> None:
     """Build worker-owned clients, run ingestion, then the Phase 7 entity-extraction pass."""
     from components.preprocessing import process_file_pipeline
@@ -43,7 +48,7 @@ async def _run_pipeline(
     pinecone = PineconeClient.from_settings(settings)
     try:
         raw_text = await process_file_pipeline(
-            s3_key, filename, session_id, s3, embedder, pinecone, session_factory
+            s3_key, filename, session_id, s3, embedder, pinecone, session_factory, user_id
         )
         await _maybe_extract_graph(document_id, session_id, raw_text, session_factory, settings)
     finally:
@@ -96,7 +101,9 @@ async def _mark_failed(s3_key: str, settings: Settings) -> None:
 
 
 @celery_app.task(name="worker.tasks.ingest_document")
-def ingest_document(*, document_id: str, s3_key: str, filename: str, session_id: str) -> None:
+def ingest_document(
+    *, document_id: str, s3_key: str, filename: str, session_id: str, user_id: str | None = None
+) -> None:
     settings = Settings()  # type: ignore[call-arg]  # pydantic-settings reads env, not kwargs
     logger.info("ingest_task_start", document_id=document_id, s3_key=s3_key)
     # Phase 7: span nests under the propagated request trace (CeleryInstrumentor carries context).
@@ -104,7 +111,7 @@ def ingest_document(*, document_id: str, s3_key: str, filename: str, session_id:
         span.set_attribute("doc.id", document_id)
         span.set_attribute("session.id", session_id)
         try:
-            asyncio.run(_run_pipeline(document_id, s3_key, filename, session_id, settings))
+            asyncio.run(_run_pipeline(document_id, s3_key, filename, session_id, user_id, settings))
             logger.info("ingest_task_done", document_id=document_id)
         except Exception:
             logger.error("ingest_task_failed", document_id=document_id, exc_info=True)

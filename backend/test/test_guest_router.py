@@ -60,13 +60,17 @@ async def test_upgrade_promotes_same_user_and_preserves_keys(db_session):
         db=db_session,
     )
 
-    # same user_id, now a registered account
-    assert str(out.id) == g.user_id
-    assert out.email == "claimed@example.com"
-    assert out.username == "claimeduser"
+    # Phase 6 contract: upgrade returns a fresh NON-guest token pair for the SAME user_id.
+    assert out.access_token and out.refresh_token
+    assert out.user_id == g.user_id
+    claims = decode_token(out.access_token)
+    assert claims["sub"] == g.user_id
+    assert claims["is_guest"] is False
 
     refreshed = await UserRepository(db_session).get(g.user_id)
     assert refreshed.is_guest is False
+    assert refreshed.email == "claimed@example.com"
+    assert refreshed.username == "claimeduser"
     # key preserved
     key = await LLMKeyRepository(db_session).get(user_id=refreshed.id, provider="gemini")
     assert key is not None and key.ciphertext == "cipher-keep"

@@ -41,6 +41,16 @@ class GuestTokenPair(TokenPair):
     user_id: str
 
 
+class AuthTokenPair(TokenPair):
+    """Register/upgrade response — a token pair plus the user_id.
+
+    Phase 6 mints tokens on register and on guest->registered upgrade (the frontend validates a
+    TokenPair from both), and carries user_id so the client can persist the (possibly new) identity.
+    """
+
+    user_id: str
+
+
 class UserOut(BaseModel):
     id: uuid.UUID
     email: str

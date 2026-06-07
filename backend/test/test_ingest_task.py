@@ -16,7 +16,7 @@ def test_ingest_runs_pipeline_with_args(monkeypatch):
 
     called = {}
 
-    async def fake_run(document_id, s3_key, filename, session_id, settings):
+    async def fake_run(document_id, s3_key, filename, session_id, user_id, settings):
         called["args"] = (s3_key, filename, session_id)
 
     monkeypatch.setattr("worker.tasks._run_pipeline", fake_run)

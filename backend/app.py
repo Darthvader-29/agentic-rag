@@ -194,7 +194,6 @@ class PresignResponse(BaseModel):
 
 class ConfirmRequest(BaseModel):
     document_id: str
-    s3_key: str
 
 
 class DocumentStatusResponse(BaseModel):
@@ -263,12 +262,14 @@ def decide_combined_route(
 
 
 def _session_accessible(session, current_user: User) -> bool:
-    """The shared ownership predicate: the session exists and is either unowned or the caller's.
+    """The shared ownership predicate: the session exists and is owned by the caller.
 
-    Callers layer their own outward behavior on top (return bool / raise 404 / raise 403) — this
-    only unifies the duplicated "unowned OR owned by caller" check, not the error semantics.
+    Unowned (user_id IS NULL) sessions are intentionally NOT accessible. Every session is created
+    with an owner (``_resolve_session`` / ``create_session``), so a NULL owner can only be legacy
+    pre-auth data — we refuse it rather than letting any caller read or silently claim it
+    (tenant-isolation fix). Callers layer their own outward behavior (return bool / 404 / 403).
     """
-    return session is not None and (session.user_id is None or session.user_id == current_user.id)
+    return session is not None and session.user_id == current_user.id
 
 
 async def _resolve_session(db: AsyncSession, session_id: str | None, current_user: User) -> str:
@@ -277,10 +278,10 @@ async def _resolve_session(db: AsyncSession, session_id: str | None, current_use
     existing = await repo.get_session(db, sid)
     if existing is None:
         await repo.create_session(db, sid, current_user.id)
-    elif existing.user_id is not None and existing.user_id != current_user.id:
+    elif existing.user_id != current_user.id:
+        # Includes the legacy NULL-owner case: we refuse it (403) instead of auto-claiming, so a
+        # guessed/leaked session_id can never be adopted by another tenant (tenant-isolation fix).
         raise HTTPException(403, "session does not belong to the current user")
-    elif existing.user_id is None:
-        existing.user_id = current_user.id
     return sid
 
 
@@ -302,7 +303,11 @@ async def _upload_multipart(request: Request, current_user: User, s3: S3Client, 
     doc = await repo.create_document(db, session_id=session_id, s3_key=s3_key, filename=filename)
     await db.commit()  # persist before enqueue so a separate worker can read the row
     ingest_document.delay(
-        document_id=doc.id, s3_key=s3_key, filename=filename, session_id=session_id
+        document_id=doc.id,
+        s3_key=s3_key,
+        filename=filename,
+        session_id=session_id,
+        user_id=str(current_user.id),
     )
     return UploadResponse(
         status="processing",
@@ -367,14 +372,20 @@ async def confirm_upload(
         doc = await repo.get_document(db, payload.document_id)
         if doc is None or not await _owns_document(db, doc, current_user):
             raise HTTPException(404, "document not found")
-        if not await s3.object_exists(payload.s3_key):
-            await repo.set_document_status(db, s3_key=payload.s3_key, status=DocumentStatus.FAILED)
+        # Derive the S3 key from the OWNED document — never trust a client-supplied key. Trusting
+        # payload.s3_key let a caller probe/ingest another tenant's object and flip an arbitrary
+        # document's status by its globally-unique s3_key (tenant-isolation fix).
+        if not await s3.object_exists(doc.s3_key):
+            await repo.set_document_status_by_id(
+                db, document_id=doc.id, status=DocumentStatus.FAILED
+            )
             raise HTTPException(409, "object not uploaded")
         ingest_document.delay(
             document_id=doc.id,
-            s3_key=payload.s3_key,
+            s3_key=doc.s3_key,
             filename=doc.filename,
             session_id=doc.session_id,
+            user_id=str(current_user.id),
         )
         return {"document_id": doc.id, "status": "queued"}
     except (AppException, HTTPException):

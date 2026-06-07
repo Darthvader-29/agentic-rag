@@ -78,9 +78,16 @@ async def test_document_status_persists_in_postgres(db_session):
 
     Real DB round-trip — skipped unless TEST_DATABASE_URL is set (see conftest).
     """
+    from auth.security import hash_password
     from database import repository as repo
+    from database.repository import UserRepository
 
-    await repo.get_or_create_session(db_session, "sess-mi")
+    owner = await UserRepository(db_session).create(
+        email=f"mi-{uuid.uuid4().hex}@t.com",
+        username=f"mi_{uuid.uuid4().hex[:12]}",
+        hashed_password=hash_password("pw"),
+    )
+    await repo.get_or_create_session(db_session, "sess-mi", owner.id)
     doc = await repo.create_document(
         db_session, session_id="sess-mi", s3_key="uploads/mi/x.pdf", filename="x.pdf"
     )

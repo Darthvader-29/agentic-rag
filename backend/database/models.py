@@ -76,12 +76,14 @@ class Session(Base):
     # client-supplied session_id is the PK
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    # Phase 3: owner FK (nullable for online-migration safety on non-empty tables)
-    user_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True
+    # Phase 3: owner FK. NOT NULL — every session has an owner (tenant-isolation invariant). The
+    # backfill migration adopts any legacy NULL-owner rows to a reserved system user before the
+    # ALTER ... SET NOT NULL, so no pre-auth data blocks the constraint.
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
 
-    owner: Mapped["User | None"] = relationship(back_populates="sessions")
+    owner: Mapped["User"] = relationship(back_populates="sessions")
     documents: Mapped[list["Document"]] = relationship(
         back_populates="session", cascade="all, delete-orphan", passive_deletes=True
     )

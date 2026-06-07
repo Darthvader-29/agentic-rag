@@ -45,7 +45,7 @@ class _FakePinecone:
     def __init__(self, matches) -> None:
         self.matches = matches
 
-    async def search_vectors(self, query_vector, top_k=5, session_id=None):
+    async def search_vectors(self, query_vector, top_k=5, session_id=None, user_id=None):
         return self.matches
 
 
