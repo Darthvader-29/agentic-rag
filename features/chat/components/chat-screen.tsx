@@ -38,13 +38,15 @@ const insightsVariants = {
 // features ship dark. Each panel is OWNED by its feature lane and must degrade to an empty state
 // when its backend endpoint 404s/errors.
 //   - GraphPanel uses react-force-graph (canvas + window) ⇒ ssr:false is REQUIRED.
-//   - MemoryPanel is plain markdown ⇒ no ssr:false needed.
+//   - MemoryPanel renders client-only data (localStorage session id + relative timestamps), so
+//     SSR'ing it would mismatch the client on hydration ⇒ ssr:false.
 const GraphPanel = dynamic(
   () => import("@/features/knowledge-graph/components/graph-panel"),
   { ssr: false }
 );
 const MemoryPanel = dynamic(
-  () => import("@/features/memory/components/memory-panel")
+  () => import("@/features/memory/components/memory-panel"),
+  { ssr: false }
 );
 
 // Whether ANY insights surface is enabled — gates the whole drawer + its toggle.
