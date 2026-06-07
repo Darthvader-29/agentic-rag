@@ -1,0 +1,32 @@
+# Root-level ignores for the monorepo. Each subproject (backend/, frontend/) also
+# carries its own .gitignore (merged in via subtree) for language-specific rules.
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+tmp_uploads/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.turbo/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
