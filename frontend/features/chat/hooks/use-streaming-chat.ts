@@ -14,8 +14,7 @@ import {
   SSE_LAYERS,
   type SseRoute,
   type SseComponent,
-  type SseDoneSource,
-  type SseLayer,
+  type SseDoneLayer,
 } from "@/features/chat/api/chat.schemas";
 import type { RouteType, Source, RetrievalLayer, MessageStats } from "@/types";
 
@@ -89,21 +88,21 @@ function citationsToSources(citations: SseComponent[]): Source[] {
 }
 
 /**
- * Phase 7: fold the optional `done.sources` layers onto citation-derived Sources. The citation
- * component is the authoritative provenance channel; `done.sources` is a parallel carrier that
- * MAY supply a `layer` the citation item lacked. We only FILL gaps (never override an explicit
- * citation-item layer) and merge positionally — both arrays describe the same ordered sources.
+ * Phase 7: fold the `done.layers` set onto citation-derived Sources. `done.layers` is the
+ * de-duplicated SET of retrieval layers that fed the answer (answer-level, NOT per-source), so we
+ * can only attribute a per-source layer unambiguously when EXACTLY ONE layer contributed — then
+ * every source lacking an explicit citation-item layer inherits it. With several contributing
+ * layers we can't attribute per-source from a set, so the per-citation `layer` stays authoritative
+ * and we leave sources untouched (no guessing).
  */
-function applyDoneSourceLayers(
+function applyDoneLayers(
   sources: Source[],
-  doneSources: SseDoneSource[] | undefined
+  layers: SseDoneLayer[] | undefined
 ): Source[] {
-  if (!doneSources || doneSources.length === 0) return sources;
-  return sources.map((s, i) => {
-    if (s.layer) return s; // explicit citation-item layer wins
-    const layer = asLayer((doneSources[i] as { layer?: SseLayer })?.layer);
-    return layer ? { ...s, layer } : s;
-  });
+  if (!layers || layers.length !== 1) return sources;
+  const only = asLayer(layers[0]);
+  if (!only) return sources;
+  return sources.map((s) => (s.layer ? s : { ...s, layer: only }));
 }
 
 export function useStreamingChat() {
@@ -200,15 +199,15 @@ export function useStreamingChat() {
             // A citation block is provenance → collect it for the sources panel.
             if (component.type === "citation") citations.push(component);
           },
-          onDone: ({ answer, route, sources: doneSources }) => {
+          onDone: ({ answer, route, layers: doneLayers }) => {
             // Canonical final body is done.answer (== concatenated tokens).
             const mapped = mapRoute(route);
             setRoute(assistantId, mapped);
             // Sources come ONLY from citation components; none → leave [] (no fabricated count).
-            // Phase 7: fold any done-event source layers onto the citation-derived sources.
-            const sources = applyDoneSourceLayers(
+            // Phase 7: fold the done-event contributing-layer set onto the citation-derived sources.
+            const sources = applyDoneLayers(
               citationsToSources(citations),
-              doneSources
+              doneLayers
             );
             if (sources.length > 0) setSources(assistantId, sources);
             // Phase 7: finalize the stats — totalMs, resolved route, tokens (null until the

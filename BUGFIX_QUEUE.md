@@ -128,7 +128,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
   stores them on the message.
 
 ### B07 — `done` provenance contract mismatch: backend sends `layers: string[]`, frontend reads `sources[].layer`
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM
 - **Files:** `backend/app.py` / `backend/sse.py` (the `done` event payload + JSON response), `frontend/features/chat/api/chat.schemas.ts`, `frontend/features/chat/hooks/use-streaming-chat.ts` (`applyDoneSourceLayers`).
 - **Symptom:** Backend emits `done.layers` (a `string[]`); the frontend schema strips `layers` and the
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B06 — commit pending — JSON /api/chat now returns `components`; chatResponseSchema accepts them; blocking hook stores each via addComponent so flipping streaming OFF keeps rich blocks. Backend chat 8/8, frontend blocking+schema 42/42.
+- B07 — commit pending — frontend now consumes the backend's actual `done.layers` set (was reading never-sent `done.sources`); single contributing layer fills citation-source provenance, multi-layer left to per-citation authority. Confirmed `layers` is answer-level deduped set (nodes._assemble_context). chat hooks 19/19, schemas 39/39.
+- B06 — 093e36b — JSON /api/chat now returns `components`; chatResponseSchema accepts them; blocking hook stores each via addComponent so flipping streaming OFF keeps rich blocks. Backend chat 8/8, frontend blocking+schema 42/42.
 - B05 — ff44f4c — backend now reads the picker's provider/model off the chat body (resolve_provider helper); honored for a BYOK user holding that provider's key (model→synth), falls through (never 500) otherwise; frontend already sent them. test_get_llm_provider 9/9, chat/repo/async 34/34.
 - B04 — e6c43ca — clear tokens only on a definitive 401/403 refresh rejection; transient network/5xx errors propagate as retryable with tokens intact (no guest orphaning); new regression test, http-client 10/10.
 - B03 — 54c1e1c — commit the FAILED status before raising the 409 so get_db_session's rollback can't erase it; regression asserts mark→commit ordering (test_upload: 9/9).
