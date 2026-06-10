@@ -5,9 +5,11 @@ behaviour is exercised exactly as in production.
 """
 
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import fakeredis.aioredis as fakeredis
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from llm import freemium
 from llm.freemium import (
@@ -125,6 +127,30 @@ async def test_daily_keys_have_expiry_set(redis, monkeypatch):
     # Both counters carry a positive TTL (<= one day) so they reset automatically.
     assert 0 < user_ttl <= 86_400
     assert 0 < global_ttl <= 86_400
+
+
+# ── Redis outage → fail open (B14) ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_redis_outage_fails_open(monkeypatch):
+    """A Redis error must NOT 500 the free-tier chat — within_free_allowance allows + logs."""
+    _set_limits(monkeypatch, per_user=10, global_calls=1200)
+    broken = AsyncMock()
+    broken.set.side_effect = RedisConnectionError("redis is down")
+
+    # fails open → request allowed despite the unreachable Redis
+    assert await within_free_allowance(broken, "u1") is True
+
+
+@pytest.mark.asyncio
+async def test_daily_keys_have_expiry_even_before_first_incr(redis, monkeypatch):
+    """SET NX EX arms the TTL atomically on creation — no no-TTL window."""
+    _set_limits(monkeypatch, per_user=10, global_calls=1200)
+    stamp = _utc_day_stamp()
+    await within_free_allowance(redis, "u1")
+    assert 0 < await redis.ttl(f"freetier:user:u1:{stamp}") <= 86_400
+    assert 0 < await redis.ttl(f"freetier:global:{stamp}") <= 86_400
 
 
 def test_day_stamp_is_utc_yyyymmdd():

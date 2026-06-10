@@ -219,7 +219,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
 - **Test:** assert a corrupt/undecryptable stored key yields a clean handled error (not a bare 500).
 
 ### B14 — Redis outage turns all free-tier chats into bare 500s
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM
 - **Files:** `backend/llm/freemium.py` (`within_free_allowance`), `backend/llm/dependencies.py` (`get_llm_provider`).
 - **Symptom:** Raw `INCRBY`/`EXPIRE`/`DECRBY` with no error handling; a Redis `ConnectionError` propagates
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B13 — commit pending — added KeyDecryptionError (400, code key_decryption_failed) + _decrypt_or_raise wrapping both decrypt sites in resolve_provider, so a rotated/corrupt key gives an actionable "re-enter your key" 400 instead of an unhandled InvalidToken 500. provider tests 10/10.
+- B14 — commit pending — within_free_allowance now fails OPEN (log + allow) on a RedisError instead of 500; counter TTL armed atomically via SET key 0 EX ttl NX (no no-TTL leak window) which also preserved the set-once EXPIRE test. freemium 11/11.
+- B13 — 0d0d58c — added KeyDecryptionError (400, code key_decryption_failed) + _decrypt_or_raise wrapping both decrypt sites in resolve_provider, so a rotated/corrupt key gives an actionable "re-enter your key" 400 instead of an unhandled InvalidToken 500. provider tests 10/10.
 - B12 — 2786cdd — rotate_key/delete_key validate the path provider via Annotated[str, Path(pattern=...)] (shared LLM_PROVIDER_PATTERN) → 422 on a typo; get_user_llm_key now ORDER BY updated_at DESC, id DESC for deterministic selection. keys tests 15/15 (DB-backed ran).
 - B11 — 15d5583 — refresh now propagates is_guest from the incoming refresh token's claims into both re-minted tokens (was defaulting to False); upgrade still mints non-guest so registered stays False. refresh tests 5/5.
 - B10 — 479beac — replaced serverless-rejected delete-by-filter with id-prefix enumeration + delete-by-ids; removed the inner try/except so failures propagate through @retry to the caller (no more false "cleaned"). Verified pinecone 9.0.1 list(prefix=) support. new test 3/3.
