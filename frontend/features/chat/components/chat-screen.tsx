@@ -6,6 +6,7 @@ import { m } from "framer-motion";
 import { useChat, resetSession } from "@/features/chat/hooks/use-chat";
 import { useChatStore, createMessage } from "@/features/chat/store/chat.store";
 import { getSessionId } from "@/features/chat/api/chat.api";
+import { isNearBottom } from "@/features/chat/lib/scroll";
 import { env } from "@/lib/env";
 import { flags } from "@/lib/flags";
 import { spring } from "@/lib/motion";
@@ -60,15 +61,35 @@ export function ChatScreen() {
   // Phase 7 Insights drawer — closed by default; only ever opened when a flag enables a panel.
   const [isInsightsOpen, setIsInsightsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Whether the user is "stuck" to the bottom (follow the stream) vs scrolled up to read. Starts
+  // true so the first turn scrolls into view.
+  const stickToBottomRef = useRef(true);
   const reduced = useReducedMotion();
 
   // The session the panels fetch against. Empty string on the server (SSR-safe); the panels'
   // own query gating + empty-state handle an empty id gracefully.
   const sessionId = getSessionId();
 
-  // Auto-scroll (ported from page.tsx:29-33).
+  // Track whether the user is near the bottom of the scroll viewport. While they've scrolled up
+  // we must NOT yank them back down on every streamed token (B24).
   useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+    const viewport = scrollRef.current?.closest(
+      "[data-radix-scroll-area-viewport]"
+    ) as HTMLElement | null;
+    if (!viewport) return;
+    const onScroll = () => {
+      stickToBottomRef.current = isNearBottom(viewport);
+    };
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Auto-scroll to the latest content — but ONLY when the user is already at the bottom, so a
+  // streamed token doesn't hijack the view while they're reading earlier messages.
+  useEffect(() => {
+    if (stickToBottomRef.current) {
+      scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages, isLoading]);
 
   // Cleanup beacon on tab close (ported from page.tsx:36-54).

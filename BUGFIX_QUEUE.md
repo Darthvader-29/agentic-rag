@@ -350,7 +350,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
   intact.
 
 ### B24 — Auto-scroll hijack: the view is yanked to the bottom on every streamed token
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM (UX)
 - **Files:** `frontend/features/chat/components/chat-screen.tsx` (the `useEffect([messages, isLoading])` calling `scrollIntoView`).
 - **Symptom:** `appendContent` replaces the `messages` array identity per token, so the effect runs a
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B23 — commit pending — parseSSE carries a pendingCR flag across reads and drops the LF that pairs with the previous chunk's trailing CR, so a CRLF straddling a chunk boundary no longer becomes a spurious \n\n frame terminator. parser+stream-chat 22/22.
+- B24 — commit pending — chat-screen tracks stickiness via a scroll listener on the radix viewport and only auto-scrolls when isNearBottom() — a streamed token no longer yanks the view down while the user reads earlier messages. Extracted isNearBottom helper + focused test 4/4; chat-screen typechecks.
+- B23 — f7c8611 — parseSSE carries a pendingCR flag across reads and drops the LF that pairs with the previous chunk's trailing CR, so a CRLF straddling a chunk boundary no longer becomes a spurious \n\n frame terminator. parser+stream-chat 22/22.
 - B22 — 4e31d27 — added chat-store completeSteps (active→complete) called in streaming onDone/onError so the "Thinking…" spinner stops on a finished turn; only states change so the existing step-label test stays green. streaming/store 15/15.
 - B21 — 04b3643 — (a) markdown append is now an atomic INSERT ... ON CONFLICT DO UPDATE (SQL right() truncation) — concurrent first-appends keep both notes (real-DB concurrency test); (b) KG lock TTL 15→30, bounded blocking_timeout, and release/acquire failures are logged (was silently swallowed) so a lost-update is detectable. memory tests 25/25.
 - B20 — b26f00c — status now LEADS work: emit "routing" up front, then on each node completion announce the next phase (supervisor→_stage_after_route; vector/web→synthesizing). synthesizing now precedes the first token. sse 14/14; stages still match SseStageSchema (no FE change).
