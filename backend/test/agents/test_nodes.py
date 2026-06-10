@@ -27,7 +27,7 @@ class _FakePinecone:
         self.matches = matches if matches is not None else []
         self.search_calls: list[dict] = []
 
-    async def search_vectors(self, query_vector, top_k=5, session_id=None):
+    async def search_vectors(self, query_vector, top_k=5, session_id=None, user_id=None):
         self.search_calls.append(
             {"query_vector": query_vector, "top_k": top_k, "session_id": session_id}
         )

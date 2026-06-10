@@ -109,19 +109,18 @@ async def test_cleanup_own_session_passes(db_session):
         raise AssertionError("Should not raise 403 for the owning user")
 
 
-async def test_session_null_user_id_binds_to_first_claimer(db_session):
-    """Sessions with user_id=None (pre-auth rows) get bound to the first auth user."""
+async def test_session_owner_required_no_auto_claim(db_session):
+    """Post-C1: a session must be owned by the caller; there is no auto-claim of NULL/other owners.
+
+    ``sessions.user_id`` is NOT NULL so an unowned row cannot exist, and the ownership predicate
+    grants access only to the exact owner — the old "bind NULL to the first claimer" behavior is gone.
+    """
     user = await _make_user(db_session, "bind@iso.com", "binduser")
-    # Simulate a legacy session with no owner
-    await repo.get_or_create_session(db_session, "legacy-sess")
-    session = await repo.get_session(db_session, "legacy-sess")
+    other = await _make_user(db_session, "other@iso.com", "otheruser")
+    await repo.create_session(db_session, "owned-sess", user.id)
+
+    session = await repo.get_session(db_session, "owned-sess")
     assert session is not None
-    assert session.user_id is None
-
-    # Binding: first auth user claims it
-    session.user_id = user.id
-    await db_session.flush()
-
-    bound = await repo.get_session(db_session, "legacy-sess")
-    assert bound is not None
-    assert bound.user_id == user.id
+    # accessible to the owner, refused for anyone else (the new _session_accessible predicate)
+    assert session.user_id == user.id
+    assert session.user_id != other.id

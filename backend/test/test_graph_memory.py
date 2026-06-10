@@ -5,15 +5,21 @@ a real sessionmaker on the test engine (skip without TEST_DATABASE_URL) with red
 needed single-threaded), a parent ``sessions`` row for the FK, unique ids, and self-cleanup.
 """
 
+import uuid
+
 import pytest
 import pytest_asyncio
 from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from config import Settings
-from database.models import Session
+from database.models import Session, User
 from memory.extract import _parse_triples, extract_triples
 from memory.graph import KnowledgeGraph
+
+# sessions.user_id is NOT NULL; a single reusable owner backs every test session here.
+_OWNER_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 
 def _settings(**overrides) -> Settings:
@@ -88,7 +94,19 @@ async def factory(_engine):
 
 async def _mk_session(factory, sid: str) -> None:
     async with factory() as db:
-        db.add(Session(id=sid))
+        # Idempotent owner insert so repeated/cross-file tests share the one row.
+        await db.execute(
+            pg_insert(User)
+            .values(
+                id=_OWNER_ID,
+                email="memtests@t.local",
+                username="memtests_owner",
+                hashed_password="x",
+                is_guest=True,
+            )
+            .on_conflict_do_nothing()
+        )
+        db.add(Session(id=sid, user_id=_OWNER_ID))
         await db.commit()
 
 

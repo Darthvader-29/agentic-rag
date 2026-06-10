@@ -103,7 +103,11 @@ async def vector_node(state: GraphState) -> dict[str, Any]:
     with get_tracer().start_as_current_span("agent.retrieval"):
         query = state.get("rewritten_query") or state["query"]
         chunks, docs_relevant = await retrieve_vector(
-            query, state["session_id"], state["pinecone"], state["embedder"]
+            query,
+            state["session_id"],
+            state["pinecone"],
+            state["embedder"],
+            user_id=state.get("user_id"),
         )
         context = format_context(chunks) if chunks else ""
         return {

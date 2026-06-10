@@ -19,9 +19,16 @@ async def test_register_success(db_session):
         RegisterIn(email="alice@example.com", username="alice", password="password123"),
         db=db_session,
     )
-    assert result.email == "alice@example.com"
-    assert result.username == "alice"
-    assert not hasattr(result, "hashed_password")  # never exposed in UserOut
+    # Phase 6 contract: register returns a NON-guest token pair (the shape the frontend
+    # TokenPairSchema validates), not a bare UserOut.
+    assert result.access_token
+    assert result.refresh_token
+    assert result.token_type == "bearer"
+    assert result.user_id
+    claims = decode_token(result.access_token)
+    assert claims["type"] == "access"
+    assert claims["sub"] == result.user_id
+    assert claims.get("is_guest") is False
 
 
 async def test_register_duplicate_email_raises_409(db_session):

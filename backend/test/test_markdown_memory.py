@@ -5,13 +5,19 @@ MarkdownMemory opens its own session per call, so these use a real sessionmaker 
 FK; unique session ids per test keep them independent, and each cleans up after itself.
 """
 
+import uuid
+
 import pytest
 import pytest_asyncio
 from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from database.models import Session
+from database.models import Session, User
 from memory.markdown import MarkdownMemory
+
+# sessions.user_id is NOT NULL; a single reusable owner backs every test session here.
+_OWNER_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 
 @pytest_asyncio.fixture
@@ -21,7 +27,19 @@ async def factory(_engine):
 
 async def _make_session(factory, sid: str) -> None:
     async with factory() as db:
-        db.add(Session(id=sid))
+        # Idempotent owner insert so repeated/cross-file tests share the one row.
+        await db.execute(
+            pg_insert(User)
+            .values(
+                id=_OWNER_ID,
+                email="memtests@t.local",
+                username="memtests_owner",
+                hashed_password="x",
+                is_guest=True,
+            )
+            .on_conflict_do_nothing()
+        )
+        db.add(Session(id=sid, user_id=_OWNER_ID))
         await db.commit()
 
 

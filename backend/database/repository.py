@@ -15,9 +15,17 @@ from database.models import Document, DocumentStatus, Message, Session, User, Us
 # ── Session ──────────────────────────────────────────────────────────────────
 
 
-async def get_or_create_session(db: AsyncSession, session_id: str) -> None:
-    """Idempotent upsert — safe to call multiple times for the same session_id."""
-    stmt = pg_insert(Session).values(id=session_id).on_conflict_do_nothing(index_elements=["id"])
+async def get_or_create_session(db: AsyncSession, session_id: str, user_id: uuid.UUID) -> None:
+    """Idempotent upsert of an OWNED session — safe to call repeatedly for the same session_id.
+
+    ``user_id`` is required: sessions are never unowned (tenant-isolation invariant — see the
+    NOT NULL ``sessions.user_id`` migration). An existing row is left untouched (owner stands).
+    """
+    stmt = (
+        pg_insert(Session)
+        .values(id=session_id, user_id=user_id)
+        .on_conflict_do_nothing(index_elements=["id"])
+    )
     await db.execute(stmt)
 
 
@@ -58,6 +66,17 @@ async def get_document(db: AsyncSession, document_id: str) -> Document | None:
 
 async def set_document_status(db: AsyncSession, *, s3_key: str, status: DocumentStatus) -> None:
     await db.execute(update(Document).where(Document.s3_key == s3_key).values(status=status))
+
+
+async def set_document_status_by_id(
+    db: AsyncSession, *, document_id: str, status: DocumentStatus
+) -> None:
+    """Scope the status write by primary key, not the globally-unique s3_key.
+
+    Keying on document_id stops a confirmed (document_id, s3_key) mismatch from landing the UPDATE
+    on another user's row (s3_key is unique across tenants) — see the confirm_upload fix.
+    """
+    await db.execute(update(Document).where(Document.id == document_id).values(status=status))
 
 
 async def session_has_documents(db: AsyncSession, session_id: str) -> bool:
