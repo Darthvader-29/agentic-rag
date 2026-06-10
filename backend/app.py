@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -327,7 +327,18 @@ async def _upload_multipart(request: Request, current_user: User, s3: S3Client, 
 
 async def _upload_presign(request: Request, current_user: User, s3: S3Client, db: AsyncSession):
     """Presigned flag-ON path: issue a PUT URL; the client uploads direct to storage."""
-    payload = PresignRequest.model_validate(await request.json())
+    # Validate the body here so a request DEFECT (bad JSON / failing field, e.g. an over-long
+    # session_id) is a 422 — not swallowed by the caller's blanket `except Exception` → 500. We
+    # parse manually because /api/upload is dual-transport (multipart OR json) and can't declare a
+    # single typed body model.
+    try:
+        body = await request.json()
+    except ValueError as exc:  # JSONDecodeError subclasses ValueError
+        raise HTTPException(422, "request body must be valid JSON") from exc
+    try:
+        payload = PresignRequest.model_validate(body)
+    except ValidationError as exc:
+        raise HTTPException(422, "invalid upload request") from exc
     session_id = await _resolve_session(db, payload.session_id, current_user)
     s3_key = s3.make_user_key(current_user.id, payload.filename)
     upload_url = await s3.generate_presigned_url(s3_key)

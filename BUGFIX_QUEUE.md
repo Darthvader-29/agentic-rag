@@ -256,7 +256,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
 - **Test:** assert an over-long `session_id` → 422, not 500.
 
 ### B17 — `_upload_presign` returns 500 for malformed request bodies instead of 422
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM
 - **Files:** `backend/app.py` (the presign branch that does `PresignRequest.model_validate(await request.json())` under a blanket `except Exception`).
 - **Symptom:** Invalid JSON / failing field raises `JSONDecodeError`/`ValidationError`, caught by the
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B16 — commit pending — session_id fields (ChatRequest/PresignRequest/CleanupRequest) bounded to max_length=64 → over-long id is a clean 422 not a DB-truncation 500. chat 10/10. (PresignRequest surfaces it as 422 once B17 lands.)
+- B17 — commit pending — _upload_presign guards body parse (ValueError/ValidationError → 422) so a request defect (bad JSON, over-long session_id) no longer hits the blanket except → 500. upload 11/11.
+- B16 — fe8355d — session_id fields (ChatRequest/PresignRequest/CleanupRequest) bounded to max_length=64 → over-long id is a clean 422 not a DB-truncation 500. chat 10/10. (PresignRequest surfaces it as 422 once B17 lands.)
 - B15 — 8c40fa6 — normalize_decision now matches the first whole-word RAG|WEB|DIRECT (regex \b...\b) instead of raw startswith, so **WEB**/"WEB"/Answer: WEB route correctly; WEBSITE/DIRECTION still fall back. on hot path via base.route(). new test 17 + provider/supervisor 55/55.
 - B14 — 058a976 — within_free_allowance now fails OPEN (log + allow) on a RedisError instead of 500; counter TTL armed atomically via SET key 0 EX ttl NX (no no-TTL leak window) which also preserved the set-once EXPIRE test. freemium 11/11.
 - B13 — 0d0d58c — added KeyDecryptionError (400, code key_decryption_failed) + _decrypt_or_raise wrapping both decrypt sites in resolve_provider, so a rotated/corrupt key gives an actionable "re-enter your key" 400 instead of an unhandled InvalidToken 500. provider tests 10/10.
