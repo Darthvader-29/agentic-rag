@@ -337,7 +337,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
 - **Test:** vitest — after a completed stream, assert no step remains in `active` state.
 
 ### B23 — SSE parser: a CRLF split across network chunks fabricates a frame boundary and drops events
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM
 - **Files:** `frontend/lib/sse/parser.ts` (the `buffer += value.replace(/\r\n?/g, "\n")` normalization), `frontend/lib/sse/stream-chat.ts`.
 - **Symptom:** Per-chunk `\r\n?`→`\n` normalization mishandles a `\r` at the end of chunk N followed by
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B22 — commit pending — added chat-store completeSteps (active→complete) called in streaming onDone/onError so the "Thinking…" spinner stops on a finished turn; only states change so the existing step-label test stays green. streaming/store 15/15.
+- B23 — commit pending — parseSSE carries a pendingCR flag across reads and drops the LF that pairs with the previous chunk's trailing CR, so a CRLF straddling a chunk boundary no longer becomes a spurious \n\n frame terminator. parser+stream-chat 22/22.
+- B22 — 4e31d27 — added chat-store completeSteps (active→complete) called in streaming onDone/onError so the "Thinking…" spinner stops on a finished turn; only states change so the existing step-label test stays green. streaming/store 15/15.
 - B21 — 04b3643 — (a) markdown append is now an atomic INSERT ... ON CONFLICT DO UPDATE (SQL right() truncation) — concurrent first-appends keep both notes (real-DB concurrency test); (b) KG lock TTL 15→30, bounded blocking_timeout, and release/acquire failures are logged (was silently swallowed) so a lost-update is detectable. memory tests 25/25.
 - B20 — b26f00c — status now LEADS work: emit "routing" up front, then on each node completion announce the next phase (supervisor→_stage_after_route; vector/web→synthesizing). synthesizing now precedes the first token. sse 14/14; stages still match SseStageSchema (no FE change).
 - B19 — 0288167 — removed await-in-finally; persist synchronously on normal/error paths, detach (asyncio.ensure_future + app.state.background_tasks ref) on CancelledError/GeneratorExit, and suppress `done` to a disconnected client. Registry on app.state (per-process infra) keeps statelessness test green. sse+stateless+json 18/18.

@@ -83,14 +83,24 @@ export async function* parseSSE(
   const reader = textStream.getReader();
 
   let buffer = "";
+  // True when the previous chunk ended with a bare "\r" — its paired "\n" (if any) may arrive at
+  // the start of the next chunk. Tracked across reads so a CRLF straddling a chunk boundary isn't
+  // mis-normalised into a spurious "\n\n" frame terminator (B23).
+  let pendingCR = false;
 
   try {
     for (;;) {
       const { value, done } = await reader.read();
 
       if (value) {
+        let chunk = value;
+        // Drop a leading "\n" that pairs with the previous chunk's trailing "\r" (already turned
+        // into "\n" below). Without this, a CRLF split across reads becomes "\n\n" and fabricates
+        // a frame boundary mid-frame, dropping/mis-attributing the event.
+        if (pendingCR && chunk.startsWith("\n")) chunk = chunk.slice(1);
+        pendingCR = value.endsWith("\r");
         // Normalise CRLF / CR to LF so "\n\n" framing is uniform.
-        buffer += value.replace(/\r\n?/g, "\n");
+        buffer += chunk.replace(/\r\n?/g, "\n");
 
         // Emit every COMPLETE frame currently in the buffer. A frame is complete
         // once we have seen its terminating blank line ("\n\n"). The final
