@@ -169,7 +169,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
 ## Priority 3 — backend correctness / resilience
 
 ### B10 — `/api/cleanup` returns `"cleaned"` but Pinecone vectors are never deleted (swallowed exception, dead retry, serverless filter)
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM
 - **Files:** `backend/database/db_manager.py` (`_delete_vectors_sync`, `cleanup_session`), `backend/app.py` (`/api/cleanup`).
 - **Symptom:** `_delete_vectors_sync` wraps `index.delete(filter=...)` in `try/except: logger.error` INSIDE
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B09 — commit pending — CONFIRMED real (supervisor emits flat RAG|WEB|BOTH|DIRECT; frontend routeTypeSchema has no BOTH). JSON path now maps BOTH→WEB+RAG (mirrors the SSE client-side mapRoute); regression asserts it. chat 9/9.
+- B10 — commit pending — replaced serverless-rejected delete-by-filter with id-prefix enumeration + delete-by-ids; removed the inner try/except so failures propagate through @retry to the caller (no more false "cleaned"). Verified pinecone 9.0.1 list(prefix=) support. new test 3/3.
+- B09 — 3ea2ff9 — CONFIRMED real (supervisor emits flat RAG|WEB|BOTH|DIRECT; frontend routeTypeSchema has no BOTH). JSON path now maps BOTH→WEB+RAG (mirrors the SSE client-side mapRoute); regression asserts it. chat 9/9.
 - B08 — 745f65c — added optional url/layer (citation), caption (media/table), title (callout/chart) to the pydantic component models so emitted values survive validate_component; switched to model_dump(exclude_none=True) so absent optionals stay omitted (existing exact-dict tests green). agents 55/55.
 - B07 — 9b2c55a — frontend now consumes the backend's actual `done.layers` set (was reading never-sent `done.sources`); single contributing layer fills citation-source provenance, multi-layer left to per-citation authority. Confirmed `layers` is answer-level deduped set (nodes._assemble_context). chat hooks 19/19, schemas 39/39.
 - B06 — 093e36b — JSON /api/chat now returns `components`; chatResponseSchema accepts them; blocking hook stores each via addComponent so flipping streaming OFF keeps rich blocks. Backend chat 8/8, frontend blocking+schema 42/42.

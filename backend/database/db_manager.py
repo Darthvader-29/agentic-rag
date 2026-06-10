@@ -109,12 +109,20 @@ class PineconeClient:
 
     @retry(**_RETRY)
     def _delete_vectors_sync(self, session_id: str) -> None:
+        """Delete every vector for a session.
+
+        Serverless indexes REJECT delete-by-metadata-filter, so we enumerate this session's vector
+        ids by prefix (ids are ``f"{session_id}_{filename}_{i:04d}"`` — see preprocessing) and delete
+        them by id, which serverless does support. Errors propagate (no inner swallow) so tenacity
+        retries and the caller learns of a real failure instead of a false "cleaned".
+        """
         index = self._index_or_raise()
-        try:
-            index.delete(filter={"session_id": {"$eq": session_id}})
-            logger.info("pinecone_vectors_deleted", session_id=session_id)
-        except Exception:
-            logger.error("pinecone_delete_error", exc_info=True)
+        ids: list[str] = []
+        for page in index.list(prefix=f"{session_id}_"):
+            ids.extend(page)  # `list` yields pages (lists) of ids
+        for i in range(0, len(ids), 1000):
+            index.delete(ids=ids[i : i + 1000])
+        logger.info("pinecone_vectors_deleted", session_id=session_id, count=len(ids))
 
     async def delete_vectors_by_session(self, session_id: str) -> None:
         await asyncio.to_thread(self._delete_vectors_sync, session_id)
