@@ -59,8 +59,13 @@ class UserOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# The canonical allowed-provider pattern — shared by the KeyIn body field AND the keys-router
+# path params so a bad provider (e.g. a typo "grmini") is rejected on every key endpoint.
+LLM_PROVIDER_PATTERN = r"^(gemini|openai|anthropic)$"
+
+
 class KeyIn(BaseModel):
-    provider: str = Field(pattern=r"^(gemini|openai|anthropic)$")
+    provider: str = Field(pattern=LLM_PROVIDER_PATTERN)
     api_key: str = Field(min_length=1)
 
 

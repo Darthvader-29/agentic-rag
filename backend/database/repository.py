@@ -190,8 +190,18 @@ class LLMKeyRepository:
 
 
 async def get_user_llm_key(db: AsyncSession, *, user_id: uuid.UUID) -> UserLLMKey | None:
-    """Return any active LLM key for the user (first row; provider field names which adapter)."""
-    result = await db.execute(select(UserLLMKey).where(UserLLMKey.user_id == user_id).limit(1))
+    """Return the user's most-recently-updated LLM key (provider field names which adapter).
+
+    The ORDER BY makes the fallback DETERMINISTIC: with several stored keys an unordered LIMIT 1
+    let the DB pick any row, so the billed provider (and which key built the provider) changed
+    request-to-request. Most-recently-updated is the user's latest intent.
+    """
+    result = await db.execute(
+        select(UserLLMKey)
+        .where(UserLLMKey.user_id == user_id)
+        .order_by(UserLLMKey.updated_at.desc(), UserLLMKey.id.desc())
+        .limit(1)
+    )
     return result.scalar_one_or_none()
 
 

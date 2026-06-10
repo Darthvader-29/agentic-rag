@@ -155,6 +155,30 @@ async def test_list_keys_scoped_to_user(db_session):
     assert {r.provider for r in rows_a} == {"gemini"}
 
 
+async def test_get_user_llm_key_is_deterministic(db_session):
+    """B12: with several stored keys the fallback lookup is DETERMINISTIC (stable across calls).
+
+    The bug was an unordered LIMIT 1, so the DB could pick a different row each request → a
+    nondeterministic billed provider (and possibly a junk row → 502). The ORDER BY makes the
+    choice stable. (Recency ordering by updated_at can't be exercised in one transaction because
+    Postgres now() is transaction-fixed; the production guarantee is the ORDER BY itself.)
+    """
+    from database.repository import get_user_llm_key
+
+    user = await _make_user(db_session, "multi@test.com", "multiuser")
+    await add_key(KeyIn(provider="gemini", api_key="g"), current_user=user, db=db_session)
+    await add_key(KeyIn(provider="openai", api_key="o"), current_user=user, db=db_session)
+    await add_key(KeyIn(provider="anthropic", api_key="a"), current_user=user, db=db_session)
+    await db_session.flush()
+
+    first = await get_user_llm_key(db_session, user_id=user.id)
+    second = await get_user_llm_key(db_session, user_id=user.id)
+    assert first is not None and second is not None
+    # stable across calls (same row every time) — no more nondeterministic provider per request
+    assert first.id == second.id
+    assert first.provider == second.provider
+
+
 async def test_list_keys_empty_when_no_keys(db_session):
     user = await _make_user(db_session, "empty@test.com", "emptyuser")
     rows = await list_keys(current_user=user, db=db_session)

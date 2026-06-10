@@ -195,7 +195,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
 - **Test:** assert a refresh of a guest token yields tokens that still carry `is_guest=true`.
 
 ### B12 — `PUT /api/keys/{provider}` skips provider validation; unordered `LIMIT 1` key selection can brick chat
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM
 - **Files:** `backend/auth/keys_router.py` (`rotate_key`/`add_key`), `backend/auth/schemas.py` (`KeyIn`), `backend/database/repository.py` (`get_user_llm_key`).
 - **Symptom:** `rotate_key` takes `provider` from the path and never validates it (the body's validated
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B11 — commit pending — refresh now propagates is_guest from the incoming refresh token's claims into both re-minted tokens (was defaulting to False); upgrade still mints non-guest so registered stays False. refresh tests 5/5.
+- B12 — commit pending — rotate_key/delete_key validate the path provider via Annotated[str, Path(pattern=...)] (shared LLM_PROVIDER_PATTERN) → 422 on a typo; get_user_llm_key now ORDER BY updated_at DESC, id DESC for deterministic selection. keys tests 15/15 (DB-backed ran).
+- B11 — 15d5583 — refresh now propagates is_guest from the incoming refresh token's claims into both re-minted tokens (was defaulting to False); upgrade still mints non-guest so registered stays False. refresh tests 5/5.
 - B10 — 479beac — replaced serverless-rejected delete-by-filter with id-prefix enumeration + delete-by-ids; removed the inner try/except so failures propagate through @retry to the caller (no more false "cleaned"). Verified pinecone 9.0.1 list(prefix=) support. new test 3/3.
 - B09 — 3ea2ff9 — CONFIRMED real (supervisor emits flat RAG|WEB|BOTH|DIRECT; frontend routeTypeSchema has no BOTH). JSON path now maps BOTH→WEB+RAG (mirrors the SSE client-side mapRoute); regression asserts it. chat 9/9.
 - B08 — 745f65c — added optional url/layer (citation), caption (media/table), title (callout/chart) to the pydantic component models so emitted values survive validate_component; switched to model_dump(exclude_none=True) so absent optionals stay omitted (existing exact-dict tests green). agents 55/55.

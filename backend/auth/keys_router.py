@@ -4,13 +4,15 @@ Responses never echo the plaintext API key or its ciphertext — only id + provi
 Log entries never contain key material (see structlog calls below).
 """
 
+from typing import Annotated
+
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.crypto import encrypt_key
 from auth.dependencies import get_current_user
-from auth.schemas import KeyIn, KeyListOut, KeyOut
+from auth.schemas import LLM_PROVIDER_PATTERN, KeyIn, KeyListOut, KeyOut
 from database.models import User
 from database.repository import LLMKeyRepository
 from dependencies import get_db_session
@@ -48,7 +50,7 @@ async def add_key(
 
 @router.put("/{provider}", response_model=KeyOut)
 async def rotate_key(
-    provider: str,
+    provider: Annotated[str, Path(pattern=LLM_PROVIDER_PATTERN)],
     body: KeyIn,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
@@ -66,7 +68,7 @@ async def rotate_key(
 
 @router.delete("/{provider}", status_code=204)
 async def delete_key(
-    provider: str,
+    provider: Annotated[str, Path(pattern=LLM_PROVIDER_PATTERN)],
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ) -> None:

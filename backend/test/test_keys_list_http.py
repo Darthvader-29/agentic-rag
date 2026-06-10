@@ -37,6 +37,50 @@ async def test_get_keys_requires_auth():
 
 
 @pytest.mark.asyncio
+async def test_rotate_key_rejects_invalid_path_provider():
+    """B12: PUT /api/keys/<bad> is 422 (path provider validated) — a typo can no longer store a
+    junk-provider row that later bricks chat with a 502."""
+    app.dependency_overrides[get_current_user] = lambda: _fake_user()
+    app.dependency_overrides[get_db_session] = lambda: AsyncMock()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.put(
+                "/api/keys/grmini",
+                json={"provider": "gemini", "api_key": "k"},
+                headers={"Authorization": "Bearer test-token"},
+            )
+        assert resp.status_code == 422
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_rotate_key_accepts_valid_path_provider():
+    """A valid provider passes path validation and reaches the handler."""
+    app.dependency_overrides[get_current_user] = lambda: _fake_user()
+    app.dependency_overrides[get_db_session] = lambda: AsyncMock()
+    rec = MagicMock()
+    rec.id = uuid.uuid4()
+    rec.provider = "openai"
+    try:
+        with patch(
+            "auth.keys_router.LLMKeyRepository.rotate", new_callable=AsyncMock, return_value=rec
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.put(
+                    "/api/keys/openai",
+                    json={"provider": "openai", "api_key": "k"},
+                    headers={"Authorization": "Bearer test-token"},
+                )
+        assert resp.status_code == 200
+        assert resp.json()["provider"] == "openai"
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
 async def test_get_keys_lists_providers_without_ciphertext():
     """Auth + DB mocked: returns [{id, provider, created_at}] and never the ciphertext."""
     app.dependency_overrides[get_current_user] = lambda: _fake_user()
