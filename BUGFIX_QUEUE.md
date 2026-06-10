@@ -306,7 +306,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
 - **Test:** assert the "synthesizing" status is emitted before the first token event in the SSE sequence.
 
 ### B21 — Markdown-memory first-append race drops notes; KG Redis lock TTL is fixed and never renewed
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM
 - **Files:** `backend/memory/markdown.py` (`append`), `backend/memory/graph.py` (`KnowledgeGraph._lock`, `add_entities`).
 - **Symptom (a):** `append` does `SELECT ... FOR UPDATE` then INSERT-if-absent; `FOR UPDATE` locks nothing
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B20 — commit pending — status now LEADS work: emit "routing" up front, then on each node completion announce the next phase (supervisor→_stage_after_route; vector/web→synthesizing). synthesizing now precedes the first token. sse 14/14; stages still match SseStageSchema (no FE change).
+- B21 — commit pending — (a) markdown append is now an atomic INSERT ... ON CONFLICT DO UPDATE (SQL right() truncation) — concurrent first-appends keep both notes (real-DB concurrency test); (b) KG lock TTL 15→30, bounded blocking_timeout, and release/acquire failures are logged (was silently swallowed) so a lost-update is detectable. memory tests 25/25.
+- B20 — b26f00c — status now LEADS work: emit "routing" up front, then on each node completion announce the next phase (supervisor→_stage_after_route; vector/web→synthesizing). synthesizing now precedes the first token. sse 14/14; stages still match SseStageSchema (no FE change).
 - B19 — 0288167 — removed await-in-finally; persist synchronously on normal/error paths, detach (asyncio.ensure_future + app.state.background_tasks ref) on CancelledError/GeneratorExit, and suppress `done` to a disconnected client. Registry on app.state (per-process infra) keeps statelessness test green. sse+stateless+json 18/18.
 - B18 — 6c7e81a — JSON chat path's except Exception now raises a generic 500 ("request failed unexpectedly") instead of "free tier Limit Reached"; LLM/402 AppExceptions still pass through. chat 11/11.
 - B17 — 17df8ca — _upload_presign guards body parse (ValueError/ValidationError → 422) so a request defect (bad JSON, over-long session_id) no longer hits the blanket except → 500. upload 11/11.

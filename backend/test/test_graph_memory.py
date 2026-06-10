@@ -172,12 +172,13 @@ async def test_graph_acquires_and_releases_redis_lock(factory):
     class _FakeLock:
         async def acquire(self):
             events.append("acquire")
+            return True  # redis-py Lock.acquire() returns whether it was acquired
 
         async def release(self):
             events.append("release")
 
     class _FakeRedis:
-        def lock(self, name, timeout=None):
+        def lock(self, name, timeout=None, blocking_timeout=None):
             events.append(("lock", name))
             return _FakeLock()
 
