@@ -83,7 +83,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
   the 409 response.
 
 ### B04 — A transient network error during refresh clears tokens and permanently destroys guest identity
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** HIGH
 - **Files:** `frontend/lib/api/http-client.ts` (the `catch` around `refreshAccessToken`, the network-error path).
 - **Symptom:** Any refresh rejection — including a fetch network error (status 0, wifi reconnecting) —
@@ -396,6 +396,7 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B03 — commit pending — commit the FAILED status before raising the 409 so get_db_session's rollback can't erase it; regression asserts mark→commit ordering (test_upload: 9/9).
+- B04 — commit pending — clear tokens only on a definitive 401/403 refresh rejection; transient network/5xx errors propagate as retryable with tokens intact (no guest orphaning); new regression test, http-client 10/10.
+- B03 — 54c1e1c — commit the FAILED status before raising the 409 so get_db_session's rollback can't erase it; regression asserts mark→commit ordering (test_upload: 9/9).
 - B02 — c30cdfa — shared resetIdentityState() rotates rag_session_id + wipes chat store on login/register (cache:clear) and logout, gated off the in-place upgrade (cache:invalidate) so it keeps its session; new regression test + 28 auth/chat tests green.
 - B01 — b1032cd — commit resolved session row before SSE stream opens so first-turn message/markdown writes no longer FK-violate an uncommitted parent; regression test asserts request-db commit precedes fresh-session persistence (test_chat_sse: 7/7). Pre-existing unrelated reds: 5 test_config env-validation tests.

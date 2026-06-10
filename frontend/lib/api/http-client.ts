@@ -153,7 +153,29 @@ export async function request<T = void>(
   if (res.status === 401 && flags.auth && auth && !opts.__retried) {
     try {
       await refreshAccessToken();
-    } catch {
+    } catch (refreshErr) {
+      // Destroy the session ONLY on a definitive auth rejection — the /auth/refresh endpoint
+      // refusing the refresh token (401/403), or no refresh token at all. A transient failure
+      // (network blip when waking from sleep, a 5xx, a timeout) must NOT clear tokens: a guest
+      // has no credentials to sign back in with, so a momentary glitch would orphan their account
+      // and all its sessions/documents forever. Surface the transient error as-is so the caller /
+      // React Query can retry while the tokens stay put.
+      const definitiveAuthFailure =
+        refreshErr instanceof ApiError &&
+        (refreshErr.status === 401 || refreshErr.status === 403);
+      if (!definitiveAuthFailure) {
+        throw refreshErr instanceof ApiError
+          ? refreshErr
+          : new ApiError({
+              message:
+                refreshErr instanceof Error
+                  ? refreshErr.message
+                  : "Could not refresh the session.",
+              status: 0,
+              kind: "network",
+              payload: refreshErr,
+            });
+      }
       authStore.clear();
       redirectToLogin();
       throw new ApiError({
