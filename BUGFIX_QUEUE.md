@@ -279,7 +279,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
   free-tier message.
 
 ### B19 — SSE disconnect: `await` inside the generator's `finally` defeats persistence-on-disconnect
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM
 - **Files:** `backend/app.py` (the SSE generator's `finally` / `_persist_turn`, the `is_disconnected` check).
 - **Symptom:** On a real mid-stream disconnect Starlette raises `CancelledError` at the current await; the
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B18 — commit pending — JSON chat path's except Exception now raises a generic 500 ("request failed unexpectedly") instead of "free tier Limit Reached"; LLM/402 AppExceptions still pass through. chat 11/11.
+- B19 — commit pending — removed await-in-finally; persist synchronously on normal/error paths, detach (asyncio.ensure_future + app.state.background_tasks ref) on CancelledError/GeneratorExit, and suppress `done` to a disconnected client. Registry on app.state (per-process infra) keeps statelessness test green. sse+stateless+json 18/18.
+- B18 — 6c7e81a — JSON chat path's except Exception now raises a generic 500 ("request failed unexpectedly") instead of "free tier Limit Reached"; LLM/402 AppExceptions still pass through. chat 11/11.
 - B17 — 17df8ca — _upload_presign guards body parse (ValueError/ValidationError → 422) so a request defect (bad JSON, over-long session_id) no longer hits the blanket except → 500. upload 11/11.
 - B16 — fe8355d — session_id fields (ChatRequest/PresignRequest/CleanupRequest) bounded to max_length=64 → over-long id is a clean 422 not a DB-truncation 500. chat 10/10. (PresignRequest surfaces it as 422 once B17 lands.)
 - B15 — 8c40fa6 — normalize_decision now matches the first whole-word RAG|WEB|DIRECT (regex \b...\b) instead of raw startswith, so **WEB**/"WEB"/Answer: WEB route correctly; WEBSITE/DIRECTION still fall back. on hot path via base.route(). new test 17 + provider/supervisor 55/55.

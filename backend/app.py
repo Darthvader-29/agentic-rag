@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from contextlib import asynccontextmanager
 
@@ -88,6 +89,9 @@ async def lifespan(app: FastAPI):
     init_langfuse(settings)
     # Phase 6: compile the agentic chat graph ONCE per process (pure + stateless — shared)
     app.state.graph = build_graph()
+    # Per-process registry of detached persist tasks (disconnect path) — strong refs so the loop
+    # can't GC them mid-flight. Per-process infra like the pools above; holds no cross-request state.
+    app.state.background_tasks = set()
     logger.info("clients_initialized", environment=settings.ENVIRONMENT)
     yield
     await app.state.redis.aclose()
@@ -548,6 +552,28 @@ async def _persist_turn(sessionmaker, session_id: str, user_msg: str, answer: st
         await session.commit()
 
 
+def _spawn_persist(registry: set, sessionmaker, session_id: str, user_msg: str, answer: str) -> None:
+    """Fire-and-forget persist for the disconnect/cancel path.
+
+    When the client drops mid-stream the SSE generator is cancelled/closed, so we MUST NOT ``await``
+    inside it: awaiting during ``aclose()`` raises ``RuntimeError('async generator ignored
+    GeneratorExit')`` and awaiting during task cancellation re-raises ``CancelledError`` — either
+    way the turn was silently lost. Scheduling a detached task instead never suspends the generator;
+    the task runs to completion on the event loop with its own DB session. ``registry`` (the
+    per-process ``app.state.background_tasks`` set) holds a strong ref so the loop can't GC it.
+    """
+
+    async def _run() -> None:
+        try:
+            await _persist_turn(sessionmaker, session_id, user_msg, answer)
+        except Exception:
+            logger.error("chat_stream_persist_failed", exc_info=True)
+
+    task = asyncio.ensure_future(_run())
+    registry.add(task)
+    task.add_done_callback(registry.discard)
+
+
 @app.post("/api/chat")
 @limiter.limit(settings.RATE_LIMIT_CHAT)
 async def chat(
@@ -606,7 +632,7 @@ async def chat(
             tokens: list[str] = []
             route: str | None = None
             layers: list[str] = []
-            answered = False
+            disconnected = False
             try:
                 async for mode, chunk in graph.astream(
                     state,
@@ -614,6 +640,7 @@ async def chat(
                     config={"configurable": {"stream": True}},
                 ):
                     if await request.is_disconnected():
+                        disconnected = True
                         break
                     if mode == "custom":
                         kind = chunk.get("kind")
@@ -633,25 +660,44 @@ async def chat(
                             if node == "synthesis" and isinstance(partial, dict):
                                 layers = partial.get("layers", layers)
                 final_answer = "".join(tokens).strip()
-                answered = bool(final_answer)
-                yield sse_event("done", {"answer": final_answer, "route": route, "layers": layers})
+                if not disconnected:  # don't push `done` at a client that already went away
+                    yield sse_event(
+                        "done", {"answer": final_answer, "route": route, "layers": layers}
+                    )
+            except (asyncio.CancelledError, GeneratorExit):
+                # Real mid-stream disconnect / generator close: we CANNOT await here (RuntimeError on
+                # aclose, re-raised CancelledError on cancel), so persist what streamed as a detached
+                # task and propagate. This is the turn the old `await` in `finally` silently lost.
+                registry = getattr(request.app.state, "background_tasks", None)
+                if tokens and registry is not None:
+                    _spawn_persist(
+                        registry, sessionmaker, session_id, payload.message, "".join(tokens).strip()
+                    )
+                raise
             except Exception as exc:
                 logger.error("chat_stream_failed", exc_info=True)
                 err: dict = {"detail": str(exc)}
                 if isinstance(exc, AppException) and getattr(exc, "code", None):
                     err["code"] = exc.code
                 yield sse_event("error", err)
+                # Ordinary exception (not a BaseException) → awaiting is safe; persist synchronously.
+                try:
+                    await _persist_turn(
+                        sessionmaker, session_id, payload.message, "".join(tokens).strip()
+                    )
+                except Exception:
+                    logger.error("chat_stream_persist_failed", exc_info=True)
                 return
-            finally:
-                # Persist the turn from a FRESH session (the request db is closing by now).
-                # Skip if the client disconnected before any answer streamed.
-                if not await request.is_disconnected() or answered:
-                    try:
-                        await _persist_turn(
-                            sessionmaker, session_id, payload.message, "".join(tokens).strip()
-                        )
-                    except Exception:
-                        logger.error("chat_stream_persist_failed", exc_info=True)
+
+            # Normal completion (incl. a polled disconnect that `break`s, NOT a cancellation): no
+            # BaseException is in flight, so awaiting the persist is safe and keeps it synchronous
+            # with the response. The user turn is always saved; the assistant turn only if non-empty.
+            try:
+                await _persist_turn(
+                    sessionmaker, session_id, payload.message, "".join(tokens).strip()
+                )
+            except Exception:
+                logger.error("chat_stream_persist_failed", exc_info=True)
 
         return StreamingResponse(
             event_stream(),

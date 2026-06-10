@@ -5,12 +5,14 @@ real LLM runs; they assert the exact SSE event sequence and that concatenated ``
 equal the final ``answer``. Auth + rate-limit are asserted to gate BEFORE the stream opens.
 """
 
+import asyncio
 import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from starlette.requests import Request as StarletteRequest
 
 from app import app
 from auth.dependencies import get_current_user
@@ -430,6 +432,69 @@ async def test_chat_json_infra_error_is_generic_not_free_tier():
         assert "free tier" not in resp.json()["detail"].lower()
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_chat_sse_disconnect_suppresses_done_and_still_persists():
+    """B19: when the client is gone, the stream does NOT push a `done` event, and the turn is still
+    persisted (the old `await` in `finally` lost it on a real disconnect)."""
+    fake_graph = _FakeGraph(tokens=("hi",), answer="hi")
+    app.dependency_overrides[get_current_user] = lambda: _fake_user()
+    app.dependency_overrides[get_graph] = lambda: fake_graph
+    app.dependency_overrides[get_llm_provider] = lambda: AsyncMock()
+    _override_clients()
+
+    fresh = AsyncMock()
+    saved = getattr(app.state, "db_sessionmaker", None)
+    app.state.db_sessionmaker = _fake_sessionmaker(fresh)
+    try:
+        with (
+            patch("app.repo.get_session", new_callable=AsyncMock, return_value=None),
+            patch("app.repo.create_session", new_callable=AsyncMock),
+            patch("app.repo.session_has_documents", new_callable=AsyncMock, return_value=False),
+            patch("app.repo.load_recent_messages", new_callable=AsyncMock, return_value=[]),
+            patch("app.repo.save_message", new_callable=AsyncMock) as save_msg,
+            patch.object(
+                StarletteRequest, "is_disconnected", new_callable=AsyncMock, return_value=True
+            ),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/api/chat",
+                    json={"message": "hi", "session_id": "s1", "web_search_allowed": False},
+                    headers={
+                        "Authorization": "Bearer test-token",
+                        "Accept": "text/event-stream",
+                    },
+                )
+        assert resp.status_code == 200
+        events = _parse_sse(resp.text)
+        # no `done` pushed at a client that already disconnected
+        assert all(e != "done" for e, _ in events), events
+        # ...but the turn is still persisted (user message at minimum)
+        assert "user" in [c.kwargs["role"] for c in save_msg.await_args_list]
+    finally:
+        app.dependency_overrides.clear()
+        if saved is not None:
+            app.state.db_sessionmaker = saved
+
+
+@pytest.mark.asyncio
+async def test_spawn_persist_runs_detached():
+    """B19: the cancel/close path schedules a detached persist that completes on the loop."""
+    import app as app_module
+
+    fresh = AsyncMock()
+    maker = _fake_sessionmaker(fresh)
+    registry: set = set()  # local ref keeps the detached task alive
+    with patch("app.repo.save_message", new_callable=AsyncMock) as save_msg:
+        app_module._spawn_persist(registry, maker, "s1", "hi", "answer")
+        for _ in range(5):  # let the detached task run to completion
+            await asyncio.sleep(0)
+    assert [c.kwargs["role"] for c in save_msg.await_args_list] == ["user", "assistant"]
+    fresh.commit.assert_awaited()
 
 
 # ── auth + rate-limit gate BEFORE the stream opens ────────────────────────────
