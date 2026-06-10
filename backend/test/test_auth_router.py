@@ -93,6 +93,24 @@ async def test_refresh_with_valid_refresh_token():
     assert new_claims["type"] == "access"
 
 
+async def test_refresh_preserves_guest_claim():
+    """B11: refreshing a GUEST token must keep is_guest=True on both new tokens — otherwise a
+    guest silently looks registered after one refresh and loses the upgrade CTA."""
+    sub = "guest-xyz"
+    token = create_refresh_token(subject=sub, is_guest=True)
+    result = await refresh(RefreshIn(refresh_token=token))
+    assert decode_token(result.access_token).get("is_guest") is True
+    assert decode_token(result.refresh_token).get("is_guest") is True
+
+
+async def test_refresh_keeps_registered_non_guest():
+    """A registered identity's refresh stays is_guest=False."""
+    token = create_refresh_token(subject="reg-1")  # is_guest defaults False
+    result = await refresh(RefreshIn(refresh_token=token))
+    assert decode_token(result.access_token).get("is_guest") is False
+    assert decode_token(result.refresh_token).get("is_guest") is False
+
+
 async def test_refresh_rejects_access_token():
     access = create_access_token(subject="user-abc")
     with pytest.raises(HTTPException) as exc_info:

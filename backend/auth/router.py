@@ -139,7 +139,12 @@ async def refresh(body: RefreshIn) -> TokenPair:
     except (jwt.PyJWTError, InvalidTokenTypeError) as exc:
         raise HTTPException(401, "invalid or expired refresh token") from exc
     sub = claims["sub"]
+    # Carry the identity's is_guest claim across the refresh. Without this, a guest's re-minted
+    # tokens defaulted to is_guest=False, so after one refresh (≤15 min) a guest silently looked
+    # "registered" to the client and lost the upgrade CTA. (Upgrade mints fresh non-guest tokens,
+    # so a registered identity's subsequent refreshes correctly stay is_guest=False.)
+    is_guest = bool(claims.get("is_guest", False))
     return TokenPair(
-        access_token=create_access_token(sub),
-        refresh_token=create_refresh_token(sub),
+        access_token=create_access_token(sub, is_guest=is_guest),
+        refresh_token=create_refresh_token(sub, is_guest=is_guest),
     )
