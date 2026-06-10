@@ -65,6 +65,20 @@ class LLMResponseError(LLMError):
 # ── Phase 6: freemium ladder ─────────────────────────────────────────────────
 
 
+class KeyDecryptionError(AppException):
+    """A stored BYOK key can't be decrypted — the master key (LLM_KEY_ENCRYPTION_KEY) was rotated
+    or the ciphertext is corrupt. Actionable: re-enter the key (it re-encrypts under the current
+    master key). Surfaced instead of a bare 500 so the client can prompt the user.
+    """
+
+    def __init__(self, detail: str | None = None) -> None:
+        super().__init__(
+            status_code=400,
+            detail=detail or "Your stored API key could not be decrypted. Please re-enter it.",
+            code="key_decryption_failed",
+        )
+
+
 class FreeTierExhaustedError(AppException):
     """Raised when a keyless user has used up the free allowance (per-user or global guard).
 

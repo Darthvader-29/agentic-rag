@@ -205,6 +205,30 @@ async def test_provider_pick_without_model_uses_tiered_synth(mock_openai_cls, mo
     mock_get_for.assert_awaited_once()
 
 
+# ── B13: undecryptable stored key → clear error, not a bare 500 ───────────────
+
+
+@pytest.mark.asyncio
+@patch("llm.dependencies.get_user_llm_key", new_callable=AsyncMock)
+async def test_undecryptable_key_raises_clear_error(mock_get_key):
+    """A rotated master key / corrupt ciphertext surfaces a clear 400 (code key_decryption_failed)
+    telling the user to re-enter the key — not an unhandled InvalidToken → bare 500."""
+    from exceptions import KeyDecryptionError
+
+    user = _fake_user()
+    row = MagicMock(spec=UserLLMKey)
+    row.provider = "openai"
+    row.ciphertext = "not-a-valid-fernet-token"  # decrypt_key will raise InvalidToken
+    mock_get_key.return_value = row
+    db = AsyncMock()
+
+    with pytest.raises(KeyDecryptionError) as exc_info:
+        await resolve_provider(db, _fresh_redis(), user)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.code == "key_decryption_failed"
+
+
 # ── No-key-leak invariant ─────────────────────────────────────────────────────
 
 

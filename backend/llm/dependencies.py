@@ -21,6 +21,8 @@ No-key-leak invariant (Phase 4, carried forward): the decrypted api_key is a loc
 from __future__ import annotations
 
 import redis.asyncio as aioredis
+import structlog
+from cryptography.fernet import InvalidToken
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,13 +32,29 @@ from config import settings
 from database.models import User
 from database.repository import get_user_llm_key, get_user_llm_key_for_provider
 from dependencies import get_db_session, get_redis
-from exceptions import FreeTierExhaustedError
+from exceptions import FreeTierExhaustedError, KeyDecryptionError
 from llm.base import LLMProvider
 from llm.factory import build_provider
 from llm.freemium import within_free_allowance
 
+logger = structlog.get_logger(__name__)
+
 # The provider names the picker may send; anything else is treated as "no choice".
 _ALLOWED_PROVIDERS = {"gemini", "openai", "anthropic"}
+
+
+def _decrypt_or_raise(ciphertext: str) -> str:
+    """Decrypt a stored BYOK key, mapping a Fernet failure to a clear, actionable error.
+
+    An ``InvalidToken`` means the master key was rotated or the ciphertext is corrupt; since one
+    master key encrypts ALL of a user's keys, there is no other key to fall through to — surface a
+    400 telling the client to re-enter the key instead of a bare 500. Never logs key material.
+    """
+    try:
+        return decrypt_key(ciphertext)
+    except InvalidToken as exc:
+        logger.error("byok_key_decrypt_failed")
+        raise KeyDecryptionError() from exc
 
 
 async def _read_model_selection(request: Request | None) -> tuple[str | None, str | None]:
@@ -79,7 +97,7 @@ async def resolve_provider(
     if provider_choice in _ALLOWED_PROVIDERS:
         row = await get_user_llm_key_for_provider(db, user_id=user.id, provider=provider_choice)
         if row is not None:
-            api_key = decrypt_key(row.ciphertext)  # plaintext: local only
+            api_key = _decrypt_or_raise(row.ciphertext)  # plaintext: local only
             return build_provider(
                 provider_choice,
                 api_key,
@@ -91,7 +109,7 @@ async def resolve_provider(
     row = await get_user_llm_key(db, user_id=user.id)
     if row is not None:
         provider_name = row.provider or settings.DEFAULT_LLM_PROVIDER
-        api_key = decrypt_key(row.ciphertext)  # plaintext: local only, never persisted/logged
+        api_key = _decrypt_or_raise(row.ciphertext)  # plaintext: local only, never persisted/logged
         return build_provider(
             provider_name,
             api_key,

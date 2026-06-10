@@ -208,7 +208,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
 - **Test:** assert `PUT /api/keys/<invalid>` → 422; assert key selection is deterministic.
 
 ### B13 — Fernet decryption failure is unhandled → permanent 500 on every chat for BYOK users after a key rotation
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM
 - **Files:** `backend/llm/dependencies.py` (`get_llm_provider`, `decrypt_key`), `backend/auth/crypto.py`.
 - **Symptom:** `decrypt_key(row.ciphertext)` raises `InvalidToken` if `LLM_KEY_ENCRYPTION_KEY` was rotated
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B12 — commit pending — rotate_key/delete_key validate the path provider via Annotated[str, Path(pattern=...)] (shared LLM_PROVIDER_PATTERN) → 422 on a typo; get_user_llm_key now ORDER BY updated_at DESC, id DESC for deterministic selection. keys tests 15/15 (DB-backed ran).
+- B13 — commit pending — added KeyDecryptionError (400, code key_decryption_failed) + _decrypt_or_raise wrapping both decrypt sites in resolve_provider, so a rotated/corrupt key gives an actionable "re-enter your key" 400 instead of an unhandled InvalidToken 500. provider tests 10/10.
+- B12 — 2786cdd — rotate_key/delete_key validate the path provider via Annotated[str, Path(pattern=...)] (shared LLM_PROVIDER_PATTERN) → 422 on a typo; get_user_llm_key now ORDER BY updated_at DESC, id DESC for deterministic selection. keys tests 15/15 (DB-backed ran).
 - B11 — 15d5583 — refresh now propagates is_guest from the incoming refresh token's claims into both re-minted tokens (was defaulting to False); upgrade still mints non-guest so registered stays False. refresh tests 5/5.
 - B10 — 479beac — replaced serverless-rejected delete-by-filter with id-prefix enumeration + delete-by-ids; removed the inner try/except so failures propagate through @retry to the caller (no more false "cleaned"). Verified pinecone 9.0.1 list(prefix=) support. new test 3/3.
 - B09 — 3ea2ff9 — CONFIRMED real (supervisor emits flat RAG|WEB|BOTH|DIRECT; frontend routeTypeSchema has no BOTH). JSON path now maps BOTH→WEB+RAG (mirrors the SSE client-side mapRoute); regression asserts it. chat 9/9.
