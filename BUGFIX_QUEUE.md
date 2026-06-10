@@ -246,7 +246,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
   for RAG/BOTH/DIRECT).
 
 ### B16 — Client `session_id` longer than 64 chars → unhandled 500 (should be 422)
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM
 - **Files:** `backend/app.py` (`ChatRequest.session_id`, `PresignRequest.session_id`), `backend/database/models.py` (`Session.id` is `String(64)`).
 - **Symptom:** `session_id` is an unbounded `str`; a 65+ char value passes validation then trips
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B15 — commit pending — normalize_decision now matches the first whole-word RAG|WEB|DIRECT (regex \b...\b) instead of raw startswith, so **WEB**/"WEB"/Answer: WEB route correctly; WEBSITE/DIRECTION still fall back. on hot path via base.route(). new test 17 + provider/supervisor 55/55.
+- B16 — commit pending — session_id fields (ChatRequest/PresignRequest/CleanupRequest) bounded to max_length=64 → over-long id is a clean 422 not a DB-truncation 500. chat 10/10. (PresignRequest surfaces it as 422 once B17 lands.)
+- B15 — 8c40fa6 — normalize_decision now matches the first whole-word RAG|WEB|DIRECT (regex \b...\b) instead of raw startswith, so **WEB**/"WEB"/Answer: WEB route correctly; WEBSITE/DIRECTION still fall back. on hot path via base.route(). new test 17 + provider/supervisor 55/55.
 - B14 — 058a976 — within_free_allowance now fails OPEN (log + allow) on a RedisError instead of 500; counter TTL armed atomically via SET key 0 EX ttl NX (no no-TTL leak window) which also preserved the set-once EXPIRE test. freemium 11/11.
 - B13 — 0d0d58c — added KeyDecryptionError (400, code key_decryption_failed) + _decrypt_or_raise wrapping both decrypt sites in resolve_provider, so a rotated/corrupt key gives an actionable "re-enter your key" 400 instead of an unhandled InvalidToken 500. provider tests 10/10.
 - B12 — 2786cdd — rotate_key/delete_key validate the path provider via Annotated[str, Path(pattern=...)] (shared LLM_PROVIDER_PATTERN) → 422 on a typo; get_user_llm_key now ORDER BY updated_at DESC, id DESC for deterministic selection. keys tests 15/15 (DB-backed ran).

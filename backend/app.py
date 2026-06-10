@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -163,7 +163,9 @@ app.include_router(keys_router)
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: str | None = None
+    # Bounded to Session.id's String(64): an over-long client id used to pass validation then trip
+    # a DB StringDataRightTruncation at flush → 500. Cap it so it's a clean 422 instead.
+    session_id: str | None = Field(default=None, max_length=64)
     web_search_allowed: bool = True
     # M7: optional per-conversation provider/model pick from the chat picker. Honored only for a
     # BYOK user who holds a key for the chosen provider (model → synthesis model); ignored for the
@@ -173,7 +175,7 @@ class ChatRequest(BaseModel):
 
 
 class CleanupRequest(BaseModel):
-    session_id: str
+    session_id: str = Field(max_length=64)
 
 
 class UploadResponse(BaseModel):
@@ -187,7 +189,8 @@ class UploadResponse(BaseModel):
 class PresignRequest(BaseModel):
     filename: str
     content_type: str | None = None
-    session_id: str | None = None  # optional; a new one is created and returned if absent
+    # optional; a new one is created and returned if absent. Bounded to Session.id's String(64).
+    session_id: str | None = Field(default=None, max_length=64)
 
 
 class PresignResponse(BaseModel):

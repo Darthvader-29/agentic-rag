@@ -378,6 +378,26 @@ async def test_chat_json_path_maps_both_route_to_web_rag():
         app.dependency_overrides.clear()
 
 
+@pytest.mark.asyncio
+async def test_chat_rejects_overlong_session_id():
+    """B16: a session_id longer than Session.id's String(64) is a clean 422, not a 500 from a DB
+    StringDataRightTruncation at flush."""
+    app.dependency_overrides[get_current_user] = lambda: _fake_user()
+    app.dependency_overrides[get_graph] = lambda: _FakeGraph()
+    app.dependency_overrides[get_llm_provider] = lambda: AsyncMock()
+    _override_clients()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/chat",
+                json={"message": "hi", "session_id": "x" * 65, "web_search_allowed": False},
+                headers={"Authorization": "Bearer test-token"},
+            )
+        assert resp.status_code == 422
+    finally:
+        app.dependency_overrides.clear()
+
+
 # ── auth + rate-limit gate BEFORE the stream opens ────────────────────────────
 
 
