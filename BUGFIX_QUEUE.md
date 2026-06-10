@@ -294,7 +294,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
   of the cancellation-safe persistence helper).
 
 ### B20 — SSE `status` events describe work that already finished ("synthesizing" arrives after the last token)
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM (UX correctness)
 - **Files:** `backend/app.py` (the `stream_mode="updates"` loop, `_node_stage`).
 - **Symptom:** `updates` emits a node's update *after* it completes, so "routing"/"retrieving"/
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B19 — commit pending — removed await-in-finally; persist synchronously on normal/error paths, detach (asyncio.ensure_future + app.state.background_tasks ref) on CancelledError/GeneratorExit, and suppress `done` to a disconnected client. Registry on app.state (per-process infra) keeps statelessness test green. sse+stateless+json 18/18.
+- B20 — commit pending — status now LEADS work: emit "routing" up front, then on each node completion announce the next phase (supervisor→_stage_after_route; vector/web→synthesizing). synthesizing now precedes the first token. sse 14/14; stages still match SseStageSchema (no FE change).
+- B19 — 0288167 — removed await-in-finally; persist synchronously on normal/error paths, detach (asyncio.ensure_future + app.state.background_tasks ref) on CancelledError/GeneratorExit, and suppress `done` to a disconnected client. Registry on app.state (per-process infra) keeps statelessness test green. sse+stateless+json 18/18.
 - B18 — 6c7e81a — JSON chat path's except Exception now raises a generic 500 ("request failed unexpectedly") instead of "free tier Limit Reached"; LLM/402 AppExceptions still pass through. chat 11/11.
 - B17 — 17df8ca — _upload_presign guards body parse (ValueError/ValidationError → 422) so a request defect (bad JSON, over-long session_id) no longer hits the blanket except → 500. upload 11/11.
 - B16 — fe8355d — session_id fields (ChatRequest/PresignRequest/CleanupRequest) bounded to max_length=64 → over-long id is a clean 422 not a DB-truncation 500. chat 10/10. (PresignRequest surfaces it as 422 once B17 lands.)

@@ -435,6 +435,46 @@ async def test_chat_json_infra_error_is_generic_not_free_tier():
 
 
 @pytest.mark.asyncio
+async def test_chat_sse_synthesizing_status_precedes_first_token():
+    """B20: the status indicator LEADS the work — 'routing' is first and 'synthesizing' is emitted
+    before the first token, not after the last one (the old node-completion mapping trailed)."""
+    fake_graph = _FakeGraph(route="RAG", tokens=("Hello", " world"), answer="Hello world")
+    app.dependency_overrides[get_current_user] = lambda: _fake_user()
+    app.dependency_overrides[get_graph] = lambda: fake_graph
+    app.dependency_overrides[get_llm_provider] = lambda: AsyncMock()
+    _override_clients()
+    try:
+        with (
+            patch("app.repo.get_session", new_callable=AsyncMock, return_value=None),
+            patch("app.repo.create_session", new_callable=AsyncMock),
+            patch("app.repo.session_has_documents", new_callable=AsyncMock, return_value=True),
+            patch("app.repo.load_recent_messages", new_callable=AsyncMock, return_value=[]),
+            patch("app.repo.save_message", new_callable=AsyncMock),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/api/chat",
+                    json={"message": "hi", "session_id": "s1", "web_search_allowed": False},
+                    headers={
+                        "Authorization": "Bearer test-token",
+                        "Accept": "text/event-stream",
+                    },
+                )
+        assert resp.status_code == 200
+        events = _parse_sse(resp.text)
+        assert events[0] == ("status", {"stage": "routing"})  # routing leads
+        synth_idx = next(
+            i for i, (e, d) in enumerate(events) if e == "status" and d == {"stage": "synthesizing"}
+        )
+        first_token_idx = next(i for i, (e, _) in enumerate(events) if e == "token")
+        assert synth_idx < first_token_idx, f"synthesizing must precede tokens; events={events}"
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
 async def test_chat_sse_disconnect_suppresses_done_and_still_persists():
     """B19: when the client is gone, the stream does NOT push a `done` event, and the turn is still
     persisted (the old `await` in `finally` lost it on a real disconnect)."""

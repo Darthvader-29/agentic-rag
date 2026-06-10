@@ -482,18 +482,20 @@ async def get_session_graph(
 # ========= CHAT =========
 
 
-def _node_stage(node: str) -> str | None:
-    """Map a graph node to the coarse SSE ``status`` stage the frontend renders (None to skip).
+def _stage_after_route(route: str | None) -> str:
+    """The SSE ``status`` stage that begins once the supervisor has picked ``route``.
 
-    A function (not a module-level dict) keeps app.py free of mutable module state — the
-    horizontal-scale invariant in test_statelessness: any instance can serve any request.
+    ``stream_mode="updates"`` only tells us a node FINISHED, so we lead the indicator: when the
+    supervisor completes, the NEXT phase is starting — retrieval for RAG/BOTH, web search for WEB,
+    or straight to synthesis for DIRECT. (Old code emitted a node's own stage on its completion, so
+    "synthesizing" arrived AFTER the last token — always one phase behind the real work.)
     """
-    return {
-        "supervisor": "routing",
-        "vector": "retrieving",
-        "web": "searching web",
-        "synthesis": "synthesizing",
-    }.get(node)
+    r = (route or "").upper()
+    if r == "WEB":
+        return "searching web"
+    if r == "DIRECT":
+        return "synthesizing"  # no retrieval node runs
+    return "retrieving"  # RAG / BOTH (vector runs; web for BOTH is coarse-folded)
 
 
 def _count_context_chunks(state: dict) -> int:
@@ -633,7 +635,19 @@ async def chat(
             route: str | None = None
             layers: list[str] = []
             disconnected = False
+
+            def _emit_stage(stage: str) -> str | None:
+                """Return an SSE status frame for `stage` the first time it's seen, else None."""
+                if stage in seen_stages:
+                    return None
+                seen_stages.add(stage)
+                return sse_event("status", {"stage": stage})
+
             try:
+                # Routing is in flight from the moment we start streaming — emit it up front rather
+                # than after the supervisor node completes (which is when its `updates` event lands).
+                if frame := _emit_stage("routing"):
+                    yield frame
                 async for mode, chunk in graph.astream(
                     state,
                     stream_mode=["updates", "custom"],
@@ -650,14 +664,18 @@ async def chat(
                         elif kind == "component":
                             yield sse_event("component", chunk["data"])
                     elif mode == "updates":
+                        # `updates` signals a node FINISHED → announce the NEXT phase that's starting,
+                        # so the indicator leads the work instead of trailing it (B20).
                         for node, partial in chunk.items():
-                            stage = _node_stage(node)
-                            if stage and stage not in seen_stages:
-                                seen_stages.add(stage)
-                                yield sse_event("status", {"stage": stage})
                             if node == "supervisor" and isinstance(partial, dict):
                                 route = partial.get("route", route)
-                            if node == "synthesis" and isinstance(partial, dict):
+                                if frame := _emit_stage(_stage_after_route(route)):
+                                    yield frame
+                            elif node in ("vector", "web"):
+                                # retrieval done → synthesis is starting (tokens about to stream)
+                                if frame := _emit_stage("synthesizing"):
+                                    yield frame
+                            elif node == "synthesis" and isinstance(partial, dict):
                                 layers = partial.get("layers", layers)
                 final_answer = "".join(tokens).strip()
                 if not disconnected:  # don't push `done` at a client that already went away
