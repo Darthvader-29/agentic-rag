@@ -670,6 +670,10 @@ async def chat(
             "context_count": _count_context_chunks(result),
             "session_id": session_id,
             "layers": result.get("layers", []),
+            # Carry the parsed rich components (table/chart/citation/code/callout/media) on the
+            # blocking path too — the SSE path emits them as `component` events, but the JSON path
+            # previously dropped them, so flipping streaming OFF lost every rich block.
+            "components": result.get("components", []),
         }
 
 

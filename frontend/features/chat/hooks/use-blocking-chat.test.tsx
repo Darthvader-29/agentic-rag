@@ -49,6 +49,30 @@ describe("useBlockingChat", () => {
     expect(useChatStore.getState().isLoading).toBe(false);
   });
 
+  it("stores rich components from the blocking response (B06)", async () => {
+    (sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      answer: "See the table.",
+      route: "RAG",
+      context_count: 1,
+      session_id: "s1",
+      components: [
+        { type: "callout", level: "info", text: "note" },
+        { type: "table", columns: ["a"], rows: [["1"]] },
+      ],
+    });
+
+    const { result } = renderHook(() => useBlockingChat(), { wrapper });
+    act(() => result.current.sendMessage("show me", false));
+
+    await waitFor(() => {
+      const assistant = useChatStore.getState().messages[1];
+      // the blocking path no longer drops rich blocks — both are stored, in order
+      expect(assistant.components).toHaveLength(2);
+      expect(assistant.components?.[0]).toMatchObject({ type: "callout" });
+      expect(assistant.components?.[1]).toMatchObject({ type: "table" });
+    });
+  });
+
   it("on error writes an ERROR assistant bubble with the backend detail", async () => {
     (sendMessage as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error("Gemini 429")

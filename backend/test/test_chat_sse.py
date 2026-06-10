@@ -300,6 +300,49 @@ async def test_chat_sse_commits_session_before_stream_persists():
             app.state.db_sessionmaker = saved_sessionmaker
 
 
+@pytest.mark.asyncio
+async def test_chat_json_path_returns_components():
+    """Regression (B06): the blocking JSON path carries the graph's parsed rich components
+    (previously dropped, so flipping streaming OFF lost every table/chart/citation block)."""
+    comps = [{"type": "callout", "level": "info", "text": "n"}, {"type": "table", "rows": []}]
+
+    class _GraphWithComponents:
+        async def ainvoke(self, state):
+            return {
+                "answer": "see below",
+                "route": "RAG",
+                "context": "",
+                "components": comps,
+                "layers": [],
+            }
+
+    app.dependency_overrides[get_current_user] = lambda: _fake_user()
+    app.dependency_overrides[get_graph] = lambda: _GraphWithComponents()
+    app.dependency_overrides[get_llm_provider] = lambda: AsyncMock()
+    _override_clients()
+    try:
+        with (
+            patch("app.repo.get_session", new_callable=AsyncMock, return_value=None),
+            patch("app.repo.create_session", new_callable=AsyncMock),
+            patch("app.repo.session_has_documents", new_callable=AsyncMock, return_value=False),
+            patch("app.repo.load_recent_messages", new_callable=AsyncMock, return_value=[]),
+            patch("app.repo.save_message", new_callable=AsyncMock),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/api/chat",
+                    json={"message": "hi", "session_id": "s1", "web_search_allowed": False},
+                    headers={"Authorization": "Bearer test-token"},  # no Accept → JSON path
+                )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["components"] == comps
+    finally:
+        app.dependency_overrides.clear()
+
+
 # ── auth + rate-limit gate BEFORE the stream opens ────────────────────────────
 
 

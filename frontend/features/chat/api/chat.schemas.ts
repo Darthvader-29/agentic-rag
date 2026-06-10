@@ -27,6 +27,12 @@ export const chatResponseSchema = z.object({
   route: routeTypeSchema,
   context_count: z.number().int().nonnegative(),
   session_id: z.string().optional(),
+  // Parsed rich components on the blocking path (mirrors the SSE `component` events). Kept
+  // permissive (only `type` required, rest passthrough) so an unknown block degrades to prose
+  // at the renderer rather than failing the whole response. Absent ⇒ [].
+  components: z
+    .array(z.object({ type: z.string() }).passthrough())
+    .optional(),
 });
 
 export const uploadResponseSchema = z

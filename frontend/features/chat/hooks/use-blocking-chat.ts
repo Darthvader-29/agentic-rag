@@ -26,6 +26,7 @@ function synthSources(count: number): Source[] {
 export function useBlockingChat() {
   const beginTurn = useChatStore((s) => s.beginTurn);
   const appendContent = useChatStore((s) => s.appendContent);
+  const addComponent = useChatStore((s) => s.addComponent);
   const pushStep = useChatStore((s) => s.pushStep);
   const setSources = useChatStore((s) => s.setSources);
   const setRoute = useChatStore((s) => s.setRoute);
@@ -49,6 +50,9 @@ export function useBlockingChat() {
       if (!ctx) return;
       const { assistantId } = ctx;
       appendContent(assistantId, res.answer);
+      // Store every rich block the backend parsed (table/chart/citation/code/callout/media) so the
+      // blocking path renders the same components the streaming path does (M10).
+      (res.components ?? []).forEach((c) => addComponent(assistantId, c));
       setRoute(assistantId, res.route);
       setSources(assistantId, synthSources(res.context_count));
       setSourcesCount(assistantId, res.context_count);
