@@ -26,6 +26,16 @@ function persistSessionId(id: string): void {
   if (typeof window !== "undefined") localStorage.setItem(SESSION_KEY, id);
 }
 
+/**
+ * Drop the persisted session id locally so the next request mints a fresh one. Unlike
+ * `cleanupSession`, this makes NO backend call — it's for an identity change (login/register/
+ * logout) where the previous session belongs to a different user, so the backend would 403 a
+ * cleanup sent with the new identity's token. The next `getSessionId()` lazily generates a new id.
+ */
+export function clearSessionId(): void {
+  if (typeof window !== "undefined") localStorage.removeItem(SESSION_KEY);
+}
+
 export async function sendMessage(
   message: string,
   webSearchAllowed: boolean,

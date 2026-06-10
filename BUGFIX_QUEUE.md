@@ -55,7 +55,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
   before the generator starts yielding).
 
 ### B02 — Logging in as a different account keeps the old `rag_session_id` → every chat 403s
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** HIGH
 - **Files:** `frontend/features/auth/hooks/use-auth-mutation.ts` (`onSuccess`), `frontend/features/chat/api/chat.api.ts` (`getSessionId` / `rag_session_id` localStorage key), `frontend/features/chat/store/chat.store.ts`, `frontend/features/auth/hooks/use-auth.ts`.
 - **Symptom:** Login/register `onSuccess` clears React Query but never rotates the persisted
@@ -396,4 +396,5 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B01 — commit pending — commit resolved session row before SSE stream opens so first-turn message/markdown writes no longer FK-violate an uncommitted parent; regression test asserts request-db commit precedes fresh-session persistence (test_chat_sse: 7/7). Pre-existing unrelated reds: 5 test_config env-validation tests.
+- B02 — commit pending — shared resetIdentityState() rotates rag_session_id + wipes chat store on login/register (cache:clear) and logout, gated off the in-place upgrade (cache:invalidate) so it keeps its session; new regression test + 28 auth/chat tests green.
+- B01 — b1032cd — commit resolved session row before SSE stream opens so first-turn message/markdown writes no longer FK-violate an uncommitted parent; regression test asserts request-db commit precedes fresh-session persistence (test_chat_sse: 7/7). Pre-existing unrelated reds: 5 test_config env-validation tests.

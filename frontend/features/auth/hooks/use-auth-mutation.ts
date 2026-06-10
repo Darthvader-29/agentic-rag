@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { useAuthStore } from "@/features/auth/store/auth.store";
 import type { TokenPair } from "@/features/auth/api/auth.schemas";
 import { isApiError } from "@/lib/api/api-error";
+import { resetIdentityState } from "@/features/auth/lib/reset-identity";
 
 /**
  * Shared factory behind useLogin / useRegister / useUpgrade. All three are the same
@@ -52,7 +53,12 @@ export function useAuthMutation<TVars extends { email: string }>(
       setTokens(tokens, { isGuest: false });
       setEmail(vars.email);
       if (config.cache === "clear") {
+        // login / register switch to a DIFFERENT user_id (the prior caches + chat session belong
+        // to another identity). Wipe caches AND rotate the chat session, else the stale
+        // rag_session_id 403s every chat for the new identity. "invalidate" (upgrade) keeps the
+        // same user_id, so its session/conversation stay valid and must NOT be reset.
         qc.clear();
+        resetIdentityState();
       } else {
         qc.invalidateQueries();
       }
