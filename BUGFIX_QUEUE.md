@@ -267,7 +267,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
 - **Test:** assert a malformed presign body → 422.
 
 ### B18 — JSON chat path mislabels every infrastructure failure as a free-tier limit
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM (UX/observability correctness)
 - **Files:** `backend/app.py` (the `except Exception` around `graph.ainvoke` on the JSON path).
 - **Symptom:** Non-`AppException` failures (DB/Pinecone outage, code bugs) are turned into
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B17 — commit pending — _upload_presign guards body parse (ValueError/ValidationError → 422) so a request defect (bad JSON, over-long session_id) no longer hits the blanket except → 500. upload 11/11.
+- B18 — commit pending — JSON chat path's except Exception now raises a generic 500 ("request failed unexpectedly") instead of "free tier Limit Reached"; LLM/402 AppExceptions still pass through. chat 11/11.
+- B17 — 17df8ca — _upload_presign guards body parse (ValueError/ValidationError → 422) so a request defect (bad JSON, over-long session_id) no longer hits the blanket except → 500. upload 11/11.
 - B16 — fe8355d — session_id fields (ChatRequest/PresignRequest/CleanupRequest) bounded to max_length=64 → over-long id is a clean 422 not a DB-truncation 500. chat 10/10. (PresignRequest surfaces it as 422 once B17 lands.)
 - B15 — 8c40fa6 — normalize_decision now matches the first whole-word RAG|WEB|DIRECT (regex \b...\b) instead of raw startswith, so **WEB**/"WEB"/Answer: WEB route correctly; WEBSITE/DIRECTION still fall back. on hot path via base.route(). new test 17 + provider/supervisor 55/55.
 - B14 — 058a976 — within_free_allowance now fails OPEN (log + allow) on a RedisError instead of 500; counter TTL armed atomically via SET key 0 EX ttl NX (no no-TTL leak window) which also preserved the set-once EXPIRE test. freemium 11/11.

@@ -667,11 +667,15 @@ async def chat(
         try:
             result = await graph.ainvoke(state)
         except (AppException, HTTPException):
+            # LLM errors (LLMError subclasses) and the real free-tier 402 (FreeTierExhaustedError)
+            # are AppExceptions — they pass through with their correct status/message.
             raise
         except Exception as e:
+            # Everything reaching here is NON-quota (DB/Pinecone outage, a code bug). Don't claim a
+            # free-tier limit — that misleads paid BYOK users and hides the real cause (logged).
             logger.error("chat_failed", exc_info=True)
             raise AppException(
-                status_code=500, detail="free tier Limit Reached for API please try again later"
+                status_code=500, detail="The chat request failed unexpectedly. Please try again."
             ) from e
 
         answer = result.get("answer", "")

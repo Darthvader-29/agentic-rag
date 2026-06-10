@@ -398,6 +398,40 @@ async def test_chat_rejects_overlong_session_id():
         app.dependency_overrides.clear()
 
 
+@pytest.mark.asyncio
+async def test_chat_json_infra_error_is_generic_not_free_tier():
+    """B18: a non-quota failure (e.g. Pinecone/DB outage) on the JSON path is a generic 500 —
+    NOT mislabeled 'free tier Limit Reached', which misled paid BYOK users."""
+
+    class _BoomGraph:
+        async def ainvoke(self, state):
+            raise RuntimeError("pinecone unavailable")
+
+    app.dependency_overrides[get_current_user] = lambda: _fake_user()
+    app.dependency_overrides[get_graph] = lambda: _BoomGraph()
+    app.dependency_overrides[get_llm_provider] = lambda: AsyncMock()
+    _override_clients()
+    try:
+        with (
+            patch("app.repo.get_session", new_callable=AsyncMock, return_value=None),
+            patch("app.repo.create_session", new_callable=AsyncMock),
+            patch("app.repo.session_has_documents", new_callable=AsyncMock, return_value=False),
+            patch("app.repo.load_recent_messages", new_callable=AsyncMock, return_value=[]),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/api/chat",
+                    json={"message": "hi", "session_id": "s1", "web_search_allowed": False},
+                    headers={"Authorization": "Bearer test-token"},  # no Accept → JSON path
+                )
+        assert resp.status_code == 500
+        assert "free tier" not in resp.json()["detail"].lower()
+    finally:
+        app.dependency_overrides.clear()
+
+
 # ── auth + rate-limit gate BEFORE the stream opens ────────────────────────────
 
 
