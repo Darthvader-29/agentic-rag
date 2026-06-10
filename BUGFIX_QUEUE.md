@@ -232,7 +232,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
   logs, rather than raising.
 
 ### B15 — Supervisor route parsing: markdown-wrapped labels collapse to `DIRECT`, skipping web/RAG
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM
 - **Files:** `backend/llm/_prompts.py` (`normalize_decision`), `backend/components/router.py` (`decide_agentic_route`).
 - **Symptom:** `normalize_decision` uses `startswith("RAG"/"WEB")` on the raw reply, so `**WEB**`,
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B14 — commit pending — within_free_allowance now fails OPEN (log + allow) on a RedisError instead of 500; counter TTL armed atomically via SET key 0 EX ttl NX (no no-TTL leak window) which also preserved the set-once EXPIRE test. freemium 11/11.
+- B15 — commit pending — normalize_decision now matches the first whole-word RAG|WEB|DIRECT (regex \b...\b) instead of raw startswith, so **WEB**/"WEB"/Answer: WEB route correctly; WEBSITE/DIRECTION still fall back. on hot path via base.route(). new test 17 + provider/supervisor 55/55.
+- B14 — 058a976 — within_free_allowance now fails OPEN (log + allow) on a RedisError instead of 500; counter TTL armed atomically via SET key 0 EX ttl NX (no no-TTL leak window) which also preserved the set-once EXPIRE test. freemium 11/11.
 - B13 — 0d0d58c — added KeyDecryptionError (400, code key_decryption_failed) + _decrypt_or_raise wrapping both decrypt sites in resolve_provider, so a rotated/corrupt key gives an actionable "re-enter your key" 400 instead of an unhandled InvalidToken 500. provider tests 10/10.
 - B12 — 2786cdd — rotate_key/delete_key validate the path provider via Annotated[str, Path(pattern=...)] (shared LLM_PROVIDER_PATTERN) → 422 on a typo; get_user_llm_key now ORDER BY updated_at DESC, id DESC for deterministic selection. keys tests 15/15 (DB-backed ran).
 - B11 — 15d5583 — refresh now propagates is_guest from the incoming refresh token's claims into both re-minted tokens (was defaulting to False); upgrade still mints non-guest so registered stays False. refresh tests 5/5.

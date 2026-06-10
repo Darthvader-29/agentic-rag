@@ -14,6 +14,7 @@ the cache hit rate (caching skill, "prefix changes" sharp edge).
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -59,12 +60,26 @@ def routing_user(query: str, has_documents: bool, web_allowed: bool) -> str:
     )
 
 
+_LABEL_RE = re.compile(r"\b(RAG|WEB|DIRECT)\b")
+
+
 def normalize_decision(text: str) -> Route:
-    """Normalize a provider's routing response to one of RAG/WEB/DIRECT."""
-    t = text.strip().upper()
-    if t.startswith("RAG"):
+    """Normalize a provider's routing response to one of RAG/WEB/DIRECT.
+
+    Tolerant of decoration the model sometimes wraps around its one-word answer — markdown
+    (``**WEB**``), code fences, quotes (``"WEB"``), or a prefix (``Answer: WEB``). The old raw
+    ``startswith`` saw those as non-matching and silently collapsed to ``DIRECT`` (a *recognized*
+    label, so the downstream defensive default never fired) — e.g. ``**WEB**`` with no docs skipped
+    web search and hallucinated. Match the first recognized label as a WHOLE WORD; only fall back to
+    ``DIRECT`` when no known label is present.
+    """
+    match = _LABEL_RE.search(text.upper())
+    if match is None:
+        return "DIRECT"
+    label = match.group(1)
+    if label == "RAG":
         return "RAG"
-    if t.startswith("WEB"):
+    if label == "WEB":
         return "WEB"
     return "DIRECT"
 
