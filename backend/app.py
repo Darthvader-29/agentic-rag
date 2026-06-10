@@ -165,6 +165,11 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
     web_search_allowed: bool = True
+    # M7: optional per-conversation provider/model pick from the chat picker. Honored only for a
+    # BYOK user who holds a key for the chosen provider (model → synthesis model); ignored for the
+    # free tier. Resolution lives in llm/dependencies.get_llm_provider → resolve_provider.
+    provider: str | None = None
+    model: str | None = None
 
 
 class CleanupRequest(BaseModel):

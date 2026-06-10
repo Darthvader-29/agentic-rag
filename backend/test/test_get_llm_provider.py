@@ -14,7 +14,7 @@ from auth.crypto import encrypt_key
 from config import settings
 from database.models import User, UserLLMKey
 from exceptions import FreeTierExhaustedError
-from llm.dependencies import get_llm_provider
+from llm.dependencies import get_llm_provider, resolve_provider
 
 
 def _fake_user() -> User:
@@ -142,6 +142,67 @@ async def test_fallback_set_but_allowance_used_raises_402(mock_get_key, mock_all
             await get_llm_provider(user=user, db=db, redis=_fresh_redis())
 
     mock_allow.assert_awaited_once()
+
+
+# ── B05: per-conversation provider/model pick ────────────────────────────────
+
+
+@pytest.mark.asyncio
+@patch("llm.dependencies.get_user_llm_key_for_provider", new_callable=AsyncMock)
+@patch("llm.anthropic.AsyncAnthropic")
+async def test_provider_pick_honored_with_stored_key(mock_anthropic_cls, mock_get_for):
+    """A picked provider the user holds a key for is used; the picked model becomes synth_model."""
+    user = _fake_user()
+    mock_get_for.return_value = _fake_key_row(provider="anthropic", plaintext="sk-ant")
+    db = AsyncMock()
+
+    provider = await resolve_provider(
+        db, _fresh_redis(), user, provider_choice="anthropic", model_choice="claude-picked"
+    )
+
+    assert provider.__class__.__name__ == "AnthropicProvider"
+    assert provider._synth_model == "claude-picked"  # picked model → synthesis model
+    assert provider._route_model == settings.tier_route_model("anthropic")  # routing stays tiered
+    mock_get_for.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("llm.dependencies.get_user_llm_key", new_callable=AsyncMock)
+@patch("llm.dependencies.get_user_llm_key_for_provider", new_callable=AsyncMock)
+@patch("llm.openai.AsyncOpenAI")
+async def test_provider_pick_without_matching_key_falls_through(
+    mock_openai_cls, mock_get_for, mock_get_key
+):
+    """Picking a provider the user has NO key for falls through to a stored key — never 500s."""
+    user = _fake_user()
+    mock_get_for.return_value = None  # no anthropic key
+    mock_get_key.return_value = _fake_key_row(provider="openai", plaintext="sk-test")
+    db = AsyncMock()
+
+    provider = await resolve_provider(
+        db, _fresh_redis(), user, provider_choice="anthropic", model_choice="x"
+    )
+
+    assert provider.__class__.__name__ == "OpenAIProvider"  # fell through to the held key
+    mock_get_for.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("llm.dependencies.get_user_llm_key_for_provider", new_callable=AsyncMock)
+@patch("llm.openai.AsyncOpenAI")
+async def test_provider_pick_without_model_uses_tiered_synth(mock_openai_cls, mock_get_for):
+    """Picking a provider but no model keeps the provider's tiered synth model."""
+    user = _fake_user()
+    mock_get_for.return_value = _fake_key_row(provider="openai", plaintext="sk-test")
+    db = AsyncMock()
+
+    provider = await resolve_provider(
+        db, _fresh_redis(), user, provider_choice="openai", model_choice=None
+    )
+
+    assert provider.__class__.__name__ == "OpenAIProvider"
+    assert provider._synth_model == settings.tier_synth_model("openai")
+    mock_get_for.assert_awaited_once()
 
 
 # ── No-key-leak invariant ─────────────────────────────────────────────────────

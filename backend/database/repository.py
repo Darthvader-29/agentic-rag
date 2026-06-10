@@ -195,6 +195,21 @@ async def get_user_llm_key(db: AsyncSession, *, user_id: uuid.UUID) -> UserLLMKe
     return result.scalar_one_or_none()
 
 
+async def get_user_llm_key_for_provider(
+    db: AsyncSession, *, user_id: uuid.UUID, provider: str
+) -> UserLLMKey | None:
+    """Return the user's stored key for a SPECIFIC provider, or None.
+
+    Used to honor a per-conversation provider pick (the chat model picker) — see resolve_provider.
+    """
+    result = await db.execute(
+        select(UserLLMKey)
+        .where(UserLLMKey.user_id == user_id, UserLLMKey.provider == provider)
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 # ── Phase 6: conversation history ────────────────────────────────────────────
 
 
