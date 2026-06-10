@@ -216,9 +216,10 @@ export function useStreamingChat() {
             if (sources.length > 0) setSources(assistantId, sources);
             // Phase 7: finalize the stats — totalMs, resolved route, tokens (null until the
             // backend reports them on done), trace id already set via onTrace.
-            const patch: Partial<{ content: string; stats: MessageStats }> = {
-              content: answer,
-            };
+            const patch: Partial<{ content: string; stats: MessageStats }> = {};
+            // Only overwrite the body with done.answer when it's non-empty — an empty/missing
+            // done.answer must NOT wipe the content already accumulated from token events (B26).
+            if (answer) patch.content = answer;
             if (stats) {
               stats = {
                 ...stats,

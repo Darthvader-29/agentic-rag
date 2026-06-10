@@ -362,7 +362,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
   token does not trigger a scroll-to-bottom.
 
 ### B26 — `done.answer` overwrites streamed content even when empty
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** LOW-MEDIUM
 - **Files:** `frontend/features/chat/hooks/use-streaming-chat.ts` (`onDone` building the finalize patch).
 - **Symptom:** `finalize` always writes `content: answer`, so if the backend's `done.answer` is empty/
@@ -396,7 +396,9 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B24 — commit pending — chat-screen tracks stickiness via a scroll listener on the radix viewport and only auto-scrolls when isNearBottom() — a streamed token no longer yanks the view down while the user reads earlier messages. Extracted isNearBottom helper + focused test 4/4; chat-screen typechecks.
+- B25 — SKIPPED — Deferred (needs your decision: beacon auth strategy). Not part of the active loop.
+- B26 — commit pending — onDone only overwrites content with done.answer when it's non-empty, so an empty/missing done.answer no longer wipes the streamed tokens. streaming hook 7/7.
+- B24 — 63fd4dd — chat-screen tracks stickiness via a scroll listener on the radix viewport and only auto-scrolls when isNearBottom() — a streamed token no longer yanks the view down while the user reads earlier messages. Extracted isNearBottom helper + focused test 4/4; chat-screen typechecks.
 - B23 — f7c8611 — parseSSE carries a pendingCR flag across reads and drops the LF that pairs with the previous chunk's trailing CR, so a CRLF straddling a chunk boundary no longer becomes a spurious \n\n frame terminator. parser+stream-chat 22/22.
 - B22 — 4e31d27 — added chat-store completeSteps (active→complete) called in streaming onDone/onError so the "Thinking…" spinner stops on a finished turn; only states change so the existing step-label test stays green. streaming/store 15/15.
 - B21 — 04b3643 — (a) markdown append is now an atomic INSERT ... ON CONFLICT DO UPDATE (SQL right() truncation) — concurrent first-appends keep both notes (real-DB concurrency test); (b) KG lock TTL 15→30, bounded blocking_timeout, and release/acquire failures are logged (was silently swallowed) so a lost-update is detectable. memory tests 25/25.

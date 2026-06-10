@@ -65,6 +65,28 @@ describe("useStreamingChat end-to-end", () => {
     expect(useChatStore.getState().isStreaming).toBe(false);
   });
 
+  it("keeps streamed content when done.answer is empty (B26)", async () => {
+    useChatStore.setState({ messages: [], isStreaming: false });
+    vi.mocked(streamChat).mockImplementationOnce(
+      async (_payload: unknown, h: Record<string, (...a: unknown[]) => void>) => {
+        h.onToken?.("Hello");
+        h.onToken?.(" world");
+        h.onDone?.({ answer: "", route: "RAG" }); // empty done.answer must not wipe content
+      }
+    );
+
+    const { result } = renderHook(() => useStreamingChat(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("q", false);
+    });
+
+    const assistant = useChatStore
+      .getState()
+      .messages.find((m) => m.role === "assistant")!;
+    expect(assistant.content).toBe("Hello world"); // streamed accumulation preserved
+    expect(assistant.status).toBe("done");
+  });
+
   it("a single done.layer fills the citation source's provenance layer (B07)", async () => {
     useChatStore.setState({ messages: [], isStreaming: false });
     vi.mocked(streamChat).mockImplementationOnce(
