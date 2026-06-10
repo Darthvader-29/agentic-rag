@@ -141,7 +141,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
   a backend test pins the `done` payload shape.
 
 ### B08 — Backend pydantic component models strip fields the UI needs (citation `url`/`layer`, media `caption`, callout/chart/table `title`/`caption`)
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM
 - **Files:** `backend/agents/schemas.py` (`CitationItem`, `MediaItem`, `CalloutComponent`, `ChartComponent`, `TableComponent`, `validate_component`), `frontend/features/chat/components/rich/*` (citation.tsx, media.tsx, sources-panel.tsx, provenance-badge.tsx).
 - **Symptom:** Backend component models declare only a subset of fields; `validate_component` returns
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B07 — commit pending — frontend now consumes the backend's actual `done.layers` set (was reading never-sent `done.sources`); single contributing layer fills citation-source provenance, multi-layer left to per-citation authority. Confirmed `layers` is answer-level deduped set (nodes._assemble_context). chat hooks 19/19, schemas 39/39.
+- B08 — commit pending — added optional url/layer (citation), caption (media/table), title (callout/chart) to the pydantic component models so emitted values survive validate_component; switched to model_dump(exclude_none=True) so absent optionals stay omitted (existing exact-dict tests green). agents 55/55.
+- B07 — 9b2c55a — frontend now consumes the backend's actual `done.layers` set (was reading never-sent `done.sources`); single contributing layer fills citation-source provenance, multi-layer left to per-citation authority. Confirmed `layers` is answer-level deduped set (nodes._assemble_context). chat hooks 19/19, schemas 39/39.
 - B06 — 093e36b — JSON /api/chat now returns `components`; chatResponseSchema accepts them; blocking hook stores each via addComponent so flipping streaming OFF keeps rich blocks. Backend chat 8/8, frontend blocking+schema 42/42.
 - B05 — ff44f4c — backend now reads the picker's provider/model off the chat body (resolve_provider helper); honored for a BYOK user holding that provider's key (model→synth), falls through (never 500) otherwise; frontend already sent them. test_get_llm_provider 9/9, chat/repo/async 34/34.
 - B04 — e6c43ca — clear tokens only on a definitive 401/403 refresh rejection; transient network/5xx errors propagate as retryable with tokens intact (no guest orphaning); new regression test, http-client 10/10.

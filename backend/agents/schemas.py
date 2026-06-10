@@ -26,11 +26,17 @@ class CitationItem(BaseModel):
     label: str
     source_id: str
     snippet: str = ""
+    # Optional, preserved for the UI: a source link-out and the Phase-7 retrieval-layer provenance
+    # (vector|graph|web|memory). The frontend tolerantly narrows `layer` and guards `url`; dropping
+    # them here (the old model omitted both) made clickable citations + provenance badges dead.
+    url: str | None = None
+    layer: str | None = None
 
 
 class MediaItem(BaseModel):
     url: str
     alt: str = ""
+    caption: str | None = None  # optional figcaption rendered under the media
 
 
 # ── Component catalog ────────────────────────────────────────────────────────
@@ -40,6 +46,7 @@ class TableComponent(BaseModel):
     type: Literal["table"]
     columns: list[str]
     rows: list[list[Any]]
+    caption: str | None = None  # optional <caption> the table renderer shows
 
 
 class ChartComponent(BaseModel):
@@ -47,6 +54,7 @@ class ChartComponent(BaseModel):
     chart: Literal["bar", "line", "pie"]
     x: list[Any]
     series: list[ChartSeries]
+    title: str | None = None  # optional figure title the chart renderer shows
 
 
 class CitationComponent(BaseModel):
@@ -64,6 +72,7 @@ class CalloutComponent(BaseModel):
     type: Literal["callout"]
     level: Literal["info", "warning", "tip"] = "info"
     text: str
+    title: str | None = None  # optional bold title above the callout text
 
 
 class MediaComponent(BaseModel):
@@ -95,7 +104,9 @@ def validate_component(obj: Any) -> dict | None:
         model = _ADAPTER.validate_python(obj)
     except ValidationError:
         return None
-    return model.model_dump()
+    # exclude_none so absent optionals (url/layer/caption/title) don't emit nulls — the wire shape
+    # is unchanged when they aren't present, and the frontend treats absent ⇒ no badge/caption.
+    return model.model_dump(exclude_none=True)
 
 
 def parse_components(text: str) -> tuple[str, list[dict]]:
