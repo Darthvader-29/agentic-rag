@@ -379,6 +379,10 @@ async def confirm_upload(
             await repo.set_document_status_by_id(
                 db, document_id=doc.id, status=DocumentStatus.FAILED
             )
+            # Commit the FAILED status BEFORE raising. The 409 unwinds through get_db_session's
+            # ``except: rollback()``, which would otherwise erase this UPDATE and leave the document
+            # stuck ``pending`` forever (status pollers never see ``failed``).
+            await db.commit()
             raise HTTPException(409, "object not uploaded")
         ingest_document.delay(
             document_id=doc.id,

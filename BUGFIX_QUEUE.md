@@ -70,7 +70,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
   the chat store is reset.
 
 ### B03 — `confirm_upload`: the FAILED status write is rolled back by its own 409 → document stuck `pending`
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** HIGH
 - **Files:** `backend/app.py` (`confirm_upload`), `backend/dependencies.py` (`get_db_session`), `backend/database/repository.py` (`set_document_status_by_id`).
 - **Symptom:** When the presigned object is missing, the endpoint sets `DocumentStatus.FAILED` then
@@ -396,5 +396,6 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B02 — commit pending — shared resetIdentityState() rotates rag_session_id + wipes chat store on login/register (cache:clear) and logout, gated off the in-place upgrade (cache:invalidate) so it keeps its session; new regression test + 28 auth/chat tests green.
+- B03 — commit pending — commit the FAILED status before raising the 409 so get_db_session's rollback can't erase it; regression asserts mark→commit ordering (test_upload: 9/9).
+- B02 — c30cdfa — shared resetIdentityState() rotates rag_session_id + wipes chat store on login/register (cache:clear) and logout, gated off the in-place upgrade (cache:invalidate) so it keeps its session; new regression test + 28 auth/chat tests green.
 - B01 — b1032cd — commit resolved session row before SSE stream opens so first-turn message/markdown writes no longer FK-violate an uncommitted parent; regression test asserts request-db commit precedes fresh-session persistence (test_chat_sse: 7/7). Pre-existing unrelated reds: 5 test_config env-validation tests.
