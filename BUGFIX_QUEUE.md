@@ -37,7 +37,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
 ## Priority 1 — new HIGH bugs (data loss / main user path)
 
 ### B01 — First turn of every new SSE chat is silently lost (FK violation on uncommitted session row)
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** HIGH
 - **Files:** `backend/app.py` (`_resolve_session`, the SSE chat generator, `_persist_turn`), `backend/agents/nodes.py` (`_persist_markdown` / synthesis node), `backend/memory/markdown.py`, `backend/dependencies.py` (`get_db_session`).
 - **Symptom:** For a brand-new `session_id` over the SSE transport, `_resolve_session` creates the
@@ -395,3 +395,5 @@ These are real but either need a design/policy call or are infra/non-code-local;
 ## Run log (newest first)
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
+
+- B01 — commit pending — commit resolved session row before SSE stream opens so first-turn message/markdown writes no longer FK-violate an uncommitted parent; regression test asserts request-db commit precedes fresh-session persistence (test_chat_sse: 7/7). Pre-existing unrelated reds: 5 test_config env-validation tests.

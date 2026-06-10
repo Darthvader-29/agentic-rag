@@ -570,6 +570,14 @@ async def chat(
     if "text/event-stream" in request.headers.get("accept", ""):
         sessionmaker = request.app.state.db_sessionmaker
 
+        # Commit the resolved session row BEFORE streaming begins. The generator below runs after
+        # this endpoint returns, and its turn/markdown writes open their OWN sessions (see
+        # _persist_turn / _persist_markdown). If the request-scoped db only flushed a brand-new
+        # session row, those fresh sessions can't see it (it commits on dependency teardown, which
+        # for a StreamingResponse runs AFTER the body finishes) → the first turn of every new
+        # session FK-violates and is silently lost. Committing here makes the row durable first.
+        await db.commit()
+
         async def event_stream():
             seen_stages: set[str] = set()
             tokens: list[str] = []

@@ -16,6 +16,7 @@ from app import app
 from auth.dependencies import get_current_user
 from database.models import User
 from dependencies import (
+    get_db_session,
     get_embedding_client,
     get_graph,
     get_pinecone_client,
@@ -221,6 +222,78 @@ async def test_chat_sse_persists_turn_via_fresh_session():
         assert contents["user"] == "hi"
         assert contents["assistant"] == "persisted answer"
         fresh_session.commit.assert_awaited()
+    finally:
+        app.dependency_overrides.clear()
+        if saved_sessionmaker is not None:
+            app.state.db_sessionmaker = saved_sessionmaker
+
+
+@pytest.mark.asyncio
+async def test_chat_sse_commits_session_before_stream_persists():
+    """Regression (B01): the request-scoped session is committed BEFORE the streaming generator's
+    fresh-session writes run.
+
+    The generator persists the turn (and markdown memory) from its OWN session, opened after this
+    endpoint returns. If a brand-new ``sessions`` row were only flushed (committed on dependency
+    teardown, which for a StreamingResponse runs AFTER the body finishes), those fresh-session
+    INSERTs would FK-violate against the uncommitted parent and the first turn would be silently
+    lost. We assert the request db commit is ordered before the first ``save_message``.
+    """
+    order: list[str] = []
+
+    fake_graph = _FakeGraph(tokens=("hi",), answer="hi")
+    app.dependency_overrides[get_current_user] = lambda: _fake_user()
+    app.dependency_overrides[get_graph] = lambda: fake_graph
+    app.dependency_overrides[get_llm_provider] = lambda: AsyncMock()
+    _override_clients()
+
+    # Request-scoped db: a dedicated session whose commit records its order in `order`.
+    request_db = AsyncMock()
+
+    async def _req_commit():
+        order.append("request_db.commit")
+
+    request_db.commit.side_effect = _req_commit
+
+    async def _override_db():
+        yield request_db
+
+    app.dependency_overrides[get_db_session] = _override_db
+
+    # Fresh persist session (opened by _persist_turn) — distinct from the request db.
+    persist_session = AsyncMock()
+    saved_sessionmaker = getattr(app.state, "db_sessionmaker", None)
+    app.state.db_sessionmaker = _fake_sessionmaker(persist_session)
+
+    async def _save_message(session, **kwargs):
+        order.append(f"save_message:{kwargs['role']}")
+
+    try:
+        with (
+            patch("app.repo.get_session", new_callable=AsyncMock, return_value=None),
+            patch("app.repo.create_session", new_callable=AsyncMock),
+            patch("app.repo.session_has_documents", new_callable=AsyncMock, return_value=False),
+            patch("app.repo.load_recent_messages", new_callable=AsyncMock, return_value=[]),
+            patch("app.repo.save_message", side_effect=_save_message),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/api/chat",
+                    json={"message": "hi", "session_id": "new-sid", "web_search_allowed": False},
+                    headers={
+                        "Authorization": "Bearer test-token",
+                        "Accept": "text/event-stream",
+                    },
+                )
+        assert resp.status_code == 200
+        # the request-scoped session committed (making the new session row durable) ...
+        assert "request_db.commit" in order
+        # ... strictly BEFORE the fresh-session turn writes ran.
+        first_commit = order.index("request_db.commit")
+        first_save = next(i for i, e in enumerate(order) if e.startswith("save_message"))
+        assert first_commit < first_save, f"commit must precede persistence; order={order}"
     finally:
         app.dependency_overrides.clear()
         if saved_sessionmaker is not None:
