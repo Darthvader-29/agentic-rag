@@ -54,6 +54,8 @@ describe("useStreamingChat end-to-end", () => {
       "retrieving",
       "synthesizing",
     ]);
+    // B22: after a completed stream NO step is still "active" — the "Thinking…" spinner stops.
+    expect(assistant.steps.every((s) => s.state !== "active")).toBe(true);
     // Sources are DERIVED from the citation component (09 §5: citation = sources channel).
     expect(assistant.sources).toHaveLength(1);
     expect(assistant.sources[0].title).toBe("doc.pdf · p.4");

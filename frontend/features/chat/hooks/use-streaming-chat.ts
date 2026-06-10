@@ -109,6 +109,7 @@ export function useStreamingChat() {
   const beginTurn = useChatStore((s) => s.beginTurn);
   const appendContent = useChatStore((s) => s.appendContent);
   const pushStep = useChatStore((s) => s.pushStep);
+  const completeSteps = useChatStore((s) => s.completeSteps);
   const addComponent = useChatStore((s) => s.addComponent);
   const setSources = useChatStore((s) => s.setSources);
   const setRoute = useChatStore((s) => s.setRoute);
@@ -203,6 +204,9 @@ export function useStreamingChat() {
             // Canonical final body is done.answer (== concatenated tokens).
             const mapped = mapRoute(route);
             setRoute(assistantId, mapped);
+            // Flip the live status steps to complete so the "Thinking…" spinner stops (the steps
+            // were pushed as "active" and nothing else clears them) — matches the blocking hook.
+            completeSteps(assistantId);
             // Sources come ONLY from citation components; none → leave [] (no fabricated count).
             // Phase 7: fold the done-event contributing-layer set onto the citation-derived sources.
             const sources = applyDoneLayers(
@@ -230,6 +234,8 @@ export function useStreamingChat() {
             invalidateSessionMemory(queryClient, getSessionId());
           },
           onError: (error) => {
+            // Stop any prior stage's spinner, then record the error step.
+            completeSteps(assistantId);
             pushStep(assistantId, { label: "error", state: "error" });
             setRoute(assistantId, "ERROR");
             // Shared error→turn recipe (branches on the machine-readable CODE, docs/09 §3, not
@@ -259,6 +265,7 @@ export function useStreamingChat() {
       beginTurn,
       appendContent,
       pushStep,
+      completeSteps,
       addComponent,
       setSources,
       setRoute,

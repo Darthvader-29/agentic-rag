@@ -326,7 +326,7 @@ Status legend: `TODO` · `DONE` · `SKIPPED (<reason>)`.
 ## Priority 4 — frontend correctness / UX
 
 ### B22 — Streamed turns show a perpetual "Thinking…" spinner — status steps are never completed
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM
 - **Files:** `frontend/features/chat/hooks/use-streaming-chat.ts` (status step pushes), `frontend/features/chat/components/thinking-steps.tsx`.
 - **Symptom:** Every status stage is pushed as `{ state: "active" }`; neither `onDone` nor `finalize`
@@ -396,7 +396,8 @@ These are real but either need a design/policy call or are infra/non-code-local;
 
 _(each iteration appends one line: `BUG-ID — <sha> — <one-line outcome>`)_
 
-- B21 — commit pending — (a) markdown append is now an atomic INSERT ... ON CONFLICT DO UPDATE (SQL right() truncation) — concurrent first-appends keep both notes (real-DB concurrency test); (b) KG lock TTL 15→30, bounded blocking_timeout, and release/acquire failures are logged (was silently swallowed) so a lost-update is detectable. memory tests 25/25.
+- B22 — commit pending — added chat-store completeSteps (active→complete) called in streaming onDone/onError so the "Thinking…" spinner stops on a finished turn; only states change so the existing step-label test stays green. streaming/store 15/15.
+- B21 — 04b3643 — (a) markdown append is now an atomic INSERT ... ON CONFLICT DO UPDATE (SQL right() truncation) — concurrent first-appends keep both notes (real-DB concurrency test); (b) KG lock TTL 15→30, bounded blocking_timeout, and release/acquire failures are logged (was silently swallowed) so a lost-update is detectable. memory tests 25/25.
 - B20 — b26f00c — status now LEADS work: emit "routing" up front, then on each node completion announce the next phase (supervisor→_stage_after_route; vector/web→synthesizing). synthesizing now precedes the first token. sse 14/14; stages still match SseStageSchema (no FE change).
 - B19 — 0288167 — removed await-in-finally; persist synchronously on normal/error paths, detach (asyncio.ensure_future + app.state.background_tasks ref) on CancelledError/GeneratorExit, and suppress `done` to a disconnected client. Registry on app.state (per-process infra) keeps statelessness test green. sse+stateless+json 18/18.
 - B18 — 6c7e81a — JSON chat path's except Exception now raises a generic 500 ("request failed unexpectedly") instead of "free tier Limit Reached"; LLM/402 AppExceptions still pass through. chat 11/11.
