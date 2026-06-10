@@ -343,6 +343,41 @@ async def test_chat_json_path_returns_components():
         app.dependency_overrides.clear()
 
 
+@pytest.mark.asyncio
+async def test_chat_json_path_maps_both_route_to_web_rag():
+    """Regression (B09): the graph's flat BOTH route is mapped to WEB+RAG on the JSON path so it
+    satisfies the frontend routeTypeSchema (which has no BOTH) instead of failing as an error turn."""
+
+    class _GraphBothRoute:
+        async def ainvoke(self, state):
+            return {"answer": "a", "route": "BOTH", "context": "", "components": [], "layers": []}
+
+    app.dependency_overrides[get_current_user] = lambda: _fake_user()
+    app.dependency_overrides[get_graph] = lambda: _GraphBothRoute()
+    app.dependency_overrides[get_llm_provider] = lambda: AsyncMock()
+    _override_clients()
+    try:
+        with (
+            patch("app.repo.get_session", new_callable=AsyncMock, return_value=None),
+            patch("app.repo.create_session", new_callable=AsyncMock),
+            patch("app.repo.session_has_documents", new_callable=AsyncMock, return_value=False),
+            patch("app.repo.load_recent_messages", new_callable=AsyncMock, return_value=[]),
+            patch("app.repo.save_message", new_callable=AsyncMock),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/api/chat",
+                    json={"message": "hi", "session_id": "s1", "web_search_allowed": True},
+                    headers={"Authorization": "Bearer test-token"},  # no Accept → JSON path
+                )
+        assert resp.status_code == 200
+        assert resp.json()["route"] == "WEB+RAG"
+    finally:
+        app.dependency_overrides.clear()
+
+
 # ── auth + rate-limit gate BEFORE the stream opens ────────────────────────────
 
 

@@ -661,12 +661,19 @@ async def chat(
             ) from e
 
         answer = result.get("answer", "")
+        # The graph emits the FLAT route enum (RAG|WEB|BOTH|DIRECT). The frontend's blocking
+        # routeTypeSchema is the combined form and has no "BOTH" — the SSE path maps it client-side,
+        # so the JSON path must map it here too (BOTH → WEB+RAG), else an otherwise-successful
+        # answer fails schema validation and surfaces as an error turn.
+        route = result.get("route")
+        if route == "BOTH":
+            route = "WEB+RAG"
         await repo.save_message(db, session_id=session_id, role="user", content=payload.message)
         if answer:
             await repo.save_message(db, session_id=session_id, role="assistant", content=answer)
         return {
             "answer": answer,
-            "route": result.get("route"),
+            "route": route,
             "context_count": _count_context_chunks(result),
             "session_id": session_id,
             "layers": result.get("layers", []),
