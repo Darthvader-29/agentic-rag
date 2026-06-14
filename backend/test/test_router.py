@@ -13,15 +13,15 @@ class _FakeProvider:
         self._decision = decision
         self._raises = raises
 
-    async def route(self, query, *, has_documents, web_allowed):
+    async def route(self, query, *, has_documents, web_allowed, history=None):
         if self._raises:
             raise self._raises
         return self._decision
 
-    async def generate(self, query, context, decision):
+    async def generate(self, query, context, decision, *, history=None):
         return "answer"
 
-    def stream(self, query, context, decision):
+    def stream(self, query, context, decision, *, history=None):
         return iter([])
 
 

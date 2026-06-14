@@ -62,7 +62,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 ## Priority 1 — Genuine feature gaps (truly not implemented)
 
 ### R01 — Conversation history never reaches the LLM (multi-turn is effectively single-turn)
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** HIGH (core capability) · `CODE_REVIEW.md` H-B1 · `BUGFIX_QUEUE.md` Deferred
 - **Files:** `backend/agents/nodes.py` (`_rewrite_query` ~:81, `supervisor_node` ~:58-68,
   `synthesis_node` ~:224), `backend/llm/base.py` (`route`/`generate`/`stream` ~:37-47),
@@ -383,4 +383,4 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 
 _(each iteration appends one line: `R-ID — <sha> — <one-line outcome>`)_
 
-- _(none yet — queue authored 2026-06-14 from the post-bug-sweep scan)_
+- R01 — <commit pending> — threaded an optional `history` kwarg through `LLMProvider.route/generate/stream` into the VARIABLE user suffix of the routing + generation prompts (reaches every route incl. DIRECT, which ignores `context`). Stable cached system prefix untouched (caching invariant held) and the no-history output is byte-identical, so existing cache/contract tests stayed green. New `test/llm/test_history_prompts.py` + supervisor history assertion; updated 5 provider test fakes. llm/agents/router (135) + graph integration (35) green; ruff+mypy clean. Pre-existing env-only red: `test_chat_provider_di::test_chat_uses_injected_provider` (missing `db_sessionmaker` lifespan state — proven unrelated via stash). NOTE: retrieval-query rewrite (`_rewrite_query` resolving pronouns in the *search* string) intentionally left as a follow-up.

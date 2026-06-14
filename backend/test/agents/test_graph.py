@@ -26,13 +26,13 @@ class _FakeProvider:
         self.base_route = base_route
         self.gen_returns = gen_returns
 
-    async def route(self, query, *, has_documents, web_allowed):
+    async def route(self, query, *, has_documents, web_allowed, history=None):
         return self.base_route
 
-    async def generate(self, query, context, decision):
+    async def generate(self, query, context, decision, *, history=None):
         return self.gen_returns
 
-    async def stream(self, query, context, decision):
+    async def stream(self, query, context, decision, *, history=None):
         yield self.gen_returns
 
 

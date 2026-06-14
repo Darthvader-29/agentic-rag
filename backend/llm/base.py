@@ -22,6 +22,7 @@ from typing import Literal, Protocol, runtime_checkable
 from exceptions import LLMAuthError, LLMRateLimitError, LLMResponseError, LLMUnavailableError
 from llm._prompts import (
     ROUTING_SYSTEM,
+    History,
     generation_system_user,
     normalize_decision,
     routing_user,
@@ -34,15 +35,21 @@ Route = Literal["RAG", "WEB", "DIRECT"]
 class LLMProvider(Protocol):
     """Provider-agnostic LLM interface. Exactly one instance per request."""
 
-    async def route(self, query: str, *, has_documents: bool, web_allowed: bool) -> Route:
+    async def route(
+        self, query: str, *, has_documents: bool, web_allowed: bool, history: History | None = None
+    ) -> Route:
         """Classify a query into RAG / WEB / DIRECT."""
         ...
 
-    async def generate(self, query: str, context: str, decision: Route) -> str:
+    async def generate(
+        self, query: str, context: str, decision: Route, *, history: History | None = None
+    ) -> str:
         """Produce the final answer for the decided route."""
         ...
 
-    def stream(self, query: str, context: str, decision: Route) -> AsyncIterator[str]:
+    def stream(
+        self, query: str, context: str, decision: Route, *, history: History | None = None
+    ) -> AsyncIterator[str]:
         """Yield answer text deltas (consumed by SSE in Phase 6)."""
         ...
 
@@ -140,23 +147,29 @@ class BaseLLMProvider:
 
     # ── public templates ──────────────────────────────────────────────────────
 
-    async def route(self, query: str, *, has_documents: bool, web_allowed: bool) -> Route:
+    async def route(
+        self, query: str, *, has_documents: bool, web_allowed: bool, history: History | None = None
+    ) -> Route:
         text = await self._call(
             self._route_model,
             ROUTING_SYSTEM,
-            routing_user(query, has_documents, web_allowed),
+            routing_user(query, has_documents, web_allowed, history),
             max_tokens=self._ROUTE_MAX_TOKENS,
         )
         return normalize_decision(text)
 
-    async def generate(self, query: str, context: str, decision: Route) -> str:
-        sys_msg, usr_msg = generation_system_user(decision, query, context)
+    async def generate(
+        self, query: str, context: str, decision: Route, *, history: History | None = None
+    ) -> str:
+        sys_msg, usr_msg = generation_system_user(decision, query, context, history)
         return await self._call(
             self._synth_model, sys_msg, usr_msg, max_tokens=self._GENERATE_MAX_TOKENS
         )
 
-    async def stream(self, query: str, context: str, decision: Route) -> AsyncIterator[str]:  # type: ignore[override]
-        sys_msg, usr_msg = generation_system_user(decision, query, context)
+    async def stream(  # type: ignore[override]
+        self, query: str, context: str, decision: Route, *, history: History | None = None
+    ) -> AsyncIterator[str]:
+        sys_msg, usr_msg = generation_system_user(decision, query, context, history)
         async for chunk in self._stream_call(
             self._synth_model, sys_msg, usr_msg, max_tokens=self._GENERATE_MAX_TOKENS
         ):

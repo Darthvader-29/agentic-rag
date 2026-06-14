@@ -15,12 +15,42 @@ the cache hit rate (caching skill, "prefix changes" sharp edge).
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     # Single source of truth lives in llm.base; imported here only for annotations
     # (runtime import would be circular: base.py imports the builders from this module).
     from llm.base import Route
+
+# A conversation turn is any mapping carrying "role"/"content" (e.g. agents.state.Turn). It is typed
+# structurally here so the llm layer never imports from the agents layer (which depends on llm).
+History = Sequence[Mapping[str, Any]]
+
+
+def _format_history(history: History | None, *, max_turns: int = 20, max_chars: int = 2000) -> str:
+    """Render recent turns as a compact verbatim transcript for the VARIABLE user suffix.
+
+    History is per-request data, so it belongs in the user/variable position — NEVER the stable,
+    cacheable system prefix (that would break prefix caching; see the module docstring). Returns ""
+    for empty/missing history so the builders stay byte-identical to the pre-history call (which the
+    cache-structure tests pin). Keeps the last ``max_turns`` turns and clips each to ``max_chars`` so
+    a runaway message can't blow the routing/synthesis token budget.
+    """
+    if not history:
+        return ""
+    lines: list[str] = []
+    for turn in list(history)[-max_turns:]:
+        content = str(turn.get("content") or "").strip()
+        if not content:
+            continue
+        if len(content) > max_chars:
+            content = content[:max_chars].rstrip() + "…"
+        speaker = "User" if turn.get("role") == "user" else "Assistant"
+        lines.append(f"{speaker}: {content}")
+    if not lines:
+        return ""
+    return "CONVERSATION SO FAR (oldest to newest):\n" + "\n".join(lines)
 
 
 # ── Routing ───────────────────────────────────────────────────────────────────
@@ -48,11 +78,16 @@ or public concept, choose WEB (if web is allowed), otherwise DIRECT.
 Respond with ONLY one word: RAG, WEB, or DIRECT."""
 
 
-def routing_user(query: str, has_documents: bool, web_allowed: bool) -> str:
-    """Variable per-request suffix for routing: the query + availability flags."""
+def routing_user(
+    query: str, has_documents: bool, web_allowed: bool, history: History | None = None
+) -> str:
+    """Variable per-request suffix for routing: recent history + the query + availability flags."""
     doc_status = "YES (user uploaded documents)" if has_documents else "NO"
     web_status = "ALLOWED" if web_allowed else "DISABLED"
+    convo = _format_history(history)
+    convo_block = f"{convo}\n\n" if convo else ""
     return (
+        f"{convo_block}"
         f'Query: "{query}"\n'
         f"Documents available: {doc_status}\n"
         f"Web search: {web_status}\n\n"
@@ -114,28 +149,34 @@ def generation_system(decision: str) -> str:
     return _DIRECT_SYSTEM
 
 
-def generation_user(decision: str, query: str, context: str) -> str:
-    """Variable per-request user content: the retrieved context + the question."""
+def generation_user(decision: str, query: str, context: str, history: History | None = None) -> str:
+    """Variable per-request user content: recent history + the retrieved context + the question."""
     d = decision.upper()
+    convo = _format_history(history)
+    convo_block = f"{convo}\n\n" if convo else ""
     if "RAG" in d:
         return (
+            f"{convo_block}"
             f"CONTEXT FROM USER DOCUMENTS:\n{context}\n\n"
             f"USER QUESTION: {query}\n\n"
             "Answer ONLY based on the document context above."
         )
     if "WEB" in d:
         return (
+            f"{convo_block}"
             f"WEB SEARCH RESULTS:\n{context}\n\n"
             f"USER QUESTION: {query}\n\n"
             "Answer using ONLY the web results above."
         )
-    return f"USER: {query}\n\nAnswer naturally and helpfully."
+    return f"{convo_block}USER: {query}\n\nAnswer naturally and helpfully."
 
 
-def generation_system_user(decision: str, query: str, context: str) -> tuple[str, str]:
+def generation_system_user(
+    decision: str, query: str, context: str, history: History | None = None
+) -> tuple[str, str]:
     """Split generation prompt into (stable system, variable user).
 
     Adapters that take one combined prompt (Gemini) join these as ``f"{system}\\n\\n{user}"``,
     which keeps the stable role/format contract leading so implicit prefix caching matches it.
     """
-    return generation_system(decision), generation_user(decision, query, context)
+    return generation_system(decision), generation_user(decision, query, context, history)

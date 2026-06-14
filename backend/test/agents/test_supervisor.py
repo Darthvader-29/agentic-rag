@@ -19,18 +19,23 @@ class _FakeProvider:
         self.raises = raises
         self.route_calls: list[dict] = []
 
-    async def route(self, query, *, has_documents, web_allowed):
+    async def route(self, query, *, has_documents, web_allowed, history=None):
         self.route_calls.append(
-            {"query": query, "has_documents": has_documents, "web_allowed": web_allowed}
+            {
+                "query": query,
+                "has_documents": has_documents,
+                "web_allowed": web_allowed,
+                "history": history,
+            }
         )
         if self.raises:
             raise self.raises
         return self.base_route
 
-    async def generate(self, query, context, decision):  # pragma: no cover - unused here
+    async def generate(self, query, context, decision, *, history=None):  # pragma: no cover
         return "answer"
 
-    async def stream(self, query, context, decision):  # pragma: no cover - unused here
+    async def stream(self, query, context, decision, *, history=None):  # pragma: no cover
         if False:
             yield ""
 
@@ -95,7 +100,14 @@ async def test_supervisor_web_intent_with_docs_but_web_disabled_routes_rag():
 async def test_supervisor_passes_flags_to_provider_route():
     p = _FakeProvider("DIRECT")
     await supervisor_node(_state(p, has_documents=True, web_allowed=False))
-    assert p.route_calls == [{"query": "What is X?", "has_documents": True, "web_allowed": False}]
+    assert p.route_calls == [
+        {
+            "query": "What is X?",
+            "has_documents": True,
+            "web_allowed": False,
+            "history": [],
+        }
+    ]
 
 
 # ── rewritten_query ───────────────────────────────────────────────────────────
@@ -119,6 +131,18 @@ async def test_supervisor_rewritten_query_is_present_for_followups():
     out = await supervisor_node(_state(p, query="what about the second one?", history=history))
     assert isinstance(out["rewritten_query"], str)
     assert out["rewritten_query"].strip() != ""
+
+
+@pytest.mark.asyncio
+async def test_supervisor_passes_history_to_provider_route():
+    """History reaches the routing call so a follow-up routes with prior context (H-B1 / R01)."""
+    history = [
+        {"role": "user", "content": "Tell me about the Apollo and Gemini programs."},
+        {"role": "assistant", "content": "Apollo landed on the Moon; Gemini was earlier."},
+    ]
+    p = _FakeProvider("DIRECT")
+    await supervisor_node(_state(p, query="what about the second one?", history=history))
+    assert p.route_calls[0]["history"] == history
 
 
 # ── defensive fallback ────────────────────────────────────────────────────────
