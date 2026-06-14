@@ -8,7 +8,7 @@ import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth.dependencies import get_current_user
+from auth.dependencies import enforce_auth_rate_limit, get_current_user
 from auth.revocation import is_token_revoked, revoke_token
 from auth.schemas import (
     AuthTokenPair,
@@ -32,7 +32,13 @@ from database.repository import UserRepository
 from dependencies import get_db_session, get_redis
 from exceptions import InvalidTokenTypeError
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+router = APIRouter(
+    prefix="/api/auth",
+    tags=["auth"],
+    # R05: per-IP rate limit on EVERY auth route (credential stuffing / unbounded guest minting).
+    # Router-level so it runs on HTTP requests only — the direct-call handler tests are unaffected.
+    dependencies=[Depends(enforce_auth_rate_limit)],
+)
 
 
 @router.post("/register", status_code=201, response_model=AuthTokenPair)

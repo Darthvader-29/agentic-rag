@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_CHAT: str = "30/minute"
     RATE_LIMIT_UPLOAD: str = "10/minute"
     RATE_LIMIT_DEFAULT: str = "120/minute"
+    # R05: per-IP throttle on the auth endpoints (login/register/guest/refresh/logout/upgrade) —
+    # bounds credential stuffing + unbounded guest minting. AUTH_RATE_LIMIT_MAX requests per window.
+    AUTH_RATE_LIMIT_MAX: int = 10
+    AUTH_RATE_LIMIT_WINDOW_SECONDS: int = 60
 
     # --- Phase 6: agentic graph, conversation memory, freemium ladder ---
     HISTORY_MAX_TURNS: int = 6  # last-N turns (verbatim) fed to supervisor + synthesis
