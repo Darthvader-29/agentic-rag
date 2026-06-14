@@ -64,4 +64,13 @@ export const authApi = {
       schema: TokenPairSchema,
       auth: false,
     }),
+
+  // Server-side logout: revoke the refresh token so a stolen copy can't be refreshed (R03).
+  // Public endpoint — the refresh token in the body is the authority; no bearer, 204 (no body).
+  logout: (body: RefreshRequest): Promise<void> =>
+    request<void>("/auth/logout", {
+      method: "POST",
+      body,
+      auth: false,
+    }),
 };

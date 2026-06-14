@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { useAuthStore } from "@/features/auth/store/auth.store";
+import { useAuthStore, authStore } from "@/features/auth/store/auth.store";
+import { authApi } from "@/features/auth/api/auth.api";
 import { resetIdentityState } from "@/features/auth/lib/reset-identity";
 
 /**
@@ -29,6 +30,13 @@ export function useAuth() {
     userId,
     hasHydrated,
     logout: () => {
+      // R03: best-effort server-side revocation BEFORE the local token drop — denylist the refresh
+      // token so a stolen copy can't be refreshed after logout. Fire-and-forget; never block (or
+      // fail) the local logout on the network.
+      const refreshToken = authStore.getRefreshToken();
+      if (refreshToken) {
+        void authApi.logout({ refresh_token: refreshToken }).catch(() => {});
+      }
       clear();
       // Drop user-scoped caches so the next identity can't read the previous one's data.
       qc.clear();

@@ -4,10 +4,12 @@ import secrets
 import uuid
 
 import jwt
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import get_current_user
+from auth.revocation import is_token_revoked, revoke_token
 from auth.schemas import (
     AuthTokenPair,
     GuestTokenPair,
@@ -27,7 +29,7 @@ from auth.security import (
 )
 from database.models import User
 from database.repository import UserRepository
-from dependencies import get_db_session
+from dependencies import get_db_session, get_redis
 from exceptions import InvalidTokenTypeError
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -133,11 +135,18 @@ async def login(
 
 
 @router.post("/refresh", response_model=TokenPair)
-async def refresh(body: RefreshIn) -> TokenPair:
+async def refresh(
+    body: RefreshIn,
+    redis: aioredis.Redis = Depends(get_redis),
+) -> TokenPair:
     try:
         claims = require_token_type(decode_token(body.refresh_token), expected="refresh")
     except (jwt.PyJWTError, InvalidTokenTypeError) as exc:
         raise HTTPException(401, "invalid or expired refresh token") from exc
+    # Reject a token revoked by logout (R03). Fails open on a Redis outage so a blip can't lock
+    # everyone out of refreshing — the deliberate availability tradeoff (see auth.revocation).
+    if await is_token_revoked(redis, claims):
+        raise HTTPException(401, "refresh token has been revoked")
     sub = claims["sub"]
     # Carry the identity's is_guest claim across the refresh. Without this, a guest's re-minted
     # tokens defaulted to is_guest=False, so after one refresh (≤15 min) a guest silently looked
@@ -148,3 +157,23 @@ async def refresh(body: RefreshIn) -> TokenPair:
         access_token=create_access_token(sub, is_guest=is_guest),
         refresh_token=create_refresh_token(sub, is_guest=is_guest),
     )
+
+
+@router.post("/logout", status_code=204)
+async def logout(
+    body: RefreshIn,
+    redis: aioredis.Redis = Depends(get_redis),
+) -> None:
+    """Server-side logout: revoke the presented refresh token so it can never be refreshed again.
+
+    Possessing a validly-signed refresh token is sufficient authority to revoke it (mirrors the
+    ``/refresh`` contract — no bearer needed). Idempotent: an invalid / expired / legacy (jti-less)
+    token, or a Redis blip, is a no-op success — the client drops its tokens locally regardless. A
+    valid token's ``jti`` is denylisted until it would have expired (R03; R04 adds rotation).
+    """
+    try:
+        claims = require_token_type(decode_token(body.refresh_token), expected="refresh")
+    except (jwt.PyJWTError, InvalidTokenTypeError):
+        return None  # nothing valid to revoke — logout is idempotent
+    await revoke_token(redis, claims)
+    return None
