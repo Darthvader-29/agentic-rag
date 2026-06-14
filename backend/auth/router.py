@@ -147,6 +147,11 @@ async def refresh(
     # everyone out of refreshing — the deliberate availability tradeoff (see auth.revocation).
     if await is_token_revoked(redis, claims):
         raise HTTPException(401, "refresh token has been revoked")
+    # R04 rotation: consume (denylist) the presented refresh token so it is single-use. Replaying it
+    # after this point hits the revocation check above → 401, limiting how long a leaked refresh
+    # token is usable and surfacing theft as a failed refresh on the victim's next use. Best-effort
+    # under a Redis outage (the fail-open tradeoff): rotation pauses but refresh stays available.
+    await revoke_token(redis, claims)
     sub = claims["sub"]
     # Carry the identity's is_guest claim across the refresh. Without this, a guest's re-minted
     # tokens defaulted to is_guest=False, so after one refresh (≤15 min) a guest silently looked

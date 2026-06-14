@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # --- Auth (Phase 3) ---
     JWT_SECRET: str
     JWT_ALGORITHM: str = "HS256"
+    # R04: bind tokens to this service so one minted for another audience/issuer is rejected.
+    JWT_AUDIENCE: str = "agentic-rag"
+    JWT_ISSUER: str = "agentic-rag-auth"
     ACCESS_TOKEN_TTL_MINUTES: int = 15
     REFRESH_TOKEN_TTL_DAYS: int = 7
 

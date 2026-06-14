@@ -188,3 +188,19 @@ async def test_refresh_fails_open_when_redis_unavailable():
     token = create_refresh_token(subject="user-failopen")
     result = await refresh(RefreshIn(refresh_token=token), redis=_BrokenRedis())
     assert result.access_token  # refresh succeeded despite Redis being down
+
+
+async def test_refresh_rotates_token_and_rejects_reuse():
+    """R04: refresh is single-use — the presented token is consumed, so replaying it is rejected."""
+    redis = _FakeRedis()
+    rt1 = create_refresh_token(subject="rotate-me")
+    pair = await refresh(RefreshIn(refresh_token=rt1), redis=redis)
+    # A fresh refresh token (distinct jti) was issued.
+    assert pair.refresh_token != rt1
+    assert decode_token(pair.refresh_token)["jti"] != decode_token(rt1)["jti"]
+    # Replaying the now-consumed rt1 is rejected (rotation).
+    with pytest.raises(HTTPException) as exc_info:
+        await refresh(RefreshIn(refresh_token=rt1), redis=redis)
+    assert exc_info.value.status_code == 401
+    # The freshly issued token still works.
+    assert (await refresh(RefreshIn(refresh_token=pair.refresh_token), redis=redis)).access_token

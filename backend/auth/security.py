@@ -39,6 +39,8 @@ def _create_token(subject: str, token_type: str, ttl: timedelta, is_guest: bool)
         "type": token_type,
         "is_guest": is_guest,
         "jti": uuid.uuid4().hex,
+        "aud": settings.JWT_AUDIENCE,  # R04: bind the token to this service
+        "iss": settings.JWT_ISSUER,
         "iat": now,
         "exp": now + ttl,
     }
@@ -72,6 +74,8 @@ def decode_token(token: str) -> dict:
         token,
         settings.JWT_SECRET,
         algorithms=[settings.JWT_ALGORITHM],
+        audience=settings.JWT_AUDIENCE,  # R04: reject a token minted for another aud/iss
+        issuer=settings.JWT_ISSUER,
         leeway=10,  # small skew tolerance for multi-instance deployments
     )
 
