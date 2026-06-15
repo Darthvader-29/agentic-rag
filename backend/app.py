@@ -1,12 +1,13 @@
 import asyncio
 import uuid
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, Field, ValidationError
@@ -131,6 +132,49 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── R07: security response headers (every response: API JSON + the legacy /static SPA) ──
+# CSP keeps 'unsafe-inline' because the legacy index.html uses inline onclick/style; the Next.js
+# frontend ships its own (stricter, env-aware) CSP via next.config.ts. HSTS is emitted only in
+# production — never on plain-http localhost dev.
+# A tuple (not a dict) so it stays immutable — and so the statelessness guard, which flags any
+# module-level dict/list/set as possible cross-request state, leaves this read-only constant alone.
+_SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
+    ("X-Content-Type-Options", "nosniff"),
+    ("X-Frame-Options", "DENY"),
+    ("Referrer-Policy", "strict-origin-when-cross-origin"),
+    ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
+    (
+        "Content-Security-Policy",
+        (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self'; "
+            "connect-src 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "frame-ancestors 'none'; "
+            "form-action 'self'"
+        ),
+    ),
+)
+
+
+@app.middleware("http")
+async def _security_headers(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    response = await call_next(request)
+    for key, value in _SECURITY_HEADERS:
+        response.headers.setdefault(key, value)
+    if settings.ENVIRONMENT == "production":
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=63072000; includeSubDomains"
+        )
+    return response
 
 
 # ── Phase 5: per-user rate limiting (Redis-backed in prod, memory:// in tests) ──
@@ -554,7 +598,9 @@ async def _persist_turn(sessionmaker, session_id: str, user_msg: str, answer: st
         await session.commit()
 
 
-def _spawn_persist(registry: set, sessionmaker, session_id: str, user_msg: str, answer: str) -> None:
+def _spawn_persist(
+    registry: set, sessionmaker, session_id: str, user_msg: str, answer: str
+) -> None:
     """Fire-and-forget persist for the disconnect/cancel path.
 
     When the client drops mid-stream the SSE generator is cancelled/closed, so we MUST NOT ``await``
