@@ -50,4 +50,21 @@ describe("CitationComponent (→ M3 sources panel)", () => {
     expect(card).toHaveAttribute("href", "#");
     expect(card).not.toHaveAttribute("target");
   });
+
+  it("renders a javascript: citation url as an inert (#) link, never executable (R06)", async () => {
+    const user = userEvent.setup();
+    // A javascript:/data: url passes z.string().url(), so it can reach the renderer; the panel
+    // disarms it to an inert "#" href. Construct the spec directly to simulate that.
+    const spec = {
+      type: "citation",
+      items: [{ label: "evil-link", url: "javascript:alert(1)" }],
+    } as unknown as CitationSpec;
+    render(<CitationComponent spec={spec} />);
+
+    await user.click(screen.getByRole("button", { name: /toggle sources/i }));
+
+    const card = screen.getByText("evil-link").closest("a");
+    expect(card).toHaveAttribute("href", "#");
+    expect(card).not.toHaveAttribute("target");
+  });
 });

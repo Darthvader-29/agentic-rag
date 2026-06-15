@@ -56,8 +56,13 @@ def test_validate_component_preserves_optional_ui_fields():
     assert callout is not None and callout["title"] == "Heads up"
 
     chart = validate_component(
-        {"type": "chart", "chart": "bar", "x": ["a"], "series": [{"name": "s", "y": [1.0]}],
-         "title": "Quarterly"}
+        {
+            "type": "chart",
+            "chart": "bar",
+            "x": ["a"],
+            "series": [{"name": "s", "y": [1.0]}],
+            "title": "Quarterly",
+        }
     )
     assert chart is not None and chart["title"] == "Quarterly"
 
@@ -76,6 +81,34 @@ def test_validate_component_omits_absent_optional_fields():
 
 def test_validate_component_unknown_type_returns_none():
     assert validate_component({"type": "banana", "text": "x"}) is None
+
+
+def test_citation_disarms_unsafe_url():
+    """R06: a non-http(s) citation url is disarmed to None (citation kept, unsafe link dropped)."""
+    out = validate_component(
+        {
+            "type": "citation",
+            "items": [{"label": "evil", "source_id": "s", "url": "javascript:alert(1)"}],
+        }
+    )
+    assert out is not None
+    assert "url" not in out["items"][0]  # disarmed → None → excluded by exclude_none
+
+
+def test_media_drops_unsafe_url_items():
+    """R06: media items whose url isn't http(s) are filtered out; safe ones survive."""
+    out = validate_component(
+        {
+            "type": "media",
+            "items": [
+                {"url": "https://cdn/ok.png"},
+                {"url": "javascript:alert(1)"},
+                {"url": "data:text/html,x"},
+            ],
+        }
+    )
+    assert out is not None
+    assert [it["url"] for it in out["items"]] == ["https://cdn/ok.png"]
 
 
 def test_validate_component_missing_type_returns_none():

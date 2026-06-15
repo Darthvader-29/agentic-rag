@@ -11,8 +11,24 @@ model-authored executable markup is ever emitted (no XSS, fully streamable).
 import json
 import re
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, field_validator
+
+
+def _is_safe_http_url(url: str | None) -> bool:
+    """True only for an absolute http(s) URL (R06).
+
+    Rejects javascript:/data:/blob:/relative — any of which would execute or mislead if rendered as
+    an href/src. Defense-in-depth with the frontend's own allowlist (lib/url.ts).
+    """
+    if not url:
+        return False
+    try:
+        return urlsplit(url).scheme.lower() in ("http", "https")
+    except ValueError:
+        return False
+
 
 # ── Inner item models ────────────────────────────────────────────────────────
 
@@ -31,6 +47,12 @@ class CitationItem(BaseModel):
     # them here (the old model omitted both) made clickable citations + provenance badges dead.
     url: str | None = None
     layer: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def _disarm_unsafe_url(cls, v: str | None) -> str | None:
+        # R06: disarm a non-http(s) url to None — keep the citation, drop only the unsafe link.
+        return v if _is_safe_http_url(v) else None
 
 
 class MediaItem(BaseModel):
@@ -78,6 +100,12 @@ class CalloutComponent(BaseModel):
 class MediaComponent(BaseModel):
     type: Literal["media"]
     items: list[MediaItem]
+
+    @field_validator("items")
+    @classmethod
+    def _drop_unsafe_items(cls, items: list[MediaItem]) -> list[MediaItem]:
+        # R06: drop media whose url isn't http(s) (keep the safe ones; the frontend re-filters too).
+        return [it for it in items if _is_safe_http_url(it.url)]
 
 
 Component = Annotated[

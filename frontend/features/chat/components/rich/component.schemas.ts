@@ -17,6 +17,7 @@ import {
   COMPONENT_TYPES,
   SseLayerEnum,
 } from "@/features/chat/api/chat.schemas";
+import { isSafeHttpUrl } from "@/lib/url";
 
 // Single-source the 6 catalog discriminants from chat.schemas' COMPONENT_TYPES (the loose wire
 // gate's enum is derived from the SAME const), so the type names are spelled exactly once. Indexed
@@ -53,8 +54,15 @@ export const citationItemSchema = z.object({
   label: z.string(),
   source_id: z.string().optional(),
   snippet: z.string().optional(),
-  // Web sources may carry a URL; retrieved chunks carry only a source_id.
-  url: z.string().url().optional(),
+  // Web sources may carry a URL; retrieved chunks carry only a source_id. R06: `.url()` validates
+  // syntax, NOT protocol (it accepts javascript:/data:), so refine to http(s) and DISARM anything
+  // else to undefined (`.catch`) — the citation still renders, just without an executable link.
+  url: z
+    .string()
+    .url()
+    .refine((u) => isSafeHttpUrl(u), { message: "url must be http(s)" })
+    .optional()
+    .catch(undefined),
   // Phase 7 (FE-0): optional retrieval-layer provenance (vector|graph|web|memory). Additive and
   // legacy-safe — absent on the pre-Phase-7 contract ⇒ no provenance badge. Tolerant at the
   // field level (`.catch(undefined)`) so an unknown future layer drops to undefined instead of

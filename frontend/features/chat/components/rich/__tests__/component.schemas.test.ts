@@ -105,6 +105,27 @@ describe("component.schemas — drop-invalid (returns null, never throws)", () =
     ).toBeNull();
   });
 
+  it("disarms a javascript: citation url to undefined but KEEPS the citation (R06)", () => {
+    const spec = safeParseComponent({
+      type: "citation",
+      items: [{ label: "evil", url: "javascript:alert(1)" }],
+    });
+    expect(spec).not.toBeNull();
+    expect(spec?.type).toBe("citation");
+    // The block survives; only the unsafe link is stripped (z.string().url() accepts javascript:).
+    const item = (spec as { items: { url?: string }[] }).items[0];
+    expect(item.url).toBeUndefined();
+  });
+
+  it("keeps a valid https citation url", () => {
+    const spec = safeParseComponent({
+      type: "citation",
+      items: [{ label: "ok", url: "https://example.com/p" }],
+    });
+    const item = (spec as { items: { url?: string }[] }).items[0];
+    expect(item.url).toBe("https://example.com/p");
+  });
+
   it("drops non-objects and nullish input without throwing", () => {
     for (const bad of [null, undefined, 42, "table", [], true]) {
       expect(safeParseComponent(bad)).toBeNull();
