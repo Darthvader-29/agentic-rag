@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, Field, ValidationError
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -198,7 +198,29 @@ def _rate_limit_key(request: Request) -> str:
 # in tests. Per-route @limiter.limit decorators below; no global default → /health is exempt.
 limiter = Limiter(key_func=_rate_limit_key, storage_uri=settings.rate_limit_storage_uri)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# ── R27: emit the {detail, code} envelope the frontend parses (not slowapi's {error}) ──
+# slowapi's default `_rate_limit_exceeded_handler` returns `{"error": "Rate limit exceeded: ..."}`,
+# which the FE's ApiError parser doesn't recognize → users saw "Backend error: 429". This custom
+# handler returns the same `{detail, code}` shape as `app_exception_handler` (code "rate_limited"),
+# so the FE surfaces a friendly throttle message. `Retry-After` is preserved when slowapi computed
+# a reset window so clients can back off.
+def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
+    response = JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Too many requests. Please slow down and try again shortly.",
+            "code": "rate_limited",
+        },
+    )
+    retry_after = getattr(exc, "retry_after", None)
+    if retry_after is not None:
+        response.headers["Retry-After"] = str(retry_after)
+    return response
+
+
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

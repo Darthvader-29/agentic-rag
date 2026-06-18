@@ -1,7 +1,11 @@
 import type { ZodType } from "zod";
 import { env } from "@/lib/env";
 import { flags } from "@/lib/flags";
-import { ApiError } from "./api-error";
+import {
+  ApiError,
+  RATE_LIMITED_MESSAGE,
+  isRateLimitPayload,
+} from "./api-error";
 import { authStore } from "@/features/auth/store/auth.store";
 import { authApi } from "@/features/auth/api/auth.api";
 
@@ -295,6 +299,17 @@ export async function request<T = void>(
         message: detail ?? "Session expired. Please sign in again.",
         status: 401,
         kind: "unauthorized",
+        detail,
+        payload,
+      });
+    }
+    // A 429 surfaces a friendly throttle message regardless of envelope shape (the backend's
+    // {detail, code:"rate_limited"} OR slowapi's raw {error}); never a bare "Backend error: 429".
+    if (isRateLimitPayload(res.status, payload)) {
+      throw new ApiError({
+        message: detail ?? RATE_LIMITED_MESSAGE,
+        status: res.status,
+        kind: "rate_limited",
         detail,
         payload,
       });
