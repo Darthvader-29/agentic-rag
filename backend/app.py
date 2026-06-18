@@ -2,12 +2,13 @@ import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 import redis.asyncio as aioredis
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, Field, ValidationError
@@ -903,6 +904,72 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy", "version": "1.0.0"}
+
+
+# R23: readiness probe. /health is liveness only (the process is up); readiness additionally checks
+# that the backing services are reachable so an orchestrator can pull a pod out of rotation when a
+# dependency (Postgres / Redis / S3 / Pinecone) is down instead of routing traffic into 500s. Each
+# probe is bounded and isolated: one failing dependency is reported without masking the others, and
+# any dependency down → overall 503 (the {detail} envelope the FE understands). Clients are read off
+# app.state (initialized in the lifespan), so this route is purely additive.
+#
+# A module-level float (not a Settings field) bounds each probe — keeps the change inside app.py
+# (config.py untouched) and a scalar constant doesn't trip the statelessness guard (it flags only
+# module-level dict/list/set as possible cross-request state).
+_READINESS_PROBE_TIMEOUT_SECONDS: float = 5.0
+
+
+async def _probe(name: str, coro: Awaitable[Any]) -> tuple[str, bool, str | None]:
+    """Await a single dependency probe; never raises — maps an exception to (name, False, reason)."""
+    try:
+        await asyncio.wait_for(coro, timeout=_READINESS_PROBE_TIMEOUT_SECONDS)
+        return name, True, None
+    except Exception as exc:  # noqa: BLE001 — readiness must report, not propagate
+        logger.warning("readiness_dependency_unhealthy", dependency=name, error=str(exc))
+        return name, False, type(exc).__name__
+
+
+async def _check_db(app_state: Any) -> None:
+    from sqlalchemy import text
+
+    async with app_state.db_sessionmaker() as session:
+        await session.execute(text("SELECT 1"))
+
+
+async def _check_redis(app_state: Any) -> None:
+    await app_state.redis.ping()
+
+
+async def _check_s3(app_state: Any) -> None:
+    # head_object on a sentinel key: a 404 still proves the endpoint+creds are reachable (returns
+    # False, no raise); a connection/credential failure raises and is caught by _probe.
+    await app_state.s3.object_exists("__readiness_probe__")
+
+
+async def _check_pinecone(app_state: Any) -> None:
+    # A read-only top-1 query against a zero vector — reaches Pinecone without mutating the index.
+    await app_state.pinecone.search_vectors([0.0] * 384, top_k=1)
+
+
+@app.get("/health/ready")
+async def readiness(request: Request):
+    """Readiness: 200 when DB/Redis/S3/Pinecone are all reachable, else 503 with per-dep status."""
+    app_state = request.app.state
+    results = await asyncio.gather(
+        _probe("database", _check_db(app_state)),
+        _probe("redis", _check_redis(app_state)),
+        _probe("s3", _check_s3(app_state)),
+        _probe("pinecone", _check_pinecone(app_state)),
+    )
+    checks = {name: ("up" if ok else "down") for name, ok, _ in results}
+    all_ok = all(ok for _, ok, _ in results)
+    body: dict[str, Any] = {"status": "ready" if all_ok else "unavailable", "checks": checks}
+    if not all_ok:
+        return JSONResponse(
+            status_code=503,
+            content={**body, "detail": "one or more dependencies are unavailable"},
+        )
+    return body
 
 
 if __name__ == "__main__":
