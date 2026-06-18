@@ -1,0 +1,101 @@
+name: Backend CI
+
+# GitHub Actions parity for the backend (the Jenkinsfile is the deploy pipeline; this gates PRs).
+# Mirrors frontend/.github/workflows/ci.yml: one quality job over lint + typecheck + test, plus a
+# Postgres service so the DB-gated tests run and the pyproject coverage gate (--cov-fail-under=83)
+# is reachable in CI (the Jenkinsfile runs DB-less at a lower 72 floor).
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+jobs:
+  quality:
+    name: Ruff · Mypy · Pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    # Real Postgres so the DB-backed suite (repository / migrations / isolation) runs in CI and the
+    # 83% coverage gate is achievable. Redis is NOT needed: the suite uses fakeredis / memory://.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: rag
+          POSTGRES_DB: rag_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rag -d rag_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Dummy secrets so import-time Settings()/clients don't crash (mirrors the Jenkinsfile). The
+      # suite is fully mocked/offline; no constructor here performs network I/O.
+      GOOGLE_API_KEY: ci-dummy
+      PINECONE_API_KEY: ci-dummy
+      HUGGINGFACE_TOKEN: ci-dummy
+      AWS_REGION: us-east-1
+      S3_BUCKET_NAME: ci-dummy-bucket
+      AWS_ACCESS_KEY_ID: ci-dummy
+      AWS_SECRET_ACCESS_KEY: ci-dummy
+      PINECONE_INDEX_NAME: rag-knowledge-base
+      JWT_SECRET: ci-dummy-jwt-secret-not-for-production
+      CORS_ALLOWED_ORIGINS: '["http://localhost:3000"]'
+      REDIS_URL: redis://localhost:6379/0
+      RATE_LIMIT_STORAGE_URI: memory://
+      ENVIRONMENT: development
+      LOG_JSON: "true"
+      # Placeholder satisfies Settings() validation; the real engine uses TEST_DATABASE_URL below.
+      DATABASE_URL: postgresql+asyncpg://rag:rag@localhost:5432/rag_test
+      # Drives the DB-gated fixtures in conftest.py (without it, those tests skip and coverage drops).
+      TEST_DATABASE_URL: postgresql://rag:rag@localhost:5432/rag_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      # Type-check ALL backend packages + modules (the Jenkinsfile omitted agents/auth/llm/memory/
+      # observability/sse — R22 aligns the target set). Per-module ignore_errors overrides in
+      # pyproject.toml suppress the known third-party stub false positives.
+      - name: Type-check (mypy)
+        run: |
+          uv run mypy \
+            app.py config.py dependencies.py exceptions.py logging_config.py sse.py \
+            agents auth components database integrations llm memory observability worker
+
+      # Uses the pyproject gate (addopts: --cov-fail-under=83). Postgres service + TEST_DATABASE_URL
+      # let the DB-backed tests run so that floor is reachable.
+      - name: Test (pytest + coverage gate)
+        run: uv run pytest --cov-report=xml --junitxml=junit.xml
