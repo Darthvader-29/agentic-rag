@@ -11,6 +11,9 @@ concatenates the (stable system, variable user) pair the base passes into ``f"{s
 so the byte-identical rubric / format contract leads and the variable query+context trails — no API
 flag is needed; the structure is the cache key. (Explicit ``CachedContent`` is skipped: it adds
 storage TTL management for prefixes well under the implicit-cache threshold.)
+
+Timeouts (R12): the client carries an explicit per-request timeout via ``HttpOptions`` (Gemini's
+timeout is specified in **milliseconds**), so a hung upstream can't pin the worker thread forever.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from collections.abc import AsyncIterator
 import anyio
 from google import genai
 from google.api_core import exceptions as gexc
+from google.genai import types as genai_types
 
 from llm.base import BaseLLMProvider
 
@@ -32,7 +36,11 @@ class GeminiProvider(BaseLLMProvider):
     _UNAVAILABLE_EXCS = (gexc.ServiceUnavailable, gexc.DeadlineExceeded)
 
     def _build_client(self, api_key: str) -> None:
-        self._client = genai.Client(api_key=api_key)
+        # R12: HttpOptions.timeout is in MILLISECONDS (the SDK divides by 1000 for httpx).
+        self._client = genai.Client(
+            api_key=api_key,
+            http_options=genai_types.HttpOptions(timeout=int(self._timeout_seconds * 1000)),
+        )
 
     async def _call(
         self, model: str, system: str, user: str, *, max_tokens: int | None = None

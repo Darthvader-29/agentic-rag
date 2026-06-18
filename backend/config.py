@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     DEFAULT_LLM_PROVIDER: Literal["gemini", "openai", "anthropic"] = "gemini"
     DEFAULT_LLM_MODEL: str = "gemini-2.5-flash"
     LLM_FALLBACK_API_KEY: SecretStr = SecretStr("")  # optional server-side fallback; BYOK preferred
+    # R12: resilience policy applied by every LLM adapter (see llm/base.py). LLM_TIMEOUT_SECONDS is
+    # the per-request connect+read deadline wired into each SDK client (a hung upstream can't pin the
+    # request forever); LLM_MAX_RETRY_ATTEMPTS is the TOTAL attempts (1 ⇒ no retry) on transient
+    # 429/503/529 with jittered exponential backoff seeded by LLM_RETRY_BACKOFF_SECONDS.
+    LLM_TIMEOUT_SECONDS: float = 60.0
+    LLM_MAX_RETRY_ATTEMPTS: int = 3
+    LLM_RETRY_BACKOFF_SECONDS: float = 0.5
 
     # --- Phase 5: Redis / Celery / rate limiting ---
     REDIS_URL: str = "redis://localhost:6379/0"
