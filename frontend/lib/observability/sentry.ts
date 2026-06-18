@@ -15,10 +15,136 @@
 // instrumentation.ts (server + edge `register()`) and instrumentation-client.ts (browser).
 
 import * as Sentry from "@sentry/nextjs";
+import type {
+  ErrorEvent as SentryErrorEvent,
+  Breadcrumb,
+} from "@sentry/nextjs";
 
 import { env } from "@/lib/env";
 import { flags } from "@/lib/flags";
 import { getLastTraceId } from "@/lib/observability/trace";
+
+// ---------------------------------------------------------------------------------------------
+// PII scrubbing (H-F9).
+//
+// Sentry's default breadcrumbs (fetch URLs that carry session ids, console output, DOM text) plus
+// any caller-supplied context can ship a user's email, their chat prompts, and the `rag_session_id`
+// to a third party. We run every outgoing event AND breadcrumb through a redactor that:
+//   - masks email addresses anywhere in a string,
+//   - strips the `?next`/query string off captured request URLs, and redacts a `session_id` /
+//     `rag_session_id` query param,
+//   - drops known prompt/PII-bearing keys ("prompt", "message", "content", "answer", "query",
+//     "email", "session_id", "rag_session_id", "access_token", "refresh_token", "authorization").
+// Combined with `sendDefaultPii:false`, this keeps prompts/emails/session-ids out of the payload.
+// ---------------------------------------------------------------------------------------------
+
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+
+/** Keys whose VALUE is dropped wholesale (case-insensitive) — prompts, identifiers, credentials. */
+const REDACT_KEYS = new Set(
+  [
+    "prompt",
+    "message",
+    "messages",
+    "content",
+    "answer",
+    "query",
+    "text",
+    "email",
+    "session_id",
+    "rag_session_id",
+    "sessionid",
+    "access_token",
+    "refresh_token",
+    "authorization",
+    "password",
+  ].map((k) => k.toLowerCase())
+);
+
+const REDACTED = "[redacted]";
+
+/** Mask emails inside an arbitrary string. */
+function scrubString(value: string): string {
+  return value.replace(EMAIL_RE, REDACTED);
+}
+
+/** Strip the query string off a URL but redact session ids even if the parse fails. */
+function scrubUrl(url: string): string {
+  try {
+    const u = new URL(url, "http://local.invalid");
+    // Drop the whole query (it routinely carries `?next=`, ids, tokens) but keep the path.
+    return scrubString(`${u.origin === "http://local.invalid" ? "" : u.origin}${u.pathname}`);
+  } catch {
+    // Not a parseable URL — at least cut everything past the first `?` and mask emails.
+    return scrubString(url.split("?")[0]);
+  }
+}
+
+/**
+ * Deep-redact an arbitrary value: drop sensitive keys, mask emails in strings, recurse into
+ * arrays/objects. Bounded by `depth` so a cyclic/huge structure can't blow the stack. Returns a
+ * NEW value (never mutates the input).
+ */
+function scrubValue(value: unknown, depth = 0): unknown {
+  if (depth > 6) return REDACTED;
+  if (typeof value === "string") return scrubString(value);
+  if (Array.isArray(value)) return value.map((v) => scrubValue(v, depth + 1));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = REDACT_KEYS.has(k.toLowerCase())
+        ? REDACTED
+        : scrubValue(v, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * `beforeSend` hook: redact PII from an outgoing error event before it leaves the browser.
+ * Exported for unit testing. Returns the (mutated copy of the) event, never null — we still want
+ * the error, just scrubbed.
+ */
+export function scrubEvent(event: SentryErrorEvent): SentryErrorEvent {
+  if (event.message) event.message = scrubString(event.message);
+  if (event.request?.url) event.request.url = scrubUrl(event.request.url);
+  if (event.request?.query_string) event.request.query_string = REDACTED;
+  if (event.request?.headers) {
+    event.request.headers = scrubValue(event.request.headers) as Record<
+      string,
+      string
+    >;
+  }
+  if (event.request?.data !== undefined) {
+    event.request.data = scrubValue(event.request.data);
+  }
+  // Never ship user PII (email/username/ip). Keep an opaque id if present for grouping.
+  if (event.user) {
+    event.user = event.user.id ? { id: String(event.user.id) } : {};
+  }
+  if (event.extra) {
+    event.extra = scrubValue(event.extra) as Record<string, unknown>;
+  }
+  if (event.contexts) {
+    event.contexts = scrubValue(event.contexts) as typeof event.contexts;
+  }
+  return event;
+}
+
+/**
+ * `beforeSendBreadcrumb` hook: redact PII (esp. fetch/xhr URLs carrying session ids) from each
+ * breadcrumb. Exported for unit testing.
+ */
+export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
+  if (breadcrumb.message) breadcrumb.message = scrubString(breadcrumb.message);
+  if (breadcrumb.data) {
+    const data = { ...breadcrumb.data };
+    if (typeof data.url === "string") data.url = scrubUrl(data.url);
+    breadcrumb.data = scrubValue(data) as Record<string, unknown>;
+  }
+  return breadcrumb;
+}
 
 /**
  * The single source of truth for "should Sentry do anything at all?". Guard EVERY Sentry call on
@@ -50,6 +176,9 @@ export function baseSentryInitOptions(): {
   environment: string;
   tracesSampleRate: number;
   enabled: boolean;
+  sendDefaultPii: boolean;
+  beforeSend: (event: SentryErrorEvent) => SentryErrorEvent;
+  beforeSendBreadcrumb: (breadcrumb: Breadcrumb) => Breadcrumb;
 } {
   return {
     dsn: env.NEXT_PUBLIC_SENTRY_DSN ?? "",
@@ -59,6 +188,11 @@ export function baseSentryInitOptions(): {
     // Belt-and-suspenders: even if init were somehow reached without a DSN, `enabled:false`
     // makes the SDK inert. The real gate is the isSentryEnabled() check at every call site.
     enabled: Boolean(env.NEXT_PUBLIC_SENTRY_DSN),
+    // PII scrubbing (H-F9): never attach default PII (IP, cookies, request bodies/headers the SDK
+    // would otherwise infer), and redact emails/prompts/session-ids from every event + breadcrumb.
+    sendDefaultPii: false,
+    beforeSend: scrubEvent,
+    beforeSendBreadcrumb: scrubBreadcrumb,
   };
 }
 
