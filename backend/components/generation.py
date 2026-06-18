@@ -1,4 +1,4 @@
-"""Generation module: final-answer synthesis via the injected LLM provider.
+"""Generation module: the rich-synthesis format contract + query builder.
 
 Phase 4: the Gemini process-global and GoogleAPIError ladder are removed. Error mapping lives in
 the provider adapter; neutral LLM errors bubble to app_exception_handler in exceptions.py.
@@ -6,21 +6,12 @@ the provider adapter; neutral LLM errors bubble to app_exception_handler in exce
 Phase 6: synthesis is *rich* — the model is asked for Markdown prose plus zero or more fenced
 ``json`` component blocks from the fixed catalog (table / chart / citation / code / callout / media,
 agents/schemas.py). The format contract is folded into the query string so it reaches the model
-regardless of route, without touching the provider adapters in ``llm/``. ``synthesize`` is the
-non-streaming entry (generate → parse_components); the streaming entry lives in the synthesis node,
-which feeds ``provider.stream`` deltas to a ``ComponentStreamSplitter``. The legacy
-``generate_final_response`` (plain answer, combined label) is preserved for existing callers.
+regardless of route, without touching the provider adapters in ``llm/``. The streaming synthesis
+entry lives in the synthesis node, which feeds ``provider.stream`` deltas to a
+``ComponentStreamSplitter`` and calls ``build_synthesis_query`` to wrap the user question.
 """
 
 from __future__ import annotations
-
-import structlog
-
-from agents.schemas import parse_components
-from components.retrieval import format_context
-from llm.base import LLMProvider, Route
-
-logger = structlog.get_logger(__name__)
 
 
 # The stable synthesis format contract — a prompt-cacheable prefix (docs/09 Decision 9). It instructs
@@ -54,38 +45,3 @@ def build_synthesis_query(user_query: str) -> str:
     prefix → prompt-cacheable; the trailing question is the per-request tail.
     """
     return f"{SYNTHESIS_FORMAT_CONTRACT}\n\nUser question: {user_query}"
-
-
-async def synthesize(
-    provider: LLMProvider,
-    query: str,
-    context: str,
-    decision: Route,
-) -> tuple[str, list[dict]]:
-    """Non-streaming rich synthesis: one ``generate`` call, then split prose / components.
-
-    Returns ``(prose, components)`` where ``prose`` has any recognized component blocks stripped and
-    ``components`` is the list of validated component dicts. Malformed/unknown blocks stay in the
-    prose (never a 500), mirroring the defensive ``parse_components`` contract.
-    """
-    raw = await provider.generate(build_synthesis_query(query), context, decision)
-    prose, components = parse_components(raw)
-    logger.info(
-        "synthesis_complete",
-        decision=decision,
-        prose_chars=len(prose),
-        components=len(components),
-    )
-    return prose, components
-
-
-async def generate_final_response(
-    provider: LLMProvider,
-    query: str,
-    context: list[str],
-    decision: Route,
-) -> str:
-    """Generate the final answer using the injected provider. Legacy linear-path helper."""
-    answer = await provider.generate(query, format_context(context), decision)
-    logger.info("generation_complete", decision=decision, response_chars=len(answer))
-    return answer

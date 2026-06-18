@@ -26,7 +26,6 @@ class Settings(BaseSettings):
     DATABASE_URL: str  # e.g. postgresql+asyncpg://user:pass@host/db (or postgresql:// — transformed at engine build)
 
     # Optional
-    UPLOADTHING_API_KEY: str | None = None
     PINECONE_INDEX_NAME: str = "rag-knowledge-base"
     LOG_JSON: bool = Field(default=False)
     ENVIRONMENT: Literal["development", "production"] = "development"

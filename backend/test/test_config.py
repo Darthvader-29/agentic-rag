@@ -22,7 +22,6 @@ REQUIRED = {
 
 def _fresh(monkeypatch, env):
     for k in list(REQUIRED) + [
-        "UPLOADTHING_API_KEY",
         "PINECONE_INDEX_NAME",
         "LOG_JSON",
         "ENVIRONMENT",
@@ -65,7 +64,7 @@ def test_index_name_default(monkeypatch):
 
 def test_optionals_default(monkeypatch):
     c = _fresh(monkeypatch, REQUIRED)
-    assert c.settings.UPLOADTHING_API_KEY is None and c.settings.LOG_JSON is False
+    assert c.settings.LOG_JSON is False
 
 
 def test_missing_required_raises(monkeypatch):

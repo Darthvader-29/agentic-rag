@@ -8,7 +8,7 @@ This Project was an attempt to revise my skills as software developer so i had c
 ## Project Technical Details:
 
 - Backend: The Backend Side has been deployed seperatly and its services are Listed below:
-  **Raw File Uploads**: Amazon AWS S3 Buckets
+  **Raw File Uploads**: S3-compatible object storage (MinIO in local dev, Backblaze B2 in production — accessed via the boto3 S3 API)
   **VectorDB**: Pinecone
   **LLM**: Google Gemini API (Note: Multple Models used)
   **Tokenizer**: Open source Model used (The Model is being accessed via HuggingFace)

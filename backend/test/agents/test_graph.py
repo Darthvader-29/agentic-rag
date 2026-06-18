@@ -1,26 +1,27 @@
 """Graph-level tests for agents.graph.build_graph().
 
-1. PARITY (docs/07 Appendix F): for the same query + fixed fake provider + fake collection,
-   ``graph.ainvoke(initial_state)`` yields a final ``answer`` EQUAL to what the old linear
-   ``decide_combined_route → retrieve → generate`` path produced.
+1. ROUTING/SYNTHESIS: for a given query + fixed fake provider + fake collection,
+   ``graph.ainvoke(initial_state)`` resolves the route and yields the provider's answer.
 2. PARALLEL: the ``BOTH`` route runs web + vector concurrently — both result keys appear in the
    final state.
+
+(The old linear-flow parity comparison was dropped in R29 with the removal of the dead
+``route_query`` / ``generate_final_response`` helpers; the graph is now the only execution path,
+so these tests assert its output directly.)
 """
 
 import pytest
 from langgraph.graph.state import CompiledStateGraph
 
 from agents.graph import build_graph
-from components.generation import generate_final_response
-from components.retrieval import retrieve_context
-from components.router import route_query
 
-# ── fakes (fixed outputs so the two code paths are comparable) ────────────────
+# ── fakes (fixed outputs so the assertions are deterministic) ─────────────────
 
 
 class _FakeProvider:
-    """A provider whose generate() ignores its inputs and returns a fixed answer — so the linear
-    path and the graph path are directly comparable (the wrapped synthesis query can't change it)."""
+    """A provider whose route()/generate() ignore their inputs and return fixed values — so the
+    graph's resolved route and final answer are deterministic (the wrapped synthesis query and the
+    retrieved context can't change them)."""
 
     def __init__(self, base_route: str, gen_returns: str) -> None:
         self.base_route = base_route
@@ -74,21 +75,6 @@ def _initial_state(
     }
 
 
-async def _linear_answer(provider, pinecone, embedder, web, *, query, has_documents, web_allowed):
-    """Reproduce the old app.py linear flow's final answer for parity comparison."""
-    from app import check_docs_relevant, decide_combined_route
-
-    base_route = await route_query(
-        provider, query, has_documents=has_documents, web_search_allowed=web_allowed
-    )
-    has_docs, docs_relevant = await check_docs_relevant(query, "s1", pinecone, embedder)
-    final_route = decide_combined_route(
-        base_route, has_documents=has_docs, docs_relevant=docs_relevant, web_allowed=web_allowed
-    )
-    context = await retrieve_context(query, final_route, "s1", web_allowed, pinecone, embedder, web)
-    return await generate_final_response(provider, query, context, final_route)  # type: ignore[arg-type]
-
-
 # ── build ─────────────────────────────────────────────────────────────────────
 
 
@@ -97,12 +83,12 @@ def test_build_graph_compiles():
     assert isinstance(graph, CompiledStateGraph)
 
 
-# ── parity ────────────────────────────────────────────────────────────────────
+# ── routing + synthesis ─────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_graph_parity_rag_with_relevant_docs():
-    """RAG intent + relevant docs: graph answer == linear answer."""
+async def test_graph_rag_with_relevant_docs():
+    """RAG intent + relevant docs: the graph retrieves and returns the grounded answer."""
     matches = [{"text": "doc-a", "score": 0.9}, {"text": "doc-b", "score": 0.6}]
     p = _FakeProvider("RAG", "Grounded answer.")
     pc, emb, web = _FakePinecone(matches), _FakeEmbedder(), _FakeWeb([])
@@ -111,15 +97,13 @@ async def test_graph_parity_rag_with_relevant_docs():
     final = await graph.ainvoke(
         _initial_state(p, pc, emb, web, has_documents=True, web_allowed=False)
     )
-    linear = await _linear_answer(
-        p, pc, emb, web, query="what is X?", has_documents=True, web_allowed=False
-    )
-    assert final["answer"] == linear == "Grounded answer."
+    assert final["route"] == "RAG"
+    assert final["answer"] == "Grounded answer."
 
 
 @pytest.mark.asyncio
-async def test_graph_parity_direct_no_docs():
-    """DIRECT intent, no docs, web disabled: both paths return the same direct answer."""
+async def test_graph_direct_no_docs():
+    """DIRECT intent, no docs, web disabled: the graph answers directly."""
     p = _FakeProvider("DIRECT", "Direct answer.")
     pc, emb, web = _FakePinecone([]), _FakeEmbedder(), _FakeWeb([])
 
@@ -127,15 +111,13 @@ async def test_graph_parity_direct_no_docs():
     final = await graph.ainvoke(
         _initial_state(p, pc, emb, web, has_documents=False, web_allowed=False)
     )
-    linear = await _linear_answer(
-        p, pc, emb, web, query="what is X?", has_documents=False, web_allowed=False
-    )
-    assert final["answer"] == linear == "Direct answer."
+    assert final["route"] == "DIRECT"
+    assert final["answer"] == "Direct answer."
 
 
 @pytest.mark.asyncio
-async def test_graph_parity_web_no_docs():
-    """WEB intent, no docs, web enabled: both paths return the same web answer."""
+async def test_graph_web_no_docs():
+    """WEB intent, no docs, web enabled: the graph searches the web and returns its answer."""
     p = _FakeProvider("WEB", "Web answer.")
     pc, emb, web = _FakePinecone([]), _FakeEmbedder(), _FakeWeb([{"title": "t", "snippet": "s"}])
 
@@ -143,10 +125,8 @@ async def test_graph_parity_web_no_docs():
     final = await graph.ainvoke(
         _initial_state(p, pc, emb, web, has_documents=False, web_allowed=True)
     )
-    linear = await _linear_answer(
-        p, pc, emb, web, query="what is X?", has_documents=False, web_allowed=True
-    )
-    assert final["answer"] == linear == "Web answer."
+    assert final["route"] == "WEB"
+    assert final["answer"] == "Web answer."
 
 
 @pytest.mark.asyncio

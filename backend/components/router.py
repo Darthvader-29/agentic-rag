@@ -1,4 +1,4 @@
-"""Router module: query classification + the flat agentic route decision.
+"""Router module: the flat agentic route decision.
 
 Phase 4: the Gemini process-global and GoogleAPIError ladder are removed. Error mapping lives in
 the provider adapter; neutral LLM errors bubble to app_exception_handler in exceptions.py.
@@ -7,38 +7,12 @@ Phase 6: ``decide_agentic_route`` folds the old ``app.py::decide_combined_route`
 a single flat label (``RAG`` / ``WEB`` / ``BOTH`` / ``DIRECT``) the LangGraph supervisor emits. The
 post-retrieval relevance gate stays in the vector node (docs/09 §2.1); the supervisor routes on
 intent only, preferring ``BOTH`` when documents exist and web is allowed so the gate can fall back
-to web. ``route_query`` (the single-label classifier) is preserved for existing callers.
+to web. Routing itself is the supervisor node calling ``provider.route`` directly (agents/nodes.py).
 """
 
 from __future__ import annotations
 
-import structlog
-
 from agents.state import Route as AgentRoute
-from llm.base import LLMProvider, Route
-
-logger = structlog.get_logger(__name__)
-
-
-async def route_query(
-    provider: LLMProvider,
-    query: str,
-    *,
-    has_documents: bool,
-    web_search_allowed: bool,
-) -> Route:
-    """Route query to RAG, WEB, or DIRECT using the injected provider."""
-    decision = await provider.route(
-        query, has_documents=has_documents, web_allowed=web_search_allowed
-    )
-    logger.info(
-        "router_decision",
-        query_preview=query[:50],
-        decision=decision,
-        has_documents=has_documents,
-        web_search_allowed=web_search_allowed,
-    )
-    return decision
 
 
 def decide_agentic_route(
