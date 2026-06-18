@@ -82,8 +82,10 @@ class Settings(BaseSettings):
     TIER_SYNTH_MODEL_GEMINI: str = "gemini-2.5-pro"
     TIER_ROUTE_MODEL_OPENAI: str = "gpt-4o-mini"
     TIER_SYNTH_MODEL_OPENAI: str = "gpt-4o"
-    TIER_ROUTE_MODEL_ANTHROPIC: str = "claude-3-5-haiku-latest"
-    TIER_SYNTH_MODEL_ANTHROPIC: str = "claude-3-5-sonnet-latest"
+    # R14: pinned to current, non-deprecated Claude 4.x ids (the deprecated claude-3-5-*-latest
+    # aliases risk silent drift / removal). Route classifier → Haiku 4.5; synthesis → Sonnet 4.6.
+    TIER_ROUTE_MODEL_ANTHROPIC: str = "claude-haiku-4-5-20251001"
+    TIER_SYNTH_MODEL_ANTHROPIC: str = "claude-sonnet-4-6"
 
     # --- Phase 7: Observability (OpenTelemetry + Langfuse) ---
     OTEL_ENABLED: bool = False

@@ -7,6 +7,9 @@
 * **R13** — Gemini streaming pumps its blocking sync iterator off the event loop (one ``next()`` per
   worker thread), so a concurrent coroutine keeps making progress while a Gemini stream is in flight
   and chunks are yielded incrementally (not buffered); a mid-stream transient failure is not replayed.
+* **R14** — Anthropic raises the synthesis output cap (1024 → 4096), inspects ``stop_reason`` and
+  surfaces a ``max_tokens`` stop (does not silently truncate), and the model ids are pinned to the
+  current non-deprecated Claude 4.x ids.
 
 Mock SDKs come from ``conftest.py`` (``provider_case`` maps-without-retry; ``retrying_provider_case``
 retries with zero backoff so nothing sleeps).
@@ -255,3 +258,121 @@ async def test_gemini_stream_mid_stream_transient_is_not_replayed():
 
     assert seen == ["partial"]  # delivered once, never replayed
     assert attempts["n"] == 1  # committed stream: NOT retried
+
+
+# ── R14: Anthropic output budget + stop_reason + pinned model ids ──────────────
+
+
+def _anthropic_provider():
+    mock_client = AsyncMock()
+    with patch("llm.anthropic.AsyncAnthropic", return_value=mock_client):
+        from llm.anthropic import AnthropicProvider
+
+        provider = AnthropicProvider(api_key="fake-key", retry_backoff_seconds=0.0)
+    return provider, mock_client
+
+
+def test_anthropic_generate_max_tokens_raised_to_4096():
+    """The synthesis output cap is raised from the old 1024 so long answers aren't truncated."""
+    from llm.anthropic import AnthropicProvider
+
+    assert AnthropicProvider._GENERATE_MAX_TOKENS == 4096
+
+
+async def test_anthropic_passes_raised_max_tokens_to_create():
+    provider, client = _anthropic_provider()
+    from anthropic.types import TextBlock
+
+    tb = MagicMock(spec=TextBlock)
+    tb.text = "answer"
+    msg = MagicMock()
+    msg.content = [tb]
+    msg.stop_reason = "end_turn"
+    client.messages.create.return_value = msg
+
+    await provider.generate("Q?", "ctx", "RAG")
+
+    assert client.messages.create.call_args.kwargs["max_tokens"] == 4096
+
+
+async def test_anthropic_max_tokens_stop_is_logged_not_silent():
+    """A ``max_tokens`` stop_reason must be surfaced (warning), not passed off as a complete answer."""
+    import structlog
+
+    provider, client = _anthropic_provider()
+    from anthropic.types import TextBlock
+
+    tb = MagicMock(spec=TextBlock)
+    tb.text = "truncated answer"
+    msg = MagicMock()
+    msg.content = [tb]
+    msg.stop_reason = "max_tokens"  # hit the cap
+    client.messages.create.return_value = msg
+
+    with structlog.testing.capture_logs() as logs:
+        out = await provider.generate("Q?", "ctx", "RAG")
+
+    assert out == "truncated answer"  # the partial text is still returned
+    events = [e for e in logs if e.get("event") == "anthropic_response_truncated"]
+    assert events and events[0]["stop_reason"] == "max_tokens"  # truncation is observable
+
+
+async def test_anthropic_normal_stop_does_not_warn():
+    """A clean ``end_turn`` stop emits no truncation warning (R14)."""
+    import structlog
+
+    provider, client = _anthropic_provider()
+    from anthropic.types import TextBlock
+
+    tb = MagicMock(spec=TextBlock)
+    tb.text = "complete answer"
+    msg = MagicMock()
+    msg.content = [tb]
+    msg.stop_reason = "end_turn"
+    client.messages.create.return_value = msg
+
+    with structlog.testing.capture_logs() as logs:
+        await provider.generate("Q?", "ctx", "RAG")
+
+    assert not [e for e in logs if e.get("event") == "anthropic_response_truncated"]
+
+
+async def test_anthropic_stream_inspects_final_stop_reason():
+    """The streaming path inspects the assembled message's stop_reason after draining (R14)."""
+    import structlog
+
+    provider, client = _anthropic_provider()
+
+    async def _text_gen():
+        yield "hello "
+        yield "world"
+
+    inner = MagicMock()
+    inner.text_stream = _text_gen()
+    final_msg = MagicMock()
+    final_msg.stop_reason = "max_tokens"
+    inner.get_final_message = AsyncMock(return_value=final_msg)
+    stream_cm = AsyncMock()
+    stream_cm.__aenter__.return_value = inner
+    stream_cm.__aexit__.return_value = False
+    client.messages.stream = MagicMock(return_value=stream_cm)
+
+    with structlog.testing.capture_logs() as logs:
+        chunks = [c async for c in provider.stream("Q?", "ctx", "WEB")]
+
+    assert chunks == ["hello ", "world"]
+    assert any(e.get("event") == "anthropic_stream_truncated" for e in logs)
+
+
+def test_anthropic_model_ids_pinned_to_current_4x():
+    """Default + tier ids are the current non-deprecated Claude 4.x ids, not claude-3-5-*-latest."""
+    from llm.anthropic import AnthropicProvider
+
+    assert AnthropicProvider._DEFAULT_MODEL == "claude-haiku-4-5-20251001"
+    assert "3-5" not in AnthropicProvider._DEFAULT_MODEL
+    assert "latest" not in AnthropicProvider._DEFAULT_MODEL
+
+    assert settings.TIER_ROUTE_MODEL_ANTHROPIC == "claude-haiku-4-5-20251001"
+    assert settings.TIER_SYNTH_MODEL_ANTHROPIC == "claude-sonnet-4-6"
+    for model_id in (settings.TIER_ROUTE_MODEL_ANTHROPIC, settings.TIER_SYNTH_MODEL_ANTHROPIC):
+        assert "latest" not in model_id
