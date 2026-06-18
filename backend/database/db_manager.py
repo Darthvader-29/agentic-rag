@@ -112,9 +112,11 @@ class PineconeClient:
         """Delete every vector for a session.
 
         Serverless indexes REJECT delete-by-metadata-filter, so we enumerate this session's vector
-        ids by prefix (ids are ``f"{session_id}_{filename}_{i:04d}"`` — see preprocessing) and delete
-        them by id, which serverless does support. Errors propagate (no inner swallow) so tenacity
-        retries and the caller learns of a real failure instead of a false "cleaned".
+        ids by prefix (ids are ``f"{session_id}_{document_id}_{i:04d}"`` — see preprocessing, R15)
+        and delete them by id, which serverless does support. The ``{session_id}_`` prefix still
+        covers every document in the session, so this by-session cleanup is unchanged by R15.
+        Errors propagate (no inner swallow) so tenacity retries and the caller learns of a real
+        failure instead of a false "cleaned".
         """
         index = self._index_or_raise()
         ids: list[str] = []

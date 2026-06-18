@@ -10,7 +10,8 @@ handler, then re-raises for observability.
 Retries: transient I/O is already retried at the client level (tenacity on S3/embedder/
 Pinecone), and a deterministic parse failure should not loop — so no Celery autoretry.
 task_acks_late (see celery_app) redelivers on worker crash; re-runs are idempotent because
-chunk ids are deterministic ({session}_{filename}_{i}), so an upsert overwrites.
+chunk ids are deterministic ({session}_{document_id}_{i} — R15), so an upsert overwrites the
+SAME document's chunks rather than colliding with a different same-named document.
 """
 
 import asyncio
@@ -48,7 +49,15 @@ async def _run_pipeline(
     pinecone = PineconeClient.from_settings(settings)
     try:
         raw_text = await process_file_pipeline(
-            s3_key, filename, session_id, s3, embedder, pinecone, session_factory, user_id
+            s3_key,
+            filename,
+            session_id,
+            s3,
+            embedder,
+            pinecone,
+            session_factory,
+            user_id,
+            document_id,  # R15: per-document-unique vector ids
         )
         await _maybe_extract_graph(document_id, session_id, raw_text, session_factory, settings)
     finally:
