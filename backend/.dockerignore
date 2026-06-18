@@ -1,0 +1,47 @@
+# backend/.dockerignore — keep the build context lean and SECRET-FREE.
+# Anything matched here never enters the image (no `.env` in a layer; H-B8 / REL-2).
+
+# Secrets / local env — must never be baked into an image layer
+.env
+.env.*
+!.env.example
+
+# Virtualenvs / local Python installs
+.venv
+venv
+.Python
+
+# Python caches / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+junit.xml
+
+# Local upload scratch space
+tmp_uploads/
+
+# Tests (not needed at runtime)
+test/
+conftest.py
+
+# Docs / diagrams / CI (not needed at runtime)
+docs/
+*.md
+*.png
+*.svg
+Jenkinsfile
+.github/
+
+# VCS / editor / OS
+.git
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
