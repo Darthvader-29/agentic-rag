@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { m } from "framer-motion";
+import { Dialog as DialogPrimitive } from "radix-ui";
 import { useChat, resetSession } from "@/features/chat/hooks/use-chat";
 import { useChatStore, createMessage } from "@/features/chat/store/chat.store";
 import { getSessionId } from "@/features/chat/api/chat.api";
@@ -10,6 +11,7 @@ import { isNearBottom } from "@/features/chat/lib/scroll";
 import { env } from "@/lib/env";
 import { flags } from "@/lib/flags";
 import { spring } from "@/lib/motion";
+import { cn } from "@/lib/utils";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 
 import { Sidebar } from "@/components/chat/sidebar";
@@ -25,12 +27,6 @@ import { toast } from "sonner";
 
 const sidebarVariants = {
   open: { width: 256, opacity: 1 },
-  closed: { width: 0, opacity: 0 },
-};
-
-// Right-hand "Insights" drawer width animation (mirrors the left sidebar spring).
-const insightsVariants = {
-  open: { width: 340, opacity: 1 },
   closed: { width: 0, opacity: 0 },
 };
 
@@ -66,9 +62,45 @@ export function ChatScreen() {
   const stickToBottomRef = useRef(true);
   const reduced = useReducedMotion();
 
+  // a11y (WCAG 2.4.3): the sidebar collapse/expand toggles each REMOVE the control that was just
+  // activated (the in-sidebar "Toggle sidebar" button when collapsing; the floating "Open sidebar"
+  // button when expanding). Without intervention focus drops to <body>. We move focus to the
+  // counterpart that becomes visible after the toggle. The insights drawer is a radix Dialog, so
+  // its own focus trap + restore-to-trigger is handled by radix.
+  const openSidebarBtnRef = useRef<HTMLButtonElement>(null);
+  // What to focus after the NEXT sidebar state change (consumed by the effect below).
+  const pendingSidebarFocus = useRef<"open-button" | "sidebar-toggle" | null>(
+    null
+  );
+
   // The session the panels fetch against. Empty string on the server (SSR-safe); the panels'
   // own query gating + empty-state handle an empty id gracefully.
   const sessionId = getSessionId();
+
+  const collapseSidebar = useCallback(() => {
+    pendingSidebarFocus.current = "open-button";
+    setIsSidebarOpen(false);
+  }, []);
+  const expandSidebar = useCallback(() => {
+    pendingSidebarFocus.current = "sidebar-toggle";
+    setIsSidebarOpen(true);
+  }, []);
+
+  // Move focus to the control that replaced the one the user just activated.
+  useEffect(() => {
+    const target = pendingSidebarFocus.current;
+    if (!target) return;
+    pendingSidebarFocus.current = null;
+    if (target === "open-button") {
+      openSidebarBtnRef.current?.focus();
+    } else {
+      // The in-sidebar collapse toggle re-appears when the sidebar expands.
+      const el = document.querySelector<HTMLElement>(
+        '[aria-label="Toggle sidebar"]'
+      );
+      el?.focus();
+    }
+  }, [isSidebarOpen]);
 
   // Track whether the user is near the bottom of the scroll viewport. While they've scrolled up
   // we must NOT yank them back down on every streamed token (B24).
@@ -122,19 +154,17 @@ export function ChatScreen() {
         transition={reduced ? { duration: 0 } : spring}
         className="overflow-hidden"
       >
-        <Sidebar
-          onClearSession={handleClearSession}
-          onToggle={() => setIsSidebarOpen(false)}
-        />
+        <Sidebar onClearSession={handleClearSession} onToggle={collapseSidebar} />
       </m.div>
 
       <div className="border-border bg-background relative my-0 mr-0 flex h-full flex-1 flex-col overflow-hidden rounded-l-2xl border-l shadow-xl dark:shadow-none">
         {!isSidebarOpen && (
           <div className="absolute top-4 left-4 z-10">
             <Button
+              ref={openSidebarBtnRef}
               variant="ghost"
               size="icon"
-              onClick={() => setIsSidebarOpen(true)}
+              onClick={expandSidebar}
               aria-label="Open sidebar"
               className="hover:bg-accent"
             >
@@ -143,19 +173,71 @@ export function ChatScreen() {
           </div>
         )}
 
-        {/* Phase 7: Insights drawer toggle — only shown when a panel flag is on. */}
-        {INSIGHTS_ENABLED && !isInsightsOpen && (
-          <div className="absolute top-4 right-4 z-10">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsInsightsOpen(true)}
-              aria-label="Open insights"
-              className="hover:bg-accent"
-            >
-              <Sparkles className="text-muted-foreground h-5 w-5" />
-            </Button>
-          </div>
+        {/* Phase 7: Insights drawer — a focus-trapped radix Dialog (sheet). The trigger stays
+            mounted while the feature is enabled so radix can restore focus to it on close/Escape
+            (WCAG 2.4.3). Gated on INSIGHTS_ENABLED, so with both flags off neither the trigger nor
+            the lazy panel chunks are ever evaluated. */}
+        {INSIGHTS_ENABLED && (
+          <DialogPrimitive.Root
+            open={isInsightsOpen}
+            onOpenChange={setIsInsightsOpen}
+          >
+            <div className="absolute top-4 right-4 z-10">
+              <DialogPrimitive.Trigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Open insights"
+                  className="hover:bg-accent"
+                >
+                  <Sparkles className="text-muted-foreground h-5 w-5" />
+                </Button>
+              </DialogPrimitive.Trigger>
+            </div>
+
+            <DialogPrimitive.Portal>
+              <DialogPrimitive.Overlay
+                className={cn(
+                  "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50"
+                )}
+              />
+              {/* Right-hand sheet: radix Content gives the focus trap, Escape-to-close, and
+                  focus-restore-to-trigger for free, fixing the prior "toggles drop focus" gap. */}
+              <DialogPrimitive.Content
+                aria-label="Insights"
+                className={cn(
+                  "bg-background border-border data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-right-2 data-[state=closed]:slide-out-to-right-2 fixed top-0 right-0 z-50 flex h-full w-[340px] max-w-[90vw] flex-col border-l shadow-xl outline-none duration-200"
+                )}
+              >
+                <div className="border-border flex items-center justify-between border-b px-4 py-3">
+                  <DialogPrimitive.Title className="text-foreground flex items-center gap-2 text-sm font-semibold">
+                    <Sparkles className="h-4 w-4" aria-hidden="true" />
+                    Insights
+                  </DialogPrimitive.Title>
+                  <DialogPrimitive.Description className="sr-only">
+                    Knowledge graph and conversation memory for this session.
+                  </DialogPrimitive.Description>
+                  <DialogPrimitive.Close asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      aria-label="Close insights"
+                    >
+                      <PanelRightClose className="text-muted-foreground h-4 w-4" />
+                    </Button>
+                  </DialogPrimitive.Close>
+                </div>
+
+                <ScrollArea className="flex-1">
+                  <div className="space-y-4 p-4">
+                    {flags.knowledgeGraph && <GraphPanel sessionId={sessionId} />}
+                    {flags.memory && <MemoryPanel sessionId={sessionId} />}
+                  </div>
+                </ScrollArea>
+              </DialogPrimitive.Content>
+            </DialogPrimitive.Portal>
+          </DialogPrimitive.Root>
         )}
 
         {/* Free-tier disclaimer — flag-gated; visible only to keyless users (M7). */}
@@ -191,45 +273,6 @@ export function ChatScreen() {
           }}
         />
       </div>
-
-      {/* Phase 7 Insights drawer — right-hand panel hosting the knowledge-graph + memory panels.
-          The whole drawer is gated on INSIGHTS_ENABLED, so when both flags are off nothing here
-          (including the lazy imports) is ever evaluated. The spring-driven width mirrors the left
-          sidebar. Each panel is flag-gated INDIVIDUALLY and owns its own loading/empty/404 state. */}
-      {INSIGHTS_ENABLED && (
-        <m.div
-          initial={false}
-          animate={isInsightsOpen ? "open" : "closed"}
-          variants={insightsVariants}
-          transition={reduced ? { duration: 0 } : spring}
-          className="border-border bg-background h-full overflow-hidden border-l"
-        >
-          <div className="flex h-full w-[340px] flex-col">
-            <div className="border-border flex items-center justify-between border-b px-4 py-3">
-              <span className="text-foreground flex items-center gap-2 text-sm font-semibold">
-                <Sparkles className="h-4 w-4" />
-                Insights
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => setIsInsightsOpen(false)}
-                aria-label="Close insights"
-              >
-                <PanelRightClose className="text-muted-foreground h-4 w-4" />
-              </Button>
-            </div>
-
-            <ScrollArea className="flex-1">
-              <div className="space-y-4 p-4">
-                {flags.knowledgeGraph && <GraphPanel sessionId={sessionId} />}
-                {flags.memory && <MemoryPanel sessionId={sessionId} />}
-              </div>
-            </ScrollArea>
-          </div>
-        </m.div>
-      )}
     </div>
   );
 }
