@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from database.db_manager import PineconeClient
+from integrations.duckduckgo.client import DuckDuckGoClient
 from integrations.huggingface.client import HuggingFaceClient
 from integrations.s3.client import S3Client
 
@@ -207,3 +208,67 @@ async def test_pinecone_search_reraises_after_max_retries():
             await client.search_vectors([0.0] * 384, top_k=1)
 
     assert mock_index.query.call_count == 3
+
+
+# ── DuckDuckGo: errors must reach @retry, not be swallowed into a silent [] (R19) ──
+
+
+def _ddgs_ctx_mock(text_side_effect):
+    """A MagicMock standing in for ``DDGS(...)`` whose ``__enter__`` yields an object whose
+    ``.text`` uses ``text_side_effect`` (a value or an exception/list of side effects)."""
+    ddgs_factory = MagicMock()
+    ctx = ddgs_factory.return_value  # the object returned by DDGS(timeout=...)
+    inner = ctx.__enter__.return_value  # the object bound by `with DDGS(...) as ddgs`
+    inner.text.side_effect = text_side_effect
+    return ddgs_factory, inner
+
+
+@pytest.mark.asyncio
+async def test_ddg_search_retries_then_succeeds():
+    """A transient DDGS error is retried (proving @retry sees the raised exception) and
+    the eventual success is returned — it does NOT short-circuit to a silent []."""
+    client = DuckDuckGoClient()
+    ddgs_factory, inner = _ddgs_ctx_mock(
+        [
+            RuntimeError("transient ddg failure"),
+            [{"title": "T", "body": "snippet body"}],
+        ]
+    )
+
+    with patch("integrations.duckduckgo.client.DDGS", ddgs_factory):
+        with patch("time.sleep"):  # skip tenacity backoff waits
+            results = await client.search_web("q", max_results=3)
+
+    assert results == [{"title": "T", "snippet": "snippet body"}]
+    assert inner.text.call_count == 2  # first attempt raised, second succeeded
+
+
+@pytest.mark.asyncio
+async def test_ddg_search_reraises_after_max_retries_not_silent_empty():
+    """The R19 bug: previously a broad try/except inside the @retry-decorated call swallowed
+    the error and returned [], so tenacity never retried and a real outage looked like
+    "no results". Now a persistent error is retried 3x and then RERAISED — the caller can
+    tell a genuine failure apart from an honestly empty result set."""
+    client = DuckDuckGoClient()
+    ddgs_factory, inner = _ddgs_ctx_mock(RuntimeError("ddg upstream down"))
+
+    with patch("integrations.duckduckgo.client.DDGS", ddgs_factory):
+        with patch("time.sleep"):
+            with pytest.raises(RuntimeError, match="ddg upstream down"):
+                await client.search_web("q", max_results=3)
+
+    assert inner.text.call_count == 3  # retried up to stop_after_attempt(3)
+
+
+def test_ddg_search_sync_passes_bounded_timeout_to_ddgs():
+    """DDGS is constructed with a bounded timeout so a hung upstream can't pin the thread."""
+    from integrations._retry import READ_TIMEOUT
+
+    client = DuckDuckGoClient()
+    ddgs_factory, _ = _ddgs_ctx_mock([[{"title": "T", "body": "b"}]])
+
+    with patch("integrations.duckduckgo.client.DDGS", ddgs_factory):
+        client._search_sync("q", 5)
+
+    _, kwargs = ddgs_factory.call_args
+    assert kwargs["timeout"] == int(READ_TIMEOUT)
