@@ -4,6 +4,7 @@
  *  - forbidden    → 403, cross-user ownership (terminal — never retried/refreshed)
  *  - http         → other non-2xx
  *  - network      → fetch threw (offline, DNS, CORS preflight)
+ *  - timeout      → the request exceeded its timeout and was aborted (hung backend)
  *  - parse        → response body failed Zod validation
  */
 export type ApiErrorKind =
@@ -11,6 +12,7 @@ export type ApiErrorKind =
   | "forbidden"
   | "http"
   | "network"
+  | "timeout"
   | "parse";
 
 export class ApiError extends Error {

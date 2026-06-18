@@ -21,11 +21,62 @@ export interface RequestOptions<T> {
   headers?: Record<string, string>;
   /** Skip the base-URL prepend and use `path` verbatim (for cross-origin auth endpoints). */
   absoluteUrl?: boolean;
+  /**
+   * Per-request timeout in ms. Defaults to {@link DEFAULT_TIMEOUT_MS}. A hung backend that accepts
+   * the socket but never responds would otherwise leave this promise unsettled forever (React
+   * Query's `retry` never fires on a hang). Pass `0` to disable the timeout for a deliberately
+   * long-lived call. The SSE/streaming path does its OWN fetch (lib/sse/stream-chat.ts) and is not
+   * affected by this.
+   */
+  timeoutMs?: number;
   /** Internal: guards against a second refresh on the retried request (loop-free). */
   __retried?: boolean;
 }
 
 const BASE_URL = env.NEXT_PUBLIC_API_URL;
+
+/**
+ * Default fetch timeout (ms). Long enough for a slow-but-alive backend (cold start, a heavy
+ * blocking /chat answer) yet bounded so a truly hung connection rejects instead of hanging forever.
+ */
+export const DEFAULT_TIMEOUT_MS = 30_000;
+
+/**
+ * Build an AbortSignal that fires when EITHER the caller's signal aborts OR the timeout elapses,
+ * plus a `cleanup()` to clear the timer and a `timedOut()` probe so the caller can tell a timeout
+ * apart from a user-initiated abort. Uses an explicit timer (not `AbortSignal.timeout`) so it is
+ * portable and deterministic under fake timers in tests.
+ */
+function withTimeout(
+  callerSignal: AbortSignal | undefined,
+  timeoutMs: number
+): { signal: AbortSignal; cleanup: () => void; timedOut: () => boolean } {
+  // No timeout requested (0 / negative): pass the caller signal straight through, nothing to clean.
+  if (!timeoutMs || timeoutMs <= 0) {
+    return {
+      signal: callerSignal ?? new AbortController().signal,
+      cleanup: () => {},
+      timedOut: () => false,
+    };
+  }
+
+  const timeoutController = new AbortController();
+  let didTimeout = false;
+  const timer = setTimeout(() => {
+    didTimeout = true;
+    timeoutController.abort(new DOMException("Request timed out", "TimeoutError"));
+  }, timeoutMs);
+
+  const signal = callerSignal
+    ? AbortSignal.any([callerSignal, timeoutController.signal])
+    : timeoutController.signal;
+
+  return {
+    signal,
+    cleanup: () => clearTimeout(timer),
+    timedOut: () => didTimeout,
+  };
+}
 
 // ---- single-flight refresh -------------------------------------------------
 // N concurrent 401s must share ONE /auth/refresh call (no stampede, no token-overwrite
@@ -92,6 +143,7 @@ export async function request<T = void>(
     signal,
     headers: extra,
     absoluteUrl,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
   } = opts;
 
   const isForm = typeof FormData !== "undefined" && body instanceof FormData;
@@ -104,6 +156,15 @@ export async function request<T = void>(
     ? path
     : `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
+  // Compose the caller's signal (e.g. the chat Stop button / unmount) with a timeout signal so a
+  // hung backend can't leave this promise unsettled forever. cleanup() clears the timer the moment
+  // fetch settles; timedOut() lets us report a timeout distinctly from a user-initiated abort.
+  const {
+    signal: combinedSignal,
+    cleanup,
+    timedOut,
+  } = withTimeout(signal, timeoutMs);
+
   let res: Response;
   try {
     res = await fetch(url, {
@@ -115,9 +176,20 @@ export async function request<T = void>(
           : isForm
             ? (body as FormData)
             : JSON.stringify(body),
-      signal,
+      signal: combinedSignal,
     });
   } catch (e) {
+    // A timeout fires as an abort on the combined signal; surface it as a distinct, retryable
+    // timeout error (NOT a silent hang, and NOT a caller-initiated AbortError to re-throw).
+    if (timedOut()) {
+      throw new ApiError({
+        message: `Request timed out after ${timeoutMs}ms`,
+        status: 0,
+        kind: "timeout",
+        payload: e,
+      });
+    }
+    // A genuine caller abort (Stop button / unmount) propagates as-is so callers can ignore it.
     if (e instanceof DOMException && e.name === "AbortError") throw e;
     throw new ApiError({
       message: e instanceof Error ? e.message : "Network request failed",
@@ -125,6 +197,8 @@ export async function request<T = void>(
       kind: "network",
       payload: e,
     });
+  } finally {
+    cleanup();
   }
 
   // ---- 403: terminal. Refreshing can't change ownership — never retry. ----
