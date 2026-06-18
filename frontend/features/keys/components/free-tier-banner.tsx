@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Info } from "lucide-react";
-import { flags } from "@/lib/flags";
+import { isByokEnabled } from "@/lib/flags";
 import { useHasAnyKey } from "@/features/keys/hooks/use-api-keys";
 import { FREE_TIER_DISCLAIMER } from "@/features/keys/copy";
 
@@ -10,9 +10,9 @@ import { FREE_TIER_DISCLAIMER } from "@/features/keys/copy";
  * Free-tier disclaimer banner (M7). Shown ONLY to KEYLESS users — once any BYOK key is
  * stored the demo-mode warning no longer applies and the banner hides itself.
  *
- *  - BYOK flag OFF → renders nothing (the feature is dark).
- *  - BYOK flag ON, no stored key → show the CONTRACT-EXACT disclaimer + a "Add key" link.
- *  - BYOK flag ON, has a key → renders nothing.
+ *  - BYOK disabled (flag off, OR auth off → R24) → renders nothing (no dead "Add a key" CTA).
+ *  - BYOK enabled, no stored key → show the CONTRACT-EXACT disclaimer + an "Add key" link.
+ *  - BYOK enabled, has a key → renders nothing.
  *
  * Keyless covers the anonymous/guest case too: `useHasAnyKey` is false when the keys query
  * is disabled (unauthenticated), so a demo visitor sees the warning.
@@ -20,7 +20,7 @@ import { FREE_TIER_DISCLAIMER } from "@/features/keys/copy";
 export function FreeTierBanner() {
   const hasKey = useHasAnyKey();
 
-  if (!flags.byok || hasKey) return null;
+  if (!isByokEnabled() || hasKey) return null;
 
   return (
     <div

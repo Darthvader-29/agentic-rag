@@ -3,10 +3,12 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 let byok = true;
+let auth = true;
 vi.mock("@/lib/flags", () => ({
   get flags() {
-    return { byok, auth: true, streaming: false };
+    return { byok, auth, streaming: false };
   },
+  isByokEnabled: () => byok && auth,
 }));
 
 import { useChatStore, createMessage } from "@/features/chat/store/chat.store";
@@ -30,6 +32,7 @@ function seedAssistant(errorCode?: string) {
 describe("FreeTierExhaustedDialog", () => {
   beforeEach(() => {
     byok = true;
+    auth = true;
     useChatStore.setState({ messages: [] });
   });
 
@@ -72,6 +75,16 @@ describe("FreeTierExhaustedDialog", () => {
 
   it("renders nothing when BYOK is off", () => {
     byok = false;
+    seedAssistant(FREE_TIER_EXHAUSTED);
+    const { container } = render(<FreeTierExhaustedDialog />);
+    expect(container).toBeEmptyDOMElement();
+    expect(
+      screen.queryByText(FREE_TIER_EXHAUSTED_TITLE)
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when auth is off — the CTA would dead-end (R24)", () => {
+    auth = false;
     seedAssistant(FREE_TIER_EXHAUSTED);
     const { container } = render(<FreeTierExhaustedDialog />);
     expect(container).toBeEmptyDOMElement();
