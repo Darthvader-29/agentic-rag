@@ -13,7 +13,6 @@ entry lives in the synthesis node, which feeds ``provider.stream`` deltas to a
 
 from __future__ import annotations
 
-
 # The stable synthesis format contract — a prompt-cacheable prefix (docs/09 Decision 9). It instructs
 # rich Markdown plus an OPTIONAL fenced ```json component block from the trusted catalog. No
 # model-authored executable markup is ever requested (no XSS; fully streamable). An invalid block is
