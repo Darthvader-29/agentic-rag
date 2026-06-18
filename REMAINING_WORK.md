@@ -197,7 +197,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 ## Priority 3 — Resilience & correctness (`CODE_REVIEW.md`)
 
 ### R12 — No timeout/retry on any LLM client
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** HIGH · `CODE_REVIEW.md` H-B6 · `BUGFIX_QUEUE.md` Deferred
 - **Files:** `backend/llm/{gemini,openai,anthropic}.py`, `backend/llm/base.py`.
 - **Symptom:** A hung upstream pins a request forever; transient 429/529 fail immediately.
@@ -206,7 +206,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 - **Test:** a simulated timeout raises a handled provider error (not a hang); a transient 429 retries.
 
 ### R13 — Gemini streaming iterates a sync generator on the event loop (starves concurrency)
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** HIGH · `CODE_REVIEW.md` H-B7 · `BUGFIX_QUEUE.md` Deferred (Gemini = default free tier)
 - **Files:** `backend/llm/gemini.py` (stream path).
 - **Goal/approach:** Offload the blocking iterator (`asyncio.to_thread` per chunk via a queue, or
@@ -214,7 +214,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 - **Test:** a concurrent request makes progress while a Gemini stream is in flight (no serialization).
 
 ### R14 — Anthropic synthesis capped at 1024 output tokens → silent truncation; `-latest` model ids
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM · `CODE_REVIEW.md` H-B5 + model-pin
 - **Files:** `backend/llm/anthropic.py` (`max_tokens` ~:30, tier model ids).
 - **Symptom:** Long answers/rich-component blocks get truncated; `stop_reason` is never inspected;
@@ -383,6 +383,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 
 _(each iteration appends one line: `R-ID — <sha> — <one-line outcome>`)_
 
+- R12/R13/R14 — f2eac8f, 958b627, 152ed6e — [PARALLEL track T1] LLM resilience. **R12**: every adapter builds its SDK client with an explicit timeout + `max_retries=0`; `BaseLLMProvider` centralizes bounded tenacity retry (jittered backoff, reraise) on the TRANSIENT neutral errors only (`LLMRateLimitError`/`LLMUnavailableError`) — auth/response errors raise on attempt 1; new Settings `LLM_TIMEOUT_SECONDS`/`LLM_MAX_RETRY_ATTEMPTS`/`LLM_RETRY_BACKOFF_SECONDS`. **R13**: Gemini `_stream_call` pumps the sync iterator via `anyio.to_thread` (sentinel for StopIteration) so it no longer blocks the event loop. **R14**: Anthropic `max_tokens` 1024→4096 + `stop_reason` inspected (logs truncation, returns partial) on unary+stream; pinned deprecated `claude-3-5-*-latest` → `claude-haiku-4-5-20251001` (route) / `claude-sonnet-4-6` (synth). New `test/llm/test_resilience.py` (32) + conftest retry fixtures. Full backend suite green except the 5 PRE-EXISTING `test_config` reds; ruff+mypy clean.
 - R19 — ae4fcbb — [PARALLEL pilot — proved the worktree→cherry-pick→verify pipeline] added connect/read timeouts to the S3/HF/DuckDuckGo clients (shared `CONNECT_TIMEOUT=5s` / `READ_TIMEOUT=30s` in `integrations/_retry.py`) and fixed the DuckDuckGo `@retry` dead code — removed the inner try/except that swallowed errors and returned `[]`, so a failure now propagates to tenacity (3× backoff) then reraises; the intentional fail-soft stays at the `components/retrieval.py` caller. New `test_dependencies` tests: DDG retries-then-succeeds, reraises-after-max (not silent `[]`), bounded timeout passed to `DDGS`. Full backend suite green except the 5 PRE-EXISTING `test_config` reds; ruff+mypy clean. NOTE: timeouts are module constants (not Settings) per scope — lift into `config.py` if tuning is wanted.
 - R07 — d459bff — added security response headers on BOTH apps. Backend (`app.py`): an http middleware sets `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, and a CSP on every response (kept `'unsafe-inline'` — the legacy `/static` page uses inline onclick/style); HSTS production-only. **SSE streaming verified intact** under BaseHTTPMiddleware (`test_chat_sse` green). Frontend (`next.config.ts` via new `lib/security-headers.ts`): per-route `headers()` with a stricter, env-aware CSP whose `connect-src` is derived from `NEXT_PUBLIC_API_URL` (+ Sentry/Vercel ingest, + dev HMR `ws:`); dev relaxes script-src (`'unsafe-eval'`)/ws, HSTS prod-only. Made `_SECURITY_HEADERS` a **tuple** (not dict) so the statelessness guard leaves the read-only constant alone (it flags any module-level dict/list/set). New tests: backend `test_security_headers` (4) + frontend `lib/security-headers` (7). Full backend green except the 5 PRE-EXISTING `test_config` reds; full frontend **303/303**; ruff+mypy+eslint+typecheck (+0) clean. NOTE: CSP keeps `'unsafe-inline'` for Next compatibility (no per-request nonces) — nonce-based hardening + a live curl/browser verification of the policy is a follow-up.
 - R06 — 9625e5a — closed the citation/media URL XSS hole (rich components default ON). Root cause: `z.string().url()` validates SYNTAX not protocol, so a `javascript:`/`data:` url passed and reached an anchor `href`. Defense-in-depth fix: new `lib/url.ts` (`isSafeHttpUrl`/`safeHttpUrl`); **`sources-panel.tsx` disarms `s.url` to an inert `#` at the single render gate for ALL sources** (citations + M3 blocking-path) — the primary fix; `media.tsx` reuses the shared util (was a local copy); `component.schemas` citation url `refine→http(s)→catch undefined` (disarm, keep the citation); backend `agents/schemas.py` `_is_safe_http_url` + field_validators (`CitationItem.url`→None, `MediaComponent.items` filters unsafe — graceful, B08 fields preserved). New tests: lib/url (3), citation inert-render (1), schema disarm/keep (2), backend citation-disarm + media-filter (2). Full frontend **296/296**; full backend green except the 5 PRE-EXISTING `test_config` reds; ruff+mypy+eslint+typecheck (+0) clean. NOTE: react-markdown link rendering already strips `javascript:` (its default url transform); this covers the custom citation/media component path that bypasses it.
