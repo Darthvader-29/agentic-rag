@@ -36,6 +36,14 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Test
+        # `npm run test` is `vitest run` (one-shot, non-watch). This gates PRs on the
+        # ~50 vitest files (auth, streaming lifecycle, http-client refresh, SSE parser,
+        # schema contracts) that previously never ran in CI (CODE_REVIEW H-F8 / R20).
+        run: npm run test
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000/api
+
       - name: Build
         run: npm run build
         env:
