@@ -185,7 +185,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 - **Test:** tokens are not readable from JS (`window.localStorage`); auth still works over cookies.
 
 ### R11 — Open-redirect via unvalidated `?next`; Sentry has no PII scrubbing
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM · `CODE_REVIEW.md` (H-F redirect, H-F9)
 - **Files:** `frontend/features/auth/*` (post-login redirect), `frontend/lib/observability/sentry.ts`.
 - **Goal/approach:** Validate `?next` is a same-origin relative path before redirecting; add a
@@ -241,7 +241,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 - **Test:** a failed turn leaves the allowance counter unchanged net-of-refund.
 
 ### R17 — Frontend has no error boundary around rich-component rendering
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM · `CODE_REVIEW.md` H-F5
 - **Files:** `frontend/features/chat/components/rich/component-block.tsx` (wrap), new boundary.
 - **Symptom:** One malformed-but-schema-valid chart/table can throw and unmount the whole chat surface.
@@ -250,7 +250,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 - **Test:** a component that throws on render shows the fallback; the rest of the chat stays mounted.
 
 ### R18 — Fetch wrapper has no request timeout / abort
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** MEDIUM · `CODE_REVIEW.md` H-F6
 - **Files:** `frontend/lib/api/http-client.ts`.
 - **Goal/approach:** Add an `AbortController` timeout to the fetch wrapper (and wire abort on
@@ -383,6 +383,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 
 _(each iteration appends one line: `R-ID — <sha> — <one-line outcome>`)_
 
+- R11/R17/R18 — a52e72b, 8939645, 5600234 (+119df9f overseer fix) — [PARALLEL track T5] frontend resilience/security. **R11**: `isSafeNextPath`/`safeNextPath` in `lib/url.ts` reject absolute/protocol-relative/backslash `?next` (open-redirect), used by the post-login redirect; Sentry `beforeSend` scrubs PII + `sendDefaultPii:false`. **R17**: a `ComponentErrorBoundary` wraps each rich block (`component-block.tsx`) so one malformed chart/table falls back to a collapsed raw block instead of unmounting the chat. **R18**: `request()` composes the caller signal with a `DEFAULT_TIMEOUT_MS=30s` timeout (distinct `{kind:"timeout"}` error), cleanup clears the timer. Overseer fix: `withTimeout` used `AbortSignal.any()` (absent in jsdom/older browsers → 4 timeout tests failed) — rewrote to compose signals manually; dropped an unused eslint-disable; ran prettier the agent couldn't. Full frontend suite **313/313**; eslint+prettier clean; typecheck +0.
 - R08/R09/R22/R23 — 4cfb8a2, a51f251, f1854cf, aef034d+f28bc70 — [PARALLEL track T3] backend security/infra. **R08**: non-root `USER` + `HEALTHCHECK` + `.dockerignore` on both backend & frontend images. **R09**: fence untrusted retrieved/web context in the synthesis prompt with verbose `UNTRUSTED_CONTEXT` delimiters + a security-notice guard, in the VARIABLE user suffix so the cached system prefix stays byte-identical. **R22**: new ROOT `.github/workflows/backend-ci.yml` (ruff+mypy+pytest, PR parity with the frontend). **R23**: `GET /health/ready` probes DB/Redis/S3/Pinecone off app.state (200 all-up / 503 per-dep + `{detail}`; bounded + isolated). Overseer fix: the agent's Pinecone probe used a `[0.0]*384` dummy-vector query (tripped `test_no_pinecone_state`) → replaced with new `PineconeClient.describe_stats()` (describe_index_stats, no vector query). New `test_readiness` (5). Full backend suite green except the 5 PRE-EXISTING `test_config` reds; ruff+mypy clean. NOTE: the frontend CI sits at `frontend/.github` (GitHub runs only ROOT `.github`) — pre-existing; R22's backend workflow is correctly at root.
 - R15/R16 — c80c545, 6aacbcb — [PARALLEL track T2] ingestion & quota. **R15**: chunk vector ids were `{session_id}_{filename}_{i}` → two same-named docs in one session clobbered each other on upsert (and a shorter re-ingest orphaned stale chunks); now `{session_id}_{document_id}_{i}` (Document UUID threaded from the Celery task + stamped in metadata), keeping the `{session_id}_` prefix so the by-session cleanup still matches. **R16**: added `refund_free_allowance` (symmetric inverse of the reservation, fail-open on Redis, clamps ≥0) + a one-shot `request.state` refund factory set by `get_llm_provider`, fired on every chat failure/abort path (await on error, detached on cancel) so a wasted turn nets zero quota. New `test_preprocessing_vector_ids` + `test_freemium_refund_chat`. (R16 was implemented but left UNCOMMITTED when the agent hit a session limit — overseer reviewed the diff + committed it.) Full backend suite green except the 5 PRE-EXISTING `test_config` reds; ruff+mypy clean.
 - R12/R13/R14 — f2eac8f, 958b627, 152ed6e — [PARALLEL track T1] LLM resilience. **R12**: every adapter builds its SDK client with an explicit timeout + `max_retries=0`; `BaseLLMProvider` centralizes bounded tenacity retry (jittered backoff, reraise) on the TRANSIENT neutral errors only (`LLMRateLimitError`/`LLMUnavailableError`) — auth/response errors raise on attempt 1; new Settings `LLM_TIMEOUT_SECONDS`/`LLM_MAX_RETRY_ATTEMPTS`/`LLM_RETRY_BACKOFF_SECONDS`. **R13**: Gemini `_stream_call` pumps the sync iterator via `anyio.to_thread` (sentinel for StopIteration) so it no longer blocks the event loop. **R14**: Anthropic `max_tokens` 1024→4096 + `stop_reason` inspected (logs truncation, returns partial) on unary+stream; pinned deprecated `claude-3-5-*-latest` → `claude-haiku-4-5-20251001` (route) / `claude-sonnet-4-6` (synth). New `test/llm/test_resilience.py` (32) + conftest retry fixtures. Full backend suite green except the 5 PRE-EXISTING `test_config` reds; ruff+mypy clean.
