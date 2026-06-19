@@ -19,6 +19,15 @@ consume budget, so an increment that breaches its limit is immediately **rolled 
 before returning ``False``. Per-user is checked first; if it fails we never touch the global
 counter. If per-user passes but global fails, the per-user increment is rolled back too — so a
 request that is ultimately denied leaves *both* counters where they started.
+
+**Refund (R16).** ``within_free_allowance`` *reserves* budget BEFORE the agentic graph runs, so a
+turn that then fails or is aborted before producing an answer would otherwise burn the shared free
+quota for nothing. ``refund_free_allowance`` is the symmetric inverse: it gives back exactly what a
+successful reservation took (1 user query + ``GLOBAL_CALLS_PER_QUERY`` global calls). It mirrors the
+reserve path's stance — it **fails open** on a Redis outage (a failed turn must never itself become
+a 500) and it clamps each counter at ``0`` so a stray/double refund can never drive a counter
+negative and hand out free budget. Reserve+refund are thus net-zero for a turn that never produced
+an answer.
 """
 
 from __future__ import annotations
@@ -70,6 +79,41 @@ async def _incr_within(redis: aioredis.Redis, key: str, amount: int, limit: int,
         await redis.decrby(key, amount)  # denied request must not consume budget
         return False
     return True
+
+
+async def _decr_clamped(redis: aioredis.Redis, key: str, amount: int) -> None:
+    """Give ``amount`` back to ``key`` (the refund inverse of ``_incr_within``), never below 0.
+
+    ``DECRBY`` would happily go negative — a counter below 0 hands out free budget on the next
+    reservation. We clamp to 0 if the refund overshoots (a double refund, or a refund that races the
+    daily reset which already cleared the key). The corrective ``SET`` mirrors the reserve path's own
+    non-atomic ``INCRBY``+``DECRBY`` style (see the module docstring on bounded concurrency); the
+    clamp's only job is the floor, not exact-once accounting.
+    """
+    new_value = await redis.decrby(key, amount)
+    if new_value < 0:
+        await redis.set(key, 0)
+
+
+async def refund_free_allowance(redis: aioredis.Redis, user_id: object) -> None:
+    """Refund one free query's reservation for ``user_id`` on BOTH daily counters.
+
+    The symmetric inverse of a SUCCESSFUL ``within_free_allowance`` reservation: it credits back the
+    same 1 user query + ``GLOBAL_CALLS_PER_QUERY`` global calls. Call this only when a reservation
+    was actually made (the free tier was used) AND the turn then failed/aborted before producing an
+    answer, so a wasted turn nets zero quota consumed. Fails open on a Redis outage and clamps both
+    counters at 0 (see ``_decr_clamped``).
+    """
+    stamp = _utc_day_stamp()
+    user_key = f"freetier:user:{user_id}:{stamp}"
+    global_key = f"freetier:global:{stamp}"
+    try:
+        await _decr_clamped(redis, user_key, 1)
+        await _decr_clamped(redis, global_key, GLOBAL_CALLS_PER_QUERY)
+    except RedisError:
+        # FAIL OPEN, mirroring within_free_allowance: a Redis outage must not turn a failed/aborted
+        # turn into a 500. The reservation simply isn't refunded; the daily TTL reclaims it anyway.
+        logger.error("freetier_refund_redis_unavailable_fail_open", exc_info=True)
 
 
 async def within_free_allowance(redis: aioredis.Redis, user_id: object) -> bool:

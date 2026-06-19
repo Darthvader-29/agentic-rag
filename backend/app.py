@@ -42,7 +42,7 @@ from integrations.duckduckgo.client import DuckDuckGoClient
 from integrations.huggingface.client import HuggingFaceClient
 from integrations.s3.client import S3Client
 from llm.base import LLMProvider
-from llm.dependencies import get_llm_provider
+from llm.dependencies import FREE_TIER_REFUND_STATE_ATTR, get_llm_provider
 from logging_config import configure_logging
 from memory.graph import KnowledgeGraph
 from memory.hybrid import HybridRetriever
@@ -622,6 +622,23 @@ def _spawn_persist(
     task.add_done_callback(registry.discard)
 
 
+def _take_free_tier_refund(request: Request) -> Callable[[], Awaitable[None]] | None:
+    """Pop the free-tier refund factory recorded on ``request.state`` by get_llm_provider (R16).
+
+    Returns a no-arg coroutine factory that credits the reserved allowance back, or ``None`` if no
+    free-tier reservation was made for this request (BYOK/exhausted) or it was already taken. Popping
+    makes the refund fire **at most once** per turn, so a refund can't double-credit and hand out
+    free budget. This is the single owner of the refund-state lifecycle; callers only decide whether
+    to ``await`` it (failure paths, where awaiting is safe) or schedule it detached (the
+    cancellation/disconnect path, where the generator must not suspend).
+    """
+    factory = getattr(request.state, FREE_TIER_REFUND_STATE_ATTR, None)
+    if factory is None:
+        return None
+    setattr(request.state, FREE_TIER_REFUND_STATE_ATTR, None)
+    return factory
+
+
 @app.post("/api/chat")
 @limiter.limit(settings.RATE_LIMIT_CHAT)
 async def chat(
@@ -737,6 +754,15 @@ async def chat(
                     _spawn_persist(
                         registry, sessionmaker, session_id, payload.message, "".join(tokens).strip()
                     )
+                # R16: an aborted turn that produced NO answer wasted its free-tier reservation —
+                # refund it. We can't await mid-cancel, so schedule the refund as a detached task
+                # (same constraint as the persist above). A turn that already streamed an answer
+                # keeps its reservation (the work was delivered).
+                if not tokens and registry is not None:
+                    if refund := _take_free_tier_refund(request):
+                        task = asyncio.ensure_future(refund())
+                        registry.add(task)
+                        task.add_done_callback(registry.discard)
                 raise
             except Exception as exc:
                 logger.error("chat_stream_failed", exc_info=True)
@@ -744,6 +770,11 @@ async def chat(
                 if isinstance(exc, AppException) and getattr(exc, "code", None):
                     err["code"] = exc.code
                 yield sse_event("error", err)
+                # R16: the turn failed mid-stream — refund the free-tier reservation it consumed so a
+                # failed turn nets zero quota. Ordinary exception (not a BaseException) ⇒ awaiting is
+                # safe here. Best-effort: refund_free_allowance itself fails open on a Redis outage.
+                if refund := _take_free_tier_refund(request):
+                    await refund()
                 # Ordinary exception (not a BaseException) → awaiting is safe; persist synchronously.
                 try:
                     await _persist_turn(
@@ -779,10 +810,17 @@ async def chat(
         except (AppException, HTTPException):
             # LLM errors (LLMError subclasses) and the real free-tier 402 (FreeTierExhaustedError)
             # are AppExceptions — they pass through with their correct status/message.
+            # R16: the turn failed after consuming its free-tier reservation — refund it so a failed
+            # turn nets zero quota. (FreeTierExhaustedError is raised in the dependency BEFORE this
+            # body, so it never reserved here; _take_free_tier_refund returns None for it.)
+            if refund := _take_free_tier_refund(request):
+                await refund()
             raise
         except Exception as e:
             # Everything reaching here is NON-quota (DB/Pinecone outage, a code bug). Don't claim a
             # free-tier limit — that misleads paid BYOK users and hides the real cause (logged).
+            if refund := _take_free_tier_refund(request):
+                await refund()  # R16: the reservation was wasted on a failed turn — give it back.
             logger.error("chat_failed", exc_info=True)
             raise AppException(
                 status_code=500, detail="The chat request failed unexpectedly. Please try again."

@@ -20,6 +20,8 @@ No-key-leak invariant (Phase 4, carried forward): the decrypted api_key is a loc
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import redis.asyncio as aioredis
 import structlog
 from cryptography.fernet import InvalidToken
@@ -35,12 +37,17 @@ from dependencies import get_db_session, get_redis
 from exceptions import FreeTierExhaustedError, KeyDecryptionError
 from llm.base import LLMProvider
 from llm.factory import build_provider
-from llm.freemium import within_free_allowance
+from llm.freemium import refund_free_allowance, within_free_allowance
 
 logger = structlog.get_logger(__name__)
 
 # The provider names the picker may send; anything else is treated as "no choice".
 _ALLOWED_PROVIDERS = {"gemini", "openai", "anthropic"}
+
+# R16: when the free-tier allowance is reserved for a request, get_llm_provider records a no-arg
+# refund coroutine factory here on ``request.state`` so the chat handler can credit it back if the
+# turn fails/aborts before producing an answer. Absent ⇒ nothing to refund (BYOK or exhausted).
+FREE_TIER_REFUND_STATE_ATTR = "free_tier_refund"
 
 
 def _decrypt_or_raise(ciphertext: str) -> str:
@@ -85,6 +92,7 @@ async def resolve_provider(
     *,
     provider_choice: str | None = None,
     model_choice: str | None = None,
+    on_free_tier_reserved: Callable[[], None] | None = None,
 ) -> LLMProvider:
     """The BYOK → free-tier → exhausted ladder, honoring an optional provider/model pick.
 
@@ -92,6 +100,11 @@ async def resolve_provider(
     picked ``model_choice`` becomes the synthesis model; (1b) otherwise any stored key with the
     default per-node tiering; (2) the operator free tier; (3) exhausted → 402. A picked provider
     the user has NO key for is ignored (falls through) rather than 500-ing the request.
+
+    ``on_free_tier_reserved`` (R16): invoked iff rung 2 actually reserves the daily allowance, so the
+    caller can arrange a refund if the turn later fails/aborts. BYOK rungs never call it (they
+    consume no shared quota). It is a plain sync callback (just records state) — left ``None`` by the
+    direct-call unit tests, which therefore see no behavior change.
     """
     # 1a. Honor an explicit provider pick when the user has a stored key for it.
     if provider_choice in _ALLOWED_PROVIDERS:
@@ -120,6 +133,9 @@ async def resolve_provider(
     # 2. Free tier — operator's shared Gemini key, single basic model, Redis-guarded allowance.
     fallback = settings.LLM_FALLBACK_API_KEY.get_secret_value()
     if fallback and await within_free_allowance(redis, user.id):
+        # R16: the allowance was just reserved — let the caller register a refund for a failed turn.
+        if on_free_tier_reserved is not None:
+            on_free_tier_reserved()
         return build_provider(
             "gemini",
             fallback,
@@ -143,8 +159,25 @@ async def get_llm_provider(
     FastAPI injects ``request`` (the default ``None`` only applies to direct unit-test calls, which
     pass no body → no choice → the plain ladder). Annotated as plain ``Request`` (not ``Request |
     None``) so FastAPI treats it as the special request type rather than a Pydantic body field.
+
+    R16: if the free tier is reserved, record a no-arg refund coroutine factory on ``request.state``
+    so the chat handler can credit the allowance back should the turn fail/abort.
     """
     provider_choice, model_choice = await _read_model_selection(request)
+
+    def _record_refund() -> None:
+        if request is not None:
+            setattr(
+                request.state,
+                FREE_TIER_REFUND_STATE_ATTR,
+                lambda: refund_free_allowance(redis, user.id),
+            )
+
     return await resolve_provider(
-        db, redis, user, provider_choice=provider_choice, model_choice=model_choice
+        db,
+        redis,
+        user,
+        provider_choice=provider_choice,
+        model_choice=model_choice,
+        on_free_tier_reserved=_record_refund,
     )

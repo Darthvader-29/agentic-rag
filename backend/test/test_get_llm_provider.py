@@ -5,6 +5,7 @@ The decrypted key must never appear in the provider's repr.
 """
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis as fakeredis
@@ -14,7 +15,11 @@ from auth.crypto import encrypt_key
 from config import settings
 from database.models import User, UserLLMKey
 from exceptions import FreeTierExhaustedError
-from llm.dependencies import get_llm_provider, resolve_provider
+from llm.dependencies import (
+    FREE_TIER_REFUND_STATE_ATTR,
+    get_llm_provider,
+    resolve_provider,
+)
 
 
 def _fake_user() -> User:
@@ -245,3 +250,64 @@ async def test_decrypted_byok_key_never_in_repr(mock_anthropic_cls, mock_get_key
 
     assert secret not in repr(provider)
     assert secret not in str(provider)
+
+
+# ── R16: free-tier reservation records a refund factory on request.state ──────
+
+
+def _fake_request_with_state() -> SimpleNamespace:
+    """A minimal stand-in for a FastAPI Request whose ``.state`` accepts attribute writes.
+
+    ``request.json()`` returns an empty dict so _read_model_selection sees no provider/model pick.
+    """
+
+    async def _json() -> dict:
+        return {}
+
+    return SimpleNamespace(state=SimpleNamespace(), json=_json)
+
+
+@pytest.mark.asyncio
+@patch("llm.dependencies.within_free_allowance", new_callable=AsyncMock)
+@patch("llm.dependencies.get_user_llm_key", new_callable=AsyncMock)
+@patch("llm.gemini.genai.Client")
+async def test_free_tier_records_refund_on_request_state(mock_gemini, mock_get_key, mock_allow):
+    """When the free tier is reserved, a no-arg refund factory is stashed on request.state (R16)."""
+    mock_get_key.return_value = None
+    mock_allow.return_value = True
+    user = _fake_user()
+    db = AsyncMock()
+    request = _fake_request_with_state()
+    redis = _fresh_redis()
+
+    with patch("llm.dependencies.settings") as s:
+        s.FREE_TIER_MODEL = "gemini-2.5-flash"
+        s.LLM_FALLBACK_API_KEY = MagicMock()
+        s.LLM_FALLBACK_API_KEY.get_secret_value.return_value = "sk-fallback"
+
+        await get_llm_provider(request=request, user=user, db=db, redis=redis)
+
+    factory = getattr(request.state, FREE_TIER_REFUND_STATE_ATTR, None)
+    assert factory is not None  # the reservation registered a refund hook
+
+    # The factory, when invoked, calls refund_free_allowance(redis, user.id).
+    with patch("llm.dependencies.refund_free_allowance", new_callable=AsyncMock) as mock_refund:
+        # Rebuild the factory under the patch so it picks up the mock (closure binds by name).
+        await get_llm_provider(request=request, user=user, db=db, redis=redis)
+        await getattr(request.state, FREE_TIER_REFUND_STATE_ATTR)()
+        mock_refund.assert_awaited_once_with(redis, user.id)
+
+
+@pytest.mark.asyncio
+@patch("llm.dependencies.get_user_llm_key", new_callable=AsyncMock)
+@patch("llm.openai.AsyncOpenAI")
+async def test_byok_records_no_refund_on_request_state(mock_openai, mock_get_key):
+    """BYOK consumes no shared quota → no refund factory is recorded (nothing to give back)."""
+    mock_get_key.return_value = _fake_key_row(provider="openai")
+    user = _fake_user()
+    db = AsyncMock()
+    request = _fake_request_with_state()
+
+    await get_llm_provider(request=request, user=user, db=db, redis=_fresh_redis())
+
+    assert getattr(request.state, FREE_TIER_REFUND_STATE_ATTR, None) is None
