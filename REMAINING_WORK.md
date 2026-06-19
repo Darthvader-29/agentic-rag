@@ -154,7 +154,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 - **Test:** responses carry the headers; the app still loads + streams under the CSP.
 
 ### R08 — Containers run as root; no HEALTHCHECK; `.dockerignore` missing
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** HIGH · `CODE_REVIEW.md` H-B9/H-F10 · `BUGFIX_QUEUE.md` Deferred (overlaps REL-2)
 - **Files:** `backend/Dockerfile`, `frontend/Dockerfile`, new `.dockerignore` both sides.
 - **Goal/approach:** Add a non-root `USER`, a `HEALTHCHECK`, `.dockerignore` (exclude `.env*`,
@@ -163,7 +163,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 - **Test:** image runs as non-root (`id -u` ≠ 0) and starts; healthcheck passes.
 
 ### R09 — Indirect prompt injection: untrusted web/doc context is concatenated unfenced
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** HIGH · `CODE_REVIEW.md` H-B2
 - **Files:** `backend/llm/_prompts.py` (`generation_user`/`generation_system`),
   `backend/agents/nodes.py` (`_assemble_context` ~:173-202).
@@ -288,7 +288,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 - **Test:** the spec passes locally + in CI.
 
 ### R22 — Backend CI is Jenkins-only; no GitHub Actions; mypy skips some packages
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** LOW-MEDIUM · P0 exit asked for GitHub Actions
 - **Files:** `backend/Jenkinsfile` (type-check stage omits `agents auth llm memory`), new
   `backend/.github/workflows/ci.yml` (or root).
@@ -297,7 +297,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 - **Test:** the workflow runs green on a PR and red on a lint/type/test failure.
 
 ### R23 — `/health` is liveness-only; Docker/compose hardening
-- **Status:** TODO
+- **Status:** DONE
 - **Severity:** LOW-MEDIUM · `CODE_REVIEW.md` (ops)
 - **Files:** `backend/app.py` (`/health` ~:819), `backend/docker-compose.yml`.
 - **Goal/approach:** Add a readiness endpoint checking DB/Redis/S3/Pinecone reachability; don't
@@ -383,6 +383,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 
 _(each iteration appends one line: `R-ID — <sha> — <one-line outcome>`)_
 
+- R08/R09/R22/R23 — 4cfb8a2, a51f251, f1854cf, aef034d+f28bc70 — [PARALLEL track T3] backend security/infra. **R08**: non-root `USER` + `HEALTHCHECK` + `.dockerignore` on both backend & frontend images. **R09**: fence untrusted retrieved/web context in the synthesis prompt with verbose `UNTRUSTED_CONTEXT` delimiters + a security-notice guard, in the VARIABLE user suffix so the cached system prefix stays byte-identical. **R22**: new ROOT `.github/workflows/backend-ci.yml` (ruff+mypy+pytest, PR parity with the frontend). **R23**: `GET /health/ready` probes DB/Redis/S3/Pinecone off app.state (200 all-up / 503 per-dep + `{detail}`; bounded + isolated). Overseer fix: the agent's Pinecone probe used a `[0.0]*384` dummy-vector query (tripped `test_no_pinecone_state`) → replaced with new `PineconeClient.describe_stats()` (describe_index_stats, no vector query). New `test_readiness` (5). Full backend suite green except the 5 PRE-EXISTING `test_config` reds; ruff+mypy clean. NOTE: the frontend CI sits at `frontend/.github` (GitHub runs only ROOT `.github`) — pre-existing; R22's backend workflow is correctly at root.
 - R15/R16 — c80c545, 6aacbcb — [PARALLEL track T2] ingestion & quota. **R15**: chunk vector ids were `{session_id}_{filename}_{i}` → two same-named docs in one session clobbered each other on upsert (and a shorter re-ingest orphaned stale chunks); now `{session_id}_{document_id}_{i}` (Document UUID threaded from the Celery task + stamped in metadata), keeping the `{session_id}_` prefix so the by-session cleanup still matches. **R16**: added `refund_free_allowance` (symmetric inverse of the reservation, fail-open on Redis, clamps ≥0) + a one-shot `request.state` refund factory set by `get_llm_provider`, fired on every chat failure/abort path (await on error, detached on cancel) so a wasted turn nets zero quota. New `test_preprocessing_vector_ids` + `test_freemium_refund_chat`. (R16 was implemented but left UNCOMMITTED when the agent hit a session limit — overseer reviewed the diff + committed it.) Full backend suite green except the 5 PRE-EXISTING `test_config` reds; ruff+mypy clean.
 - R12/R13/R14 — f2eac8f, 958b627, 152ed6e — [PARALLEL track T1] LLM resilience. **R12**: every adapter builds its SDK client with an explicit timeout + `max_retries=0`; `BaseLLMProvider` centralizes bounded tenacity retry (jittered backoff, reraise) on the TRANSIENT neutral errors only (`LLMRateLimitError`/`LLMUnavailableError`) — auth/response errors raise on attempt 1; new Settings `LLM_TIMEOUT_SECONDS`/`LLM_MAX_RETRY_ATTEMPTS`/`LLM_RETRY_BACKOFF_SECONDS`. **R13**: Gemini `_stream_call` pumps the sync iterator via `anyio.to_thread` (sentinel for StopIteration) so it no longer blocks the event loop. **R14**: Anthropic `max_tokens` 1024→4096 + `stop_reason` inspected (logs truncation, returns partial) on unary+stream; pinned deprecated `claude-3-5-*-latest` → `claude-haiku-4-5-20251001` (route) / `claude-sonnet-4-6` (synth). New `test/llm/test_resilience.py` (32) + conftest retry fixtures. Full backend suite green except the 5 PRE-EXISTING `test_config` reds; ruff+mypy clean.
 - R19 — ae4fcbb — [PARALLEL pilot — proved the worktree→cherry-pick→verify pipeline] added connect/read timeouts to the S3/HF/DuckDuckGo clients (shared `CONNECT_TIMEOUT=5s` / `READ_TIMEOUT=30s` in `integrations/_retry.py`) and fixed the DuckDuckGo `@retry` dead code — removed the inner try/except that swallowed errors and returned `[]`, so a failure now propagates to tenacity (3× backoff) then reraises; the intentional fail-soft stays at the `components/retrieval.py` caller. New `test_dependencies` tests: DDG retries-then-succeeds, reraises-after-max (not silent `[]`), bounded timeout passed to `DDGS`. Full backend suite green except the 5 PRE-EXISTING `test_config` reds; ruff+mypy clean. NOTE: timeouts are module constants (not Settings) per scope — lift into `config.py` if tuning is wanted.
