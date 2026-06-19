@@ -128,7 +128,9 @@ function capGraph(graph: GraphData, degree: Map<string, number>): CappedGraph {
 
   const keptIds = new Set(keptNodes.map((n) => n.id));
   const keptLinks = graph.links
-    .filter((l) => keptIds.has(String(l.source)) && keptIds.has(String(l.target)))
+    .filter(
+      (l) => keptIds.has(String(l.source)) && keptIds.has(String(l.target))
+    )
     .slice(0, MAX_EDGES);
 
   return {

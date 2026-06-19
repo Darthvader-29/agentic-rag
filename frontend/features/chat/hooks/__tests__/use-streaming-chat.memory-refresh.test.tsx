@@ -15,6 +15,8 @@ vi.mock("@/lib/flags", () => ({
     knowledgeGraph: false,
     observability: false,
   },
+  // R24: BYOK is derived (byok && auth). Both off here, so the surface is gated off.
+  isByokEnabled: () => false,
 }));
 
 // Fixed session id so we can assert the exact invalidated key.

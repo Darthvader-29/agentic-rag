@@ -80,11 +80,14 @@ describe("ModelPicker — R25 (unowned providers disabled)", () => {
     });
     expect(geminiItem).not.toHaveAttribute("data-disabled");
 
-    // Unowned (openai) → disabled menu item + an "Add key" affordance.
-    const openaiItem = within(menu).getByRole("menuitem", {
+    // Unowned (openai) → every OpenAI model is a disabled menu item + an "Add key" affordance.
+    const openaiItems = within(menu).getAllByRole("menuitem", {
       name: /add an? openai key to use/i,
     });
-    expect(openaiItem).toHaveAttribute("data-disabled");
+    expect(openaiItems.length).toBeGreaterThan(0);
+    openaiItems.forEach((item) =>
+      expect(item).toHaveAttribute("data-disabled")
+    );
 
     const addKeyLinks = within(menu).getAllByRole("link", { name: /add key/i });
     expect(addKeyLinks.length).toBeGreaterThan(0);

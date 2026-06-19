@@ -28,7 +28,10 @@ describe("http-client — 429 rate-limit handling (R27)", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("surfaces the FE's friendly message for the backend {detail, code} envelope", async () => {
-    stub429({ detail: "Too many requests. Please slow down.", code: "rate_limited" });
+    stub429({
+      detail: "Too many requests. Please slow down.",
+      code: "rate_limited",
+    });
 
     const err = await request("/chat", {
       method: "POST",

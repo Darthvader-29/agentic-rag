@@ -154,7 +154,10 @@ export function ChatScreen() {
         transition={reduced ? { duration: 0 } : spring}
         className="overflow-hidden"
       >
-        <Sidebar onClearSession={handleClearSession} onToggle={collapseSidebar} />
+        <Sidebar
+          onClearSession={handleClearSession}
+          onToggle={collapseSidebar}
+        />
       </m.div>
 
       <div className="border-border bg-background relative my-0 mr-0 flex h-full flex-1 flex-col overflow-hidden rounded-l-2xl border-l shadow-xl dark:shadow-none">
@@ -206,7 +209,7 @@ export function ChatScreen() {
               <DialogPrimitive.Content
                 aria-label="Insights"
                 className={cn(
-                  "bg-background border-border data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-right-2 data-[state=closed]:slide-out-to-right-2 fixed top-0 right-0 z-50 flex h-full w-[340px] max-w-[90vw] flex-col border-l shadow-xl outline-none duration-200"
+                  "bg-background border-border data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-right-2 data-[state=closed]:slide-out-to-right-2 fixed top-0 right-0 z-50 flex h-full w-[340px] max-w-[90vw] flex-col border-l shadow-xl duration-200 outline-none"
                 )}
               >
                 <div className="border-border flex items-center justify-between border-b px-4 py-3">
@@ -231,7 +234,9 @@ export function ChatScreen() {
 
                 <ScrollArea className="flex-1">
                   <div className="space-y-4 p-4">
-                    {flags.knowledgeGraph && <GraphPanel sessionId={sessionId} />}
+                    {flags.knowledgeGraph && (
+                      <GraphPanel sessionId={sessionId} />
+                    )}
                     {flags.memory && <MemoryPanel sessionId={sessionId} />}
                   </div>
                 </ScrollArea>

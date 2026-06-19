@@ -26,7 +26,11 @@ vi.mock("@/lib/sse/stream-chat", async () => {
 });
 
 // Toggle rich-components per test.
-vi.mock("@/lib/flags", () => ({ flags: { richComponents: true } }));
+vi.mock("@/lib/flags", () => ({
+  flags: { richComponents: true },
+  // R24: BYOK derived flag — unset byok/auth ⇒ gated off (irrelevant to this rich-block test).
+  isByokEnabled: () => false,
+}));
 // Stub MessageActions (pulls useChat + Tooltip provider) — out of scope here.
 vi.mock("@/features/chat/components/message-actions", () => ({
   MessageActions: () => <div data-testid="message-actions" />,
