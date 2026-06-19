@@ -48,7 +48,6 @@ export function isSafeNextPath(next: string | null | undefined): boolean {
   // Defense in depth: if it still parses as an absolute URL against ANY base, it isn't relative.
   // A genuine relative path throws here (no base provided), which is exactly what we want.
   try {
-    // eslint-disable-next-line no-new
     new URL(next);
     return false; // parsed as absolute ⇒ reject
   } catch {

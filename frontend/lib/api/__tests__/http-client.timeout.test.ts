@@ -81,15 +81,18 @@ describe("http-client request timeout (R18 / H-F6)", () => {
 
     installHangingFetch();
     let settled = false;
-    const p = request("/chat", { method: "POST", schema: okSchema, timeoutMs: 0 })
-      .then(
-        () => {
-          settled = true;
-        },
-        () => {
-          settled = true;
-        }
-      );
+    const p = request("/chat", {
+      method: "POST",
+      schema: okSchema,
+      timeoutMs: 0,
+    }).then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
 
     // With the timeout disabled, advancing well past the default must NOT settle the promise.
     await vi.advanceTimersByTimeAsync(DEFAULT_TIMEOUT_MS * 2);

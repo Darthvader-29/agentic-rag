@@ -64,16 +64,26 @@ function withTimeout(
   let didTimeout = false;
   const timer = setTimeout(() => {
     didTimeout = true;
-    timeoutController.abort(new DOMException("Request timed out", "TimeoutError"));
+    timeoutController.abort(
+      new DOMException("Request timed out", "TimeoutError")
+    );
   }, timeoutMs);
 
-  const signal = callerSignal
-    ? AbortSignal.any([callerSignal, timeoutController.signal])
-    : timeoutController.signal;
+  // Compose the caller's signal manually instead of AbortSignal.any() — the latter isn't available
+  // in jsdom or older browsers. Forwarding the caller's abort (with its own reason) onto our
+  // controller means `signal` fires on EITHER source, and `didTimeout` still distinguishes the two.
+  const onCallerAbort = () => timeoutController.abort(callerSignal?.reason);
+  if (callerSignal) {
+    if (callerSignal.aborted) timeoutController.abort(callerSignal.reason);
+    else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
+  }
 
   return {
-    signal,
-    cleanup: () => clearTimeout(timer),
+    signal: timeoutController.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
+    },
     timedOut: () => didTimeout,
   };
 }

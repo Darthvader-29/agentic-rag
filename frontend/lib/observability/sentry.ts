@@ -73,7 +73,9 @@ function scrubUrl(url: string): string {
   try {
     const u = new URL(url, "http://local.invalid");
     // Drop the whole query (it routinely carries `?next=`, ids, tokens) but keep the path.
-    return scrubString(`${u.origin === "http://local.invalid" ? "" : u.origin}${u.pathname}`);
+    return scrubString(
+      `${u.origin === "http://local.invalid" ? "" : u.origin}${u.pathname}`
+    );
   } catch {
     // Not a parseable URL — at least cut everything past the first `?` and mask emails.
     return scrubString(url.split("?")[0]);
