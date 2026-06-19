@@ -310,7 +310,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 ## Priority 5 — UX / a11y / cleanup
 
 ### R24 — Default config (`auth=false` + `byok=true`) advertises BYOK it can't deliver
-- **Status:** TODO
+- **Status:** DONE — 7795e18 (track T6)
 - **Severity:** MEDIUM (UX)
 - **Files:** `frontend/lib/flags.ts`, `frontend/features/keys/components/settings-screen.tsx` (~:44),
   `frontend/lib/api/http-client.ts` (~:76 `applyAuth`).
@@ -322,7 +322,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
   not a dead CTA.
 
 ### R25 — Model picker offers providers with no stored key (→ persistently broken turns)
-- **Status:** TODO
+- **Status:** DONE — e7fa3e9 (track T6)
 - **Severity:** MEDIUM (UX) · `CODE_REVIEW.md`
 - **Files:** `frontend/features/keys/components/model-picker.tsx`.
 - **Goal/approach:** Disable/hint unowned providers (the M7 spec already describes this) so a user
@@ -330,7 +330,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 - **Test:** an unowned provider's models are disabled with an "Add key" affordance.
 
 ### R26 — Knowledge-graph panel renders force-graph with no node/edge cap
-- **Status:** TODO
+- **Status:** DONE — d380bfc (track T6)
 - **Severity:** MEDIUM (UX/perf) · `CODE_REVIEW.md`
 - **Files:** `frontend/features/knowledge-graph/components/graph-panel.tsx`.
 - **Goal/approach:** Cap rendered nodes/edges (top-N by degree/recency) with a "showing N of M"
@@ -338,7 +338,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 - **Test:** a large graph renders within the cap.
 
 ### R27 — 429 responses use slowapi's `{error}` envelope, not the FE's `{detail,code}`
-- **Status:** TODO
+- **Status:** DONE — 5ef170d (track T6)
 - **Severity:** MEDIUM (UX) · `CODE_REVIEW.md`
 - **Files:** `backend/app.py` (rate-limit handler), `frontend/lib/api/api-error.ts`.
 - **Symptom:** Users see "Backend error: 429" instead of a friendly throttle message.
@@ -347,7 +347,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 - **Test:** a 429 surfaces the FE's normalized message, not the raw envelope.
 
 ### R28 — a11y: insights drawer isn't a focus-trapped dialog; toggles drop focus
-- **Status:** TODO
+- **Status:** DONE — b40c77d (track T6)
 - **Severity:** LOW-MEDIUM (a11y) · `CODE_REVIEW.md`
 - **Files:** `frontend/features/chat/components/chat-screen.tsx` (insights drawer, sidebar toggles).
 - **Goal/approach:** Make the insights drawer a proper dialog (focus trap + Escape) and move focus
@@ -383,6 +383,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 
 _(each iteration appends one line: `R-ID — <sha> — <one-line outcome>`)_
 
+- R24/R25/R26/R27/R28 — 7795e18, e7fa3e9, d380bfc, 5ef170d, b40c77d (+e067e35 overseer fix) — [PARALLEL track T6] frontend BYOK/UX + 429 envelope. **R24**: new derived `isByokEnabled()` (`byok && auth`) in `lib/flags.ts` gates the ENTIRE BYOK surface (model picker, free-tier banner, exhausted dialog, Settings key form, sidebar "API Keys" link) so the default `auth=false,byok=true` config no longer advertises a key-management capability it can't deliver (Settings used to dead-end at "Sign in to add keys"). **R25**: `model-picker.tsx` disables an unowned provider's models (`aria-disabled` + "add a <Provider> key to use" label) with an inline "Add key" → `/settings` link, so a user can't pick a provider they hold no key for and burn the free tier. **R26**: `graph-panel.tsx` caps the force-graph to top-N nodes by degree (+their edges) with a "showing N of M" note so a large graph can't freeze the tab. **R27**: custom slowapi handler `rate_limit_exceeded_handler` (`app.py`) emits the FE's `{detail, code:"rate_limited"}` shape (replaces slowapi's raw `{error}`); `api-error.ts` `isRateLimitPayload`/`isRateLimited` normalize BOTH envelopes to a friendly throttle message (never "Backend error: 429"). **R28**: the insights drawer is now a focus-trapped Radix `Dialog` (Escape closes, focus restored on close); sidebar toggle moves focus when it removes the focused control (WCAG 2.4.3). Overseer fix (e067e35): R24's new `isByokEnabled` export broke two pre-existing partial `@/lib/flags` mocks (`use-streaming-chat.memory-refresh`, `component-stream.e2e`) → added the export to both; R25 test used singular `getByRole` for 3 disabled OpenAI models → `getAllByRole`; prettier-formatted 3 files the agent left. Full frontend suite **331/331**; eslint+prettier clean; typecheck +0 (3 pre-existing `use-streaming-chat.test.tsx` reds). Backend (R27) green except the 5 PRE-EXISTING `test_config` reds; ruff+mypy clean.
 - R11/R17/R18 — a52e72b, 8939645, 5600234 (+119df9f overseer fix) — [PARALLEL track T5] frontend resilience/security. **R11**: `isSafeNextPath`/`safeNextPath` in `lib/url.ts` reject absolute/protocol-relative/backslash `?next` (open-redirect), used by the post-login redirect; Sentry `beforeSend` scrubs PII + `sendDefaultPii:false`. **R17**: a `ComponentErrorBoundary` wraps each rich block (`component-block.tsx`) so one malformed chart/table falls back to a collapsed raw block instead of unmounting the chat. **R18**: `request()` composes the caller signal with a `DEFAULT_TIMEOUT_MS=30s` timeout (distinct `{kind:"timeout"}` error), cleanup clears the timer. Overseer fix: `withTimeout` used `AbortSignal.any()` (absent in jsdom/older browsers → 4 timeout tests failed) — rewrote to compose signals manually; dropped an unused eslint-disable; ran prettier the agent couldn't. Full frontend suite **313/313**; eslint+prettier clean; typecheck +0.
 - R08/R09/R22/R23 — 4cfb8a2, a51f251, f1854cf, aef034d+f28bc70 — [PARALLEL track T3] backend security/infra. **R08**: non-root `USER` + `HEALTHCHECK` + `.dockerignore` on both backend & frontend images. **R09**: fence untrusted retrieved/web context in the synthesis prompt with verbose `UNTRUSTED_CONTEXT` delimiters + a security-notice guard, in the VARIABLE user suffix so the cached system prefix stays byte-identical. **R22**: new ROOT `.github/workflows/backend-ci.yml` (ruff+mypy+pytest, PR parity with the frontend). **R23**: `GET /health/ready` probes DB/Redis/S3/Pinecone off app.state (200 all-up / 503 per-dep + `{detail}`; bounded + isolated). Overseer fix: the agent's Pinecone probe used a `[0.0]*384` dummy-vector query (tripped `test_no_pinecone_state`) → replaced with new `PineconeClient.describe_stats()` (describe_index_stats, no vector query). New `test_readiness` (5). Full backend suite green except the 5 PRE-EXISTING `test_config` reds; ruff+mypy clean. NOTE: the frontend CI sits at `frontend/.github` (GitHub runs only ROOT `.github`) — pre-existing; R22's backend workflow is correctly at root.
 - R15/R16 — c80c545, 6aacbcb — [PARALLEL track T2] ingestion & quota. **R15**: chunk vector ids were `{session_id}_{filename}_{i}` → two same-named docs in one session clobbered each other on upsert (and a shorter re-ingest orphaned stale chunks); now `{session_id}_{document_id}_{i}` (Document UUID threaded from the Celery task + stamped in metadata), keeping the `{session_id}_` prefix so the by-session cleanup still matches. **R16**: added `refund_free_allowance` (symmetric inverse of the reservation, fail-open on Redis, clamps ≥0) + a one-shot `request.state` refund factory set by `get_llm_provider`, fired on every chat failure/abort path (await on error, detached on cancel) so a wasted turn nets zero quota. New `test_preprocessing_vector_ids` + `test_freemium_refund_chat`. (R16 was implemented but left UNCOMMITTED when the agent hit a session limit — overseer reviewed the diff + committed it.) Full backend suite green except the 5 PRE-EXISTING `test_config` reds; ruff+mypy clean.
