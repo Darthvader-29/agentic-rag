@@ -39,7 +39,7 @@ def _healthy_state() -> dict:
     s3.object_exists = AsyncMock(return_value=False)  # 404 (key absent) still = reachable
 
     pinecone = AsyncMock()
-    pinecone.search_vectors = AsyncMock(return_value=[])
+    pinecone.describe_stats = AsyncMock(return_value={})
 
     return {"db_sessionmaker": sessionmaker, "redis": redis, "s3": s3, "pinecone": pinecone}
 
@@ -87,7 +87,7 @@ async def test_ready_returns_503_when_a_dependency_is_down(dep_key, check_name):
     elif dep_key == "s3":
         state["s3"].object_exists = AsyncMock(side_effect=OSError("s3 endpoint unreachable"))
     elif dep_key == "pinecone":
-        state["pinecone"].search_vectors = AsyncMock(side_effect=RuntimeError("pinecone down"))
+        state["pinecone"].describe_stats = AsyncMock(side_effect=RuntimeError("pinecone down"))
     _apply_state(state)
 
     resp = await _get_ready()

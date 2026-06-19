@@ -947,8 +947,9 @@ async def _check_s3(app_state: Any) -> None:
 
 
 async def _check_pinecone(app_state: Any) -> None:
-    # A read-only top-1 query against a zero vector — reaches Pinecone without mutating the index.
-    await app_state.pinecone.search_vectors([0.0] * 384, top_k=1)
+    # describe_index_stats reaches Pinecone WITHOUT a vector query — avoids the dummy-vector
+    # state-query anti-pattern that test_no_pinecone_state forbids.
+    await app_state.pinecone.describe_stats()
 
 
 @app.get("/health/ready")

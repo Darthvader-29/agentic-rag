@@ -52,6 +52,16 @@ class PineconeClient:
             self._ensure_index_sync()
         return self._index
 
+    @retry(**_RETRY)
+    def _describe_stats_sync(self) -> object:
+        # Reachability probe (R23): describe_index_stats() reaches Pinecone WITHOUT a vector query,
+        # avoiding the dummy-vector state-query anti-pattern (see test_no_pinecone_state).
+        return self._index_or_raise().describe_index_stats()
+
+    async def describe_stats(self) -> object:
+        """Probe Pinecone reachability for the readiness check; the caller only cares it doesn't raise."""
+        return await asyncio.to_thread(self._describe_stats_sync)
+
     # ── vectors ──────────────────────────────────────────────────────────────
 
     @retry(**_RETRY)
