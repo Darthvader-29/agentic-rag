@@ -84,7 +84,12 @@ test.describe("core chat flow (stubbed backend)", () => {
       mimeType: "text/plain",
       buffer: Buffer.from("hello from an e2e test document"),
     });
-    await expect(page.getByText(/notes\.txt/i)).toBeVisible();
+    // The legacy path posts a synthetic confirmation message into the chat. Match the in-chat
+    // ingestion line specifically — a transient toast ("notes.txt uploaded") ALSO contains the
+    // filename, so a bare /notes\.txt/ matches 2 elements and trips Playwright strict mode.
+    await expect(
+      page.getByText(/notes\.txt.*queued for ingestion/i)
+    ).toBeVisible();
 
     // 4) Theme toggle: pick Dark, assert html.dark is set; then Light, assert it clears.
     const html = page.locator("html");
