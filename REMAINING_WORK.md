@@ -173,7 +173,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 - **Test:** a context blob containing "ignore previous instructions…" does not change routing/format.
 
 ### R10 — Access + refresh tokens live in `localStorage` (XSS → durable takeover)
-- **Status:** TODO
+- **Status:** DEFERRED — architectural (BFF/cookie-auth); see "Deferred — needs your decision". CSP (R07) tightened as interim mitigation.
 - **Severity:** HIGH (design) · `CODE_REVIEW.md` H-F2 · `BUGFIX_QUEUE.md` Deferred
 - **Files:** `frontend/features/auth/store/auth.store.ts`, `frontend/lib/api/http-client.ts`,
   backend cookie-auth support if chosen.
