@@ -20,33 +20,109 @@ No-key-leak invariant (Phase 4, carried forward): the decrypted api_key is a loc
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import redis.asyncio as aioredis
-from fastapi import Depends
+import structlog
+from cryptography.fernet import InvalidToken
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.crypto import decrypt_key
 from auth.dependencies import get_current_user
 from config import settings
 from database.models import User
-from database.repository import get_user_llm_key
+from database.repository import get_user_llm_key, get_user_llm_key_for_provider
 from dependencies import get_db_session, get_redis
-from exceptions import FreeTierExhaustedError
+from exceptions import FreeTierExhaustedError, KeyDecryptionError
 from llm.base import LLMProvider
 from llm.factory import build_provider
-from llm.freemium import within_free_allowance
+from llm.freemium import refund_free_allowance, within_free_allowance
+
+logger = structlog.get_logger(__name__)
+
+# The provider names the picker may send; anything else is treated as "no choice".
+_ALLOWED_PROVIDERS = {"gemini", "openai", "anthropic"}
+
+# R16: when the free-tier allowance is reserved for a request, get_llm_provider records a no-arg
+# refund coroutine factory here on ``request.state`` so the chat handler can credit it back if the
+# turn fails/aborts before producing an answer. Absent ⇒ nothing to refund (BYOK or exhausted).
+FREE_TIER_REFUND_STATE_ATTR = "free_tier_refund"
 
 
-async def get_llm_provider(
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_session),
-    redis: aioredis.Redis = Depends(get_redis),
+def _decrypt_or_raise(ciphertext: str) -> str:
+    """Decrypt a stored BYOK key, mapping a Fernet failure to a clear, actionable error.
+
+    An ``InvalidToken`` means the master key was rotated or the ciphertext is corrupt; since one
+    master key encrypts ALL of a user's keys, there is no other key to fall through to — surface a
+    400 telling the client to re-enter the key instead of a bare 500. Never logs key material.
+    """
+    try:
+        return decrypt_key(ciphertext)
+    except InvalidToken as exc:
+        logger.error("byok_key_decrypt_failed")
+        raise KeyDecryptionError() from exc
+
+
+async def _read_model_selection(request: Request | None) -> tuple[str | None, str | None]:
+    """Pull the optional per-conversation ``provider``/``model`` off the chat body.
+
+    Reading ``request.json()`` here is safe even though the endpoint also parses the body — Starlette
+    caches it. Any problem (no request, non-JSON, GET) degrades to "no choice".
+    """
+    if request is None:
+        return None, None
+    try:
+        body = await request.json()
+    except Exception:
+        return None, None
+    if not isinstance(body, dict):
+        return None, None
+    provider = body.get("provider")
+    model = body.get("model")
+    provider = provider if isinstance(provider, str) and provider in _ALLOWED_PROVIDERS else None
+    model = model if isinstance(model, str) and model else None
+    return provider, model
+
+
+async def resolve_provider(
+    db: AsyncSession,
+    redis: aioredis.Redis,
+    user: User,
+    *,
+    provider_choice: str | None = None,
+    model_choice: str | None = None,
+    on_free_tier_reserved: Callable[[], None] | None = None,
 ) -> LLMProvider:
-    """Resolve the per-request LLM provider via the BYOK → free-tier → exhausted ladder."""
-    # 1. BYOK — the user's own key, with cheap/strong per-node model tiering.
+    """The BYOK → free-tier → exhausted ladder, honoring an optional provider/model pick.
+
+    Precedence: (1a) an explicit ``provider_choice`` the user actually holds a key for — the
+    picked ``model_choice`` becomes the synthesis model; (1b) otherwise any stored key with the
+    default per-node tiering; (2) the operator free tier; (3) exhausted → 402. A picked provider
+    the user has NO key for is ignored (falls through) rather than 500-ing the request.
+
+    ``on_free_tier_reserved`` (R16): invoked iff rung 2 actually reserves the daily allowance, so the
+    caller can arrange a refund if the turn later fails/aborts. BYOK rungs never call it (they
+    consume no shared quota). It is a plain sync callback (just records state) — left ``None`` by the
+    direct-call unit tests, which therefore see no behavior change.
+    """
+    # 1a. Honor an explicit provider pick when the user has a stored key for it.
+    if provider_choice in _ALLOWED_PROVIDERS:
+        row = await get_user_llm_key_for_provider(db, user_id=user.id, provider=provider_choice)
+        if row is not None:
+            api_key = _decrypt_or_raise(row.ciphertext)  # plaintext: local only
+            return build_provider(
+                provider_choice,
+                api_key,
+                route_model=settings.tier_route_model(provider_choice),
+                synth_model=model_choice or settings.tier_synth_model(provider_choice),
+            )
+
+    # 1b. BYOK default — the user's own key, with cheap/strong per-node model tiering.
     row = await get_user_llm_key(db, user_id=user.id)
     if row is not None:
         provider_name = row.provider or settings.DEFAULT_LLM_PROVIDER
-        api_key = decrypt_key(row.ciphertext)  # plaintext: local only, never persisted/logged
+        api_key = _decrypt_or_raise(row.ciphertext)  # plaintext: local only, never persisted/logged
         return build_provider(
             provider_name,
             api_key,
@@ -57,6 +133,9 @@ async def get_llm_provider(
     # 2. Free tier — operator's shared Gemini key, single basic model, Redis-guarded allowance.
     fallback = settings.LLM_FALLBACK_API_KEY.get_secret_value()
     if fallback and await within_free_allowance(redis, user.id):
+        # R16: the allowance was just reserved — let the caller register a refund for a failed turn.
+        if on_free_tier_reserved is not None:
+            on_free_tier_reserved()
         return build_provider(
             "gemini",
             fallback,
@@ -67,3 +146,38 @@ async def get_llm_provider(
     # 3. Exhausted (or never eligible) — tell the frontend to prompt for BYOK. Raising here gates
     # the request before any SSE stream is opened, so it becomes a real 402 HTTP response.
     raise FreeTierExhaustedError()
+
+
+async def get_llm_provider(
+    request: Request = None,  # type: ignore[assignment]  # FastAPI injects; None only for direct calls
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+    redis: aioredis.Redis = Depends(get_redis),
+) -> LLMProvider:
+    """Per-request provider resolution, honoring the chat picker's optional provider/model.
+
+    FastAPI injects ``request`` (the default ``None`` only applies to direct unit-test calls, which
+    pass no body → no choice → the plain ladder). Annotated as plain ``Request`` (not ``Request |
+    None``) so FastAPI treats it as the special request type rather than a Pydantic body field.
+
+    R16: if the free tier is reserved, record a no-arg refund coroutine factory on ``request.state``
+    so the chat handler can credit the allowance back should the turn fail/abort.
+    """
+    provider_choice, model_choice = await _read_model_selection(request)
+
+    def _record_refund() -> None:
+        if request is not None:
+            setattr(
+                request.state,
+                FREE_TIER_REFUND_STATE_ATTR,
+                lambda: refund_free_allowance(redis, user.id),
+            )
+
+    return await resolve_provider(
+        db,
+        redis,
+        user,
+        provider_choice=provider_choice,
+        model_choice=model_choice,
+        on_free_tier_reserved=_record_refund,
+    )

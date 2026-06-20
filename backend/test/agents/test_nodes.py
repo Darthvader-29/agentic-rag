@@ -53,14 +53,14 @@ class _FakeProvider:
         self.generate_calls: list[dict] = []
         self.stream_calls: list[dict] = []
 
-    async def route(self, query, *, has_documents, web_allowed):  # pragma: no cover
+    async def route(self, query, *, has_documents, web_allowed, history=None):  # pragma: no cover
         return "DIRECT"
 
-    async def generate(self, query, context, decision):
+    async def generate(self, query, context, decision, *, history=None):
         self.generate_calls.append({"query": query, "context": context, "decision": decision})
         return self.gen_returns
 
-    async def stream(self, query, context, decision):
+    async def stream(self, query, context, decision, *, history=None):
         self.stream_calls.append({"query": query, "context": context, "decision": decision})
         for d in self.deltas:
             yield d

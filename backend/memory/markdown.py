@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database.models import SessionMemory
 from observability.tracing import get_tracer
@@ -43,20 +44,32 @@ class MarkdownMemory:
                 return row.content, (row.updated_at.isoformat() if row.updated_at else None)
 
     async def append(self, session_id: str, note: str) -> None:
-        """Append a note under a row lock, keeping only the last ``max_chars`` (bounded summary)."""
+        """Append a note, keeping only the last ``max_chars`` (bounded summary).
+
+        Atomic INSERT ... ON CONFLICT DO UPDATE. The old SELECT ... FOR UPDATE then INSERT raced on
+        the FIRST append: ``FOR UPDATE`` locks nothing when no row exists, so two concurrent first
+        turns both took the INSERT branch → duplicate-PK IntegrityError → one note silently dropped.
+        The upsert is race-free: concurrent inserts serialize to one INSERT + one DO UPDATE concat.
+        Truncation runs in SQL (``right(...)``) so the bound holds on both the insert and the merge.
+        """
         with get_tracer().start_as_current_span("memory.markdown.append"):
             async with self._session_factory() as db:
-                row = (
-                    await db.execute(
-                        select(SessionMemory)
-                        .where(SessionMemory.session_id == session_id)
-                        .with_for_update()
-                    )
-                ).scalar_one_or_none()
-                content = (row.content + "\n\n" + note) if row and row.content else note
-                content = content[-self._max_chars :]
-                if row:
-                    row.content = content
-                else:
-                    db.add(SessionMemory(session_id=session_id, content=content))
+                insert_stmt = pg_insert(SessionMemory).values(
+                    session_id=session_id,
+                    content=func.right(note, self._max_chars),
+                )
+                stmt = insert_stmt.on_conflict_do_update(
+                    index_elements=["session_id"],
+                    set_={
+                        # existing || "\n\n" || new_note, bounded to the last max_chars
+                        "content": func.right(
+                            SessionMemory.content.concat("\n\n").concat(
+                                insert_stmt.excluded.content
+                            ),
+                            self._max_chars,
+                        ),
+                        "updated_at": func.now(),
+                    },
+                )
+                await db.execute(stmt)
                 await db.commit()

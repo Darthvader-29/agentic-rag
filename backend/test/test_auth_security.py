@@ -109,3 +109,58 @@ def test_guest_refresh_token_carries_is_guest_true():
     claims = decode_token(token)
     assert claims["is_guest"] is True
     assert claims["type"] == "refresh"
+
+
+# ── R04: aud / iss binding ────────────────────────────────────────────────────
+
+
+def test_tokens_carry_aud_and_iss():
+    from config import settings
+
+    claims = decode_token(create_access_token(subject="u-1"))
+    assert claims["aud"] == settings.JWT_AUDIENCE
+    assert claims["iss"] == settings.JWT_ISSUER
+
+
+def test_decode_rejects_wrong_audience():
+    from datetime import UTC, datetime
+
+    from config import settings
+
+    now = datetime.now(UTC)
+    token = jwt.encode(
+        {
+            "sub": "u",
+            "type": "access",
+            "aud": "some-other-service",
+            "iss": settings.JWT_ISSUER,
+            "iat": now,
+            "exp": now + timedelta(minutes=5),
+        },
+        settings.JWT_SECRET,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+    with pytest.raises(jwt.InvalidAudienceError):
+        decode_token(token)
+
+
+def test_decode_rejects_wrong_issuer():
+    from datetime import UTC, datetime
+
+    from config import settings
+
+    now = datetime.now(UTC)
+    token = jwt.encode(
+        {
+            "sub": "u",
+            "type": "access",
+            "aud": settings.JWT_AUDIENCE,
+            "iss": "some-other-issuer",
+            "iat": now,
+            "exp": now + timedelta(minutes=5),
+        },
+        settings.JWT_SECRET,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+    with pytest.raises(jwt.InvalidIssuerError):
+        decode_token(token)

@@ -87,6 +87,27 @@ def test_upload_presign_returns_url_and_document_id(up_client, fake_user):
     task.delay.assert_not_called()  # presign does NOT enqueue — confirm does
 
 
+def test_presign_malformed_json_returns_422(up_client):
+    """B17: a request defect (invalid JSON) on the presign path is a 422, not a blanket 500."""
+    client, _ = up_client
+    resp = client.post(
+        "/api/upload",
+        content="{not valid json",
+        headers={"content-type": "application/json"},
+    )
+    assert resp.status_code == 422
+
+
+def test_presign_overlong_session_id_returns_422(up_client):
+    """B16+B17: an over-long session_id fails PresignRequest validation → surfaced as 422."""
+    client, _ = up_client
+    resp = client.post(
+        "/api/upload",
+        json={"filename": "x.pdf", "content_type": "application/pdf", "session_id": "x" * 65},
+    )
+    assert resp.status_code == 422
+
+
 # ── multipart legacy path (multipart/form-data) ────────────────────────────────
 
 
@@ -137,10 +158,29 @@ def test_confirm_409_when_object_missing(up_client, fake_user):
     fake_s3.object_exists.return_value = False
     owned_session = MagicMock()
     owned_session.user_id = fake_user.id
+
+    # B03 regression: the FAILED status must be committed BEFORE the 409 unwinds. Otherwise
+    # get_db_session's ``except: rollback()`` erases the UPDATE and the document stays "pending".
+    # Re-override the request db with a recorder so we can assert the commit happened, after the
+    # status write.
+    order: list[str] = []
+
+    rec_db = AsyncMock()
+    rec_db.commit.side_effect = lambda: order.append("commit")
+
+    async def _rec_db_override():
+        yield rec_db
+
+    app.dependency_overrides[get_db_session] = _rec_db_override
+
     with (
         patch("app.repo.get_document", new_callable=AsyncMock, return_value=_doc()),
         patch("app.repo.get_session", new_callable=AsyncMock, return_value=owned_session),
-        patch("app.repo.set_document_status_by_id", new_callable=AsyncMock) as mark,
+        patch(
+            "app.repo.set_document_status_by_id",
+            new_callable=AsyncMock,
+            side_effect=lambda *a, **k: order.append("mark_failed"),
+        ) as mark,
         patch.object(app_module, "ingest_document") as task,
     ):
         resp = client.post(
@@ -151,6 +191,8 @@ def test_confirm_409_when_object_missing(up_client, fake_user):
     assert resp.status_code == 409
     mark.assert_awaited_once()  # document marked FAILED
     task.delay.assert_not_called()
+    # the FAILED status was committed, strictly after it was written → survives the 409 rollback
+    assert order == ["mark_failed", "commit"], f"order={order}"
 
 
 def test_confirm_404_when_document_missing(up_client):

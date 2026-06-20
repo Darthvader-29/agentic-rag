@@ -26,7 +26,6 @@ class Settings(BaseSettings):
     DATABASE_URL: str  # e.g. postgresql+asyncpg://user:pass@host/db (or postgresql:// — transformed at engine build)
 
     # Optional
-    UPLOADTHING_API_KEY: str | None = None
     PINECONE_INDEX_NAME: str = "rag-knowledge-base"
     LOG_JSON: bool = Field(default=False)
     ENVIRONMENT: Literal["development", "production"] = "development"
@@ -35,6 +34,9 @@ class Settings(BaseSettings):
     # --- Auth (Phase 3) ---
     JWT_SECRET: str
     JWT_ALGORITHM: str = "HS256"
+    # R04: bind tokens to this service so one minted for another audience/issuer is rejected.
+    JWT_AUDIENCE: str = "agentic-rag"
+    JWT_ISSUER: str = "agentic-rag-auth"
     ACCESS_TOKEN_TTL_MINUTES: int = 15
     REFRESH_TOKEN_TTL_DAYS: int = 7
 
@@ -48,6 +50,13 @@ class Settings(BaseSettings):
     DEFAULT_LLM_PROVIDER: Literal["gemini", "openai", "anthropic"] = "gemini"
     DEFAULT_LLM_MODEL: str = "gemini-2.5-flash"
     LLM_FALLBACK_API_KEY: SecretStr = SecretStr("")  # optional server-side fallback; BYOK preferred
+    # R12: resilience policy applied by every LLM adapter (see llm/base.py). LLM_TIMEOUT_SECONDS is
+    # the per-request connect+read deadline wired into each SDK client (a hung upstream can't pin the
+    # request forever); LLM_MAX_RETRY_ATTEMPTS is the TOTAL attempts (1 ⇒ no retry) on transient
+    # 429/503/529 with jittered exponential backoff seeded by LLM_RETRY_BACKOFF_SECONDS.
+    LLM_TIMEOUT_SECONDS: float = 60.0
+    LLM_MAX_RETRY_ATTEMPTS: int = 3
+    LLM_RETRY_BACKOFF_SECONDS: float = 0.5
 
     # --- Phase 5: Redis / Celery / rate limiting ---
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -56,6 +65,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_CHAT: str = "30/minute"
     RATE_LIMIT_UPLOAD: str = "10/minute"
     RATE_LIMIT_DEFAULT: str = "120/minute"
+    # R05: per-IP throttle on the auth endpoints (login/register/guest/refresh/logout/upgrade) —
+    # bounds credential stuffing + unbounded guest minting. AUTH_RATE_LIMIT_MAX requests per window.
+    AUTH_RATE_LIMIT_MAX: int = 10
+    AUTH_RATE_LIMIT_WINDOW_SECONDS: int = 60
 
     # --- Phase 6: agentic graph, conversation memory, freemium ladder ---
     HISTORY_MAX_TURNS: int = 6  # last-N turns (verbatim) fed to supervisor + synthesis
@@ -68,8 +81,10 @@ class Settings(BaseSettings):
     TIER_SYNTH_MODEL_GEMINI: str = "gemini-2.5-pro"
     TIER_ROUTE_MODEL_OPENAI: str = "gpt-4o-mini"
     TIER_SYNTH_MODEL_OPENAI: str = "gpt-4o"
-    TIER_ROUTE_MODEL_ANTHROPIC: str = "claude-3-5-haiku-latest"
-    TIER_SYNTH_MODEL_ANTHROPIC: str = "claude-3-5-sonnet-latest"
+    # R14: pinned to current, non-deprecated Claude 4.x ids (the deprecated claude-3-5-*-latest
+    # aliases risk silent drift / removal). Route classifier → Haiku 4.5; synthesis → Sonnet 4.6.
+    TIER_ROUTE_MODEL_ANTHROPIC: str = "claude-haiku-4-5-20251001"
+    TIER_SYNTH_MODEL_ANTHROPIC: str = "claude-sonnet-4-6"
 
     # --- Phase 7: Observability (OpenTelemetry + Langfuse) ---
     OTEL_ENABLED: bool = False

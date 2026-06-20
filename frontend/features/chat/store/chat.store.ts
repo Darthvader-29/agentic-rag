@@ -33,6 +33,8 @@ interface ChatState {
   beginTurn: (content: string, webSearchAllowed: boolean) => string;
   appendContent: (id: string, chunk: string) => void;
   pushStep: (id: string, step: Step) => void;
+  /** Flip every still-active step to "complete" (on stream done/error) so the "Thinking…" spinner stops. */
+  completeSteps: (id: string) => void;
   /** Sets a message's sources. Each Source may carry an optional `layer` (Phase 7 provenance). */
   setSources: (id: string, sources: Source[]) => void;
   /** Legacy: sets sourcesCount for the unmodified chat-message.tsx footer. Dropped in M3. */
@@ -173,6 +175,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             : [...m.steps, step];
         return { ...m, steps };
       }),
+    })),
+
+  completeSteps: (id) =>
+    set((s) => ({
+      messages: updateMessage(s.messages, id, (m) => ({
+        ...m,
+        steps: m.steps.map((st) =>
+          st.state === "active" ? { ...st, state: "complete" as const } : st
+        ),
+      })),
     })),
 
   setSources: (id, sources) =>

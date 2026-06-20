@@ -158,6 +158,42 @@ describe("GraphPanel", () => {
     expect(screen.getByText(/2 relations/)).toBeInTheDocument();
   });
 
+  it("caps a large graph (top-N by degree) and shows a 'showing N of M' note (R26)", () => {
+    // 400 nodes, ~600 links — well past the MAX_NODES=150 / MAX_EDGES=300 caps.
+    const nodes = Array.from({ length: 400 }, (_, i) => ({ id: `n${i}` }));
+    // Make n0 a hub (high degree → must survive the cap), plus a long chain.
+    const links: { source: string; target: string }[] = [];
+    for (let i = 1; i < 200; i++) links.push({ source: "n0", target: `n${i}` });
+    for (let i = 0; i < 399; i++)
+      links.push({ source: `n${i}`, target: `n${i + 1}` });
+    hookState.mockReturnValue(baseState({ graph: { nodes, links } }));
+    render(<GraphPanel sessionId="s1" />);
+
+    const fg = screen.getByTestId("force-graph");
+    const renderedNodes = Number(fg.getAttribute("data-nodes"));
+    const renderedLinks = Number(fg.getAttribute("data-links"));
+    expect(renderedNodes).toBeLessThanOrEqual(150);
+    expect(renderedLinks).toBeLessThanOrEqual(300);
+    // The hub (highest degree) is kept.
+    const passed = forceGraphSpy.mock.calls.at(-1)![0] as {
+      graphData: { nodes: { id: string }[] };
+    };
+    expect(passed.graphData.nodes.some((n) => n.id === "n0")).toBe(true);
+    // "showing N of M" note surfaces the truncation.
+    expect(screen.getByText(/Showing .* of 400 entities/i)).toBeInTheDocument();
+  });
+
+  it("does NOT show a 'showing' note for a small graph (within caps)", () => {
+    const graph = {
+      nodes: [{ id: "A" }, { id: "B" }],
+      links: [{ source: "A", target: "B" }],
+    };
+    hookState.mockReturnValue(baseState({ graph }));
+    render(<GraphPanel sessionId="s1" />);
+    expect(screen.queryByText(/Showing .* of/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/2 entities/)).toBeInTheDocument();
+  });
+
   it("passes accessor props (nodeLabel=id, linkLabel=relation) and disables drag under reduced motion", () => {
     reducedMotion.value = true;
     const graph = {

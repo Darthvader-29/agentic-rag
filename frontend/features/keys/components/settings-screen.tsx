@@ -3,16 +3,18 @@
 import Link from "next/link";
 import { ArrowLeft, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { flags } from "@/lib/flags";
+import { isByokEnabled } from "@/lib/flags";
 import { useAuth } from "@/features/auth/hooks/use-auth";
 import { ApiKeysForm } from "@/features/keys/components/api-keys-form";
 
 /**
- * Settings surface for BYOK key management (M7). Gated on the BYOK flag AND auth:
- *  - BYOK flag OFF  → "not available" notice (route stays reachable but inert).
- *  - Not authenticated → prompt to continue (the AuthGuard normally mints a guest, but if
- *    auth is off / a guest hasn't minted, we surface a sign-in link rather than firing the
- *    Bearer-guarded keys query for nobody).
+ * Settings surface for BYOK key management (M7). Gated on BYOK + auth (R24):
+ *  - BYOK disabled (flag off, OR auth off) → "not available" notice (route stays reachable but
+ *    inert). With auth off, key-saving is impossible, so we DON'T show a "Sign in to add keys"
+ *    CTA that `/login` can't fulfil — the notice is the honest dead-end-free state.
+ *  - Not authenticated (auth on, no token yet) → sign-in link (the AuthGuard normally mints a
+ *    guest, but if a guest hasn't minted we surface a link rather than firing the Bearer-guarded
+ *    keys query for nobody).
  *  - Guest → key form + a "Register to keep your keys" nudge (guest tokens are ephemeral).
  *  - Registered → key form.
  */
@@ -37,7 +39,7 @@ export function SettingsScreen() {
           </div>
         </div>
 
-        {!flags.byok ? (
+        {!isByokEnabled() ? (
           <p className="text-muted-foreground text-sm">
             Key management isn&apos;t available yet.
           </p>

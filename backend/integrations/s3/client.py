@@ -20,7 +20,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from tenacity import retry
 
-from integrations._retry import RETRY_KW
+from integrations._retry import CONNECT_TIMEOUT, READ_TIMEOUT, RETRY_KW
 
 
 class S3Client:
@@ -43,6 +43,10 @@ class S3Client:
             config=Config(
                 signature_version="s3v4",
                 s3={"addressing_style": "path"},
+                # Bound connect/read so a hung S3 endpoint fails fast (and lets @retry
+                # fire) instead of pinning the upload/download thread indefinitely.
+                connect_timeout=CONNECT_TIMEOUT,
+                read_timeout=READ_TIMEOUT,
                 # botocore >= 1.36 sends x-amz-checksum-crc32 by default; B2/R2/MinIO
                 # reject it (400/501). Only send checksums when an op requires them.
                 request_checksum_calculation="when_required",

@@ -3,7 +3,6 @@
 import { useRef, useState, type KeyboardEvent } from "react";
 import TextareaAutosize from "react-textarea-autosize";
 import { ArrowUp, Globe, Loader2, Paperclip } from "lucide-react";
-import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,7 +11,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { api } from "@/features/chat/api/chat.api";
+import { useUpload } from "@/features/upload/hooks/use-upload";
+import { UploadStatus } from "@/features/upload/components/upload-status";
 import { ModelPicker } from "@/features/keys/components/model-picker";
 
 interface ChatInputProps {
@@ -28,8 +28,10 @@ export function ChatInput({
 }: ChatInputProps) {
   const [input, setInput] = useState("");
   const [webSearch, setWebSearch] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // M8: presigned upload + status polling when the flag is on; otherwise the legacy multipart
+  // path (today's behavior). `busy` aliases the old `isUploading` for the paperclip spinner.
+  const { upload, busy: isUploading, presignedEnabled, active } = useUpload();
 
   const handleSend = () => {
     if (!input.trim() || isLoading) return;
@@ -47,15 +49,14 @@ export function ChatInput({
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setIsUploading(true);
     try {
-      await api.uploadFile(file);
-      toast.success(`${file.name} uploaded`);
-      onFileUploaded?.(file.name);
+      await upload(file);
+      // Flag OFF keeps today's synthetic "file uploaded" chat message; flag ON the inline progress
+      // + status (driven by `active`) owns the UX, so we don't inject a message.
+      if (!presignedEnabled) onFileUploaded?.(file.name);
     } catch {
-      toast.error("Upload failed");
+      // useUpload already surfaced the error toast.
     } finally {
-      setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
@@ -63,6 +64,7 @@ export function ChatInput({
   return (
     <div className="border-border bg-background border-t p-4">
       <div className="mx-auto max-w-4xl space-y-2">
+        {presignedEnabled && active && <UploadStatus active={active} />}
         <div className="border-border bg-background focus-within:ring-ring relative flex items-end gap-1 rounded-2xl border p-1 shadow-sm focus-within:ring-1">
           <div className="flex items-center gap-1 pl-1">
             <input

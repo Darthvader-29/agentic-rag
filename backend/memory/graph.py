@@ -14,9 +14,12 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import networkx as nx
+import structlog
 
 from database.models import SessionGraph
 from observability.tracing import get_tracer
+
+logger = structlog.get_logger(__name__)
 
 Triple = tuple[str, str, str]
 
@@ -39,9 +42,12 @@ def _from_node_link(data: dict) -> nx.DiGraph:
 class KnowledgeGraph:
     """Per-session networkx graph; load → merge deltas → save, under a Redis lock."""
 
-    def __init__(self, session_factory: Any, redis: Any = None, *, lock_ttl: int = 15) -> None:
+    def __init__(self, session_factory: Any, redis: Any = None, *, lock_ttl: int = 30) -> None:
         self._session_factory = session_factory
         self._redis = redis  # redis.asyncio client; None disables locking (single-threaded tests)
+        # A generous TTL so the load→merge→save critical section comfortably finishes before the
+        # lock auto-expires; an expiry mid-work lets a second writer in and the slower save wins,
+        # losing the faster writer's triples (the lost-update the lock exists to prevent).
         self._lock_ttl = lock_ttl
 
     @asynccontextmanager
@@ -49,15 +55,27 @@ class KnowledgeGraph:
         if self._redis is None:
             yield
             return
-        lock = self._redis.lock(f"kg:lock:{session_id}", timeout=self._lock_ttl)
-        await lock.acquire()
+        # blocking_timeout bounds the wait so ingestion can't hang forever behind a stuck holder.
+        lock = self._redis.lock(
+            f"kg:lock:{session_id}", timeout=self._lock_ttl, blocking_timeout=self._lock_ttl
+        )
+        acquired = await lock.acquire()
+        if not acquired:
+            # Couldn't acquire within the window — proceed best-effort but SURFACE it rather than
+            # silently racing (the merge is additive, so a rare concurrent overwrite is logged).
+            logger.warning("kg_lock_not_acquired", session_id=session_id)
+            yield
+            return
         try:
             yield
         finally:
             try:
                 await lock.release()
-            except Exception:  # lock already expired/released — safe to ignore
-                pass
+            except Exception:
+                # Release failed → the lock expired mid-work (TTL exceeded) and may have been taken
+                # by another writer, so a concurrent save could have lost this writer's triples.
+                # Surface it (was silently swallowed) so the lost-update is detectable in logs.
+                logger.warning("kg_lock_release_failed_possible_lost_update", session_id=session_id)
 
     async def _load(self, db: Any, session_id: str) -> nx.DiGraph:
         row = await db.get(SessionGraph, session_id)

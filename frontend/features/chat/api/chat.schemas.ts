@@ -27,6 +27,12 @@ export const chatResponseSchema = z.object({
   route: routeTypeSchema,
   context_count: z.number().int().nonnegative(),
   session_id: z.string().optional(),
+  // Parsed rich components on the blocking path (mirrors the SSE `component` events). Kept
+  // permissive (only `type` required, rest passthrough) so an unknown block degrades to prose
+  // at the renderer rather than failing the whole response. Absent ⇒ [].
+  components: z
+    .array(z.object({ type: z.string() }).passthrough())
+    .optional(),
 });
 
 export const uploadResponseSchema = z
@@ -98,6 +104,14 @@ export const SseLayerSchema = SseLayerEnum.optional().catch(undefined);
 export type SseLayer = z.infer<typeof SseLayerSchema>;
 
 /**
+ * `done.layers` — the de-duplicated SET of retrieval layers that fed the answer (answer-level
+ * provenance, NOT per-source). This is what the backend actually emits on `done`; the per-source
+ * authority remains the `citation` component's own `layer`.
+ */
+export const SseDoneLayersSchema = z.array(SseLayerEnum);
+export type SseDoneLayer = z.infer<typeof SseLayerEnum>;
+
+/**
  * One source in the done-event `sources` array (Phase 7). Loose by design — only `layer` is
  * meaningful to FE-0/FE-4 here; identity/title fields are read tolerantly downstream. The
  * authoritative provenance channel remains the `citation` component (09 §5); `done.sources` is
@@ -146,6 +160,9 @@ export const SseDoneSchema = z.object({
   answer: z.string(),
   // route may be null/omitted defensively; the contract always sends the flat enum.
   route: SseRouteSchema.nullable().optional(),
+  // `layers` is what the backend emits (the contributing-layer set). `sources` is kept as a
+  // tolerant legacy carrier; neither is required. A malformed array degrades to undefined.
+  layers: SseDoneLayersSchema.optional().catch(undefined),
   sources: z.array(SseDoneSourceSchema).optional().catch(undefined),
 });
 export type SseDone = z.infer<typeof SseDoneSchema>;

@@ -92,6 +92,17 @@ describe("parseSSE", () => {
     expect(events).toEqual([{ event: "token", data: '{"text": "w"}' }]);
   });
 
+  it("does not split a frame when a CRLF straddles a chunk boundary (B23)", async () => {
+    // chunk N ends with the CR; chunk N+1 starts with the paired LF. The naive per-chunk
+    // normalisation turned this into "\n\n" and fabricated a frame boundary, splitting the event
+    // (the event-name line became a data-less frame → dropped; the data frame defaulted to
+    // event "message").
+    const events = await collect(
+      streamFromChunks(["event: token\r", '\ndata: {"text": "x"}\r\n\r\n'])
+    );
+    expect(events).toEqual([{ event: "token", data: '{"text": "x"}' }]);
+  });
+
   it("does not corrupt a multibyte codepoint split across byte reads", async () => {
     // "🚀" (U+1F680) is 4 UTF-8 bytes: F0 9F 9A 80. Split it across two reads.
     const full = new TextEncoder().encode(

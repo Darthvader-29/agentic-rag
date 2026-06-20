@@ -53,6 +53,13 @@ interface GraphPanelProps {
 const PANEL_HEIGHT = 320;
 const NODE_REL_SIZE = 4;
 
+// R26: hard caps on what we hand the force simulation. A large graph (hundreds of nodes / edges)
+// pins the main thread laying out + animating the canvas and can freeze the tab. We render the
+// top-N most-connected nodes (degree is the relevance signal; the graph "grows" as docs ingest)
+// and the edges among them, capped too. A "showing N of M" note tells the user it's a subset.
+const MAX_NODES = 150;
+const MAX_EDGES = 300;
+
 /**
  * Map a node's degree (0..maxDegree) to a hue from cool (low) to warm (high). Degree 0 stays
  * neutral. Returns an HSL string consumable by force-graph's `nodeColor`.
@@ -84,6 +91,54 @@ function computeDegrees(graph: GraphData): {
   let maxDegree = 0;
   for (const d of degree.values()) if (d > maxDegree) maxDegree = d;
   return { degree, maxDegree };
+}
+
+interface CappedGraph {
+  data: GraphData;
+  /** True when the rendered graph is a subset of the full one. */
+  capped: boolean;
+  totalNodes: number;
+  totalLinks: number;
+}
+
+/**
+ * R26: cap the graph handed to the force simulation. Keeps the `MAX_NODES` highest-degree nodes
+ * (most-connected = most relevant; original order breaks ties, which tracks ingestion recency in
+ * the networkx node-link output), then the edges whose BOTH endpoints survived, capped to
+ * `MAX_EDGES`. Returns the full graph untouched (and `capped: false`) when it's already within
+ * both caps, so the common small-graph case is byte-for-byte unchanged.
+ */
+function capGraph(graph: GraphData, degree: Map<string, number>): CappedGraph {
+  const totalNodes = graph.nodes.length;
+  const totalLinks = graph.links.length;
+  if (totalNodes <= MAX_NODES && totalLinks <= MAX_EDGES) {
+    return { data: graph, capped: false, totalNodes, totalLinks };
+  }
+
+  // Top-N nodes by degree (stable: keep input order among equal degrees).
+  const keptNodes = graph.nodes
+    .map((n, i) => ({ n, i }))
+    .sort((a, b) => {
+      const da = degree.get(a.n.id) ?? 0;
+      const db = degree.get(b.n.id) ?? 0;
+      return db - da || a.i - b.i;
+    })
+    .slice(0, MAX_NODES)
+    .map((x) => x.n);
+
+  const keptIds = new Set(keptNodes.map((n) => n.id));
+  const keptLinks = graph.links
+    .filter(
+      (l) => keptIds.has(String(l.source)) && keptIds.has(String(l.target))
+    )
+    .slice(0, MAX_EDGES);
+
+  return {
+    data: { nodes: keptNodes, links: keptLinks },
+    capped: true,
+    totalNodes,
+    totalLinks,
+  };
 }
 
 function GraphSkeleton() {
@@ -139,6 +194,14 @@ export default function GraphPanel({ sessionId }: GraphPanelProps) {
     [graph]
   );
 
+  // R26: clamp to the top-N-by-degree subgraph so a large graph can't freeze the tab. `degree`
+  // (computed on the FULL graph) drives both selection and node size/color, so the rendered subset
+  // is still the most-connected entities.
+  const rendered = React.useMemo(
+    () => capGraph(graph, degree),
+    [graph, degree]
+  );
+
   // disabled → loading → error → empty → data ladder (shared branch order via <AsyncPanel>). Each
   // slot keeps this panel's own chrome verbatim (bare aria-busy div + GraphSkeleton for loading,
   // the dashed GraphShell + PanelStateMessage for error/empty, the bespoke <section> + canvas for
@@ -180,7 +243,18 @@ export default function GraphPanel({ sessionId }: GraphPanelProps) {
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
               <Network className="h-3.5 w-3.5" aria-hidden="true" />
-              {graph.nodes.length} entities · {graph.links.length} relations
+              {rendered.capped ? (
+                // "showing N of M" — the rendered subset is the most-connected entities (R26).
+                <span>
+                  Showing {rendered.data.nodes.length} of {rendered.totalNodes}{" "}
+                  entities · {rendered.data.links.length} of{" "}
+                  {rendered.totalLinks} relations
+                </span>
+              ) : (
+                <span>
+                  {graph.nodes.length} entities · {graph.links.length} relations
+                </span>
+              )}
             </span>
             <Button
               variant="ghost"
@@ -204,7 +278,7 @@ export default function GraphPanel({ sessionId }: GraphPanelProps) {
               <ForceGraph2D
                 width={width}
                 height={PANEL_HEIGHT}
-                graphData={graph}
+                graphData={rendered.data}
                 nodeId="id"
                 nodeRelSize={NODE_REL_SIZE}
                 // Label = entity id (shown on hover).

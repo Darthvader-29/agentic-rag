@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Trash2, FileText, KeyRound } from "lucide-react";
-import { flags } from "@/lib/flags";
+import { flags, isByokEnabled } from "@/lib/flags";
 import { UserMenu } from "@/features/auth/components/user-menu";
 
 interface SidebarProps {
@@ -110,8 +110,9 @@ export function Sidebar({ onClearSession, onToggle }: SidebarProps) {
         <div className="flex justify-end px-1">
           <ThemeToggle />
         </div>
-        {/* BYOK key management — flag-gated; the settings screen owns auth gating. */}
-        {flags.byok && (
+        {/* BYOK key management — gated on BYOK + auth (R24): with auth off the settings screen
+            can't save keys, so the link would dead-end. */}
+        {isByokEnabled() && (
           <Button
             asChild
             variant="ghost"

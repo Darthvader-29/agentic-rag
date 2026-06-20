@@ -3,12 +3,14 @@ import { render, screen } from "@testing-library/react";
 
 import { FREE_TIER_DISCLAIMER } from "@/features/keys/copy";
 
-// Toggle BYOK per test via a mutable mock.
+// Toggle BYOK / auth per test via mutable mocks.
 let byok = true;
+let auth = true;
 vi.mock("@/lib/flags", () => ({
   get flags() {
-    return { byok, auth: true, streaming: false };
+    return { byok, auth, streaming: false };
   },
+  isByokEnabled: () => byok && auth,
 }));
 
 // Control keyless state directly — the banner shows only to keyless users.
@@ -22,6 +24,7 @@ import { FreeTierBanner } from "@/features/keys/components/free-tier-banner";
 describe("FreeTierBanner", () => {
   beforeEach(() => {
     byok = true;
+    auth = true;
     hasKey = false;
   });
 
@@ -50,6 +53,14 @@ describe("FreeTierBanner", () => {
 
   it("renders nothing when BYOK is off", () => {
     byok = false;
+    const { container } = render(<FreeTierBanner />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders nothing when auth is off, even for a keyless user (R24)", () => {
+    // Default config auth=false + byok=true must NOT advertise a dead "Add a key" CTA.
+    auth = false;
+    hasKey = false;
     const { container } = render(<FreeTierBanner />);
     expect(container).toBeEmptyDOMElement();
   });

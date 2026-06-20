@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { flags } from "@/lib/flags";
+import { isByokEnabled } from "@/lib/flags";
 import { useChatStore } from "@/features/chat/store/chat.store";
 import { FREE_TIER_EXHAUSTED } from "@/features/chat/api/chat.schemas";
 import {
@@ -29,7 +29,8 @@ import {
  * Open state is DERIVED during render (no setState-in-effect): the dialog shows while the
  * offending message id differs from the last-dismissed id. Closing records that id, so it
  * won't reopen on the next render; a fresh exhausted turn (new id) re-triggers it.
- * Renders nothing when BYOK is off.
+ * Renders nothing when BYOK is disabled (flag off, OR auth off → R24): the CTA routes to the
+ * key form, which is unusable without auth, so the upsell would dead-end.
  */
 export function FreeTierExhaustedDialog() {
   const messages = useChatStore((s) => s.messages);
@@ -41,9 +42,10 @@ export function FreeTierExhaustedDialog() {
     .reverse()
     .find((m) => m.role === "assistant" && m.errorCode === FREE_TIER_EXHAUSTED);
 
-  const open = Boolean(flags.byok && offending && offending.id !== dismissedId);
+  const byok = isByokEnabled();
+  const open = Boolean(byok && offending && offending.id !== dismissedId);
 
-  if (!flags.byok) return null;
+  if (!byok) return null;
 
   const dismiss = () => {
     if (offending) setDismissedId(offending.id);

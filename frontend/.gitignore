@@ -40,3 +40,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# playwright (R21 / M5 E2E — generated artifacts)
+/test-results
+/playwright-report
+/blob-report
+/.playwright
+/playwright/.cache

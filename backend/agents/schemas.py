@@ -11,8 +11,24 @@ model-authored executable markup is ever emitted (no XSS, fully streamable).
 import json
 import re
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, field_validator
+
+
+def _is_safe_http_url(url: str | None) -> bool:
+    """True only for an absolute http(s) URL (R06).
+
+    Rejects javascript:/data:/blob:/relative — any of which would execute or mislead if rendered as
+    an href/src. Defense-in-depth with the frontend's own allowlist (lib/url.ts).
+    """
+    if not url:
+        return False
+    try:
+        return urlsplit(url).scheme.lower() in ("http", "https")
+    except ValueError:
+        return False
+
 
 # ── Inner item models ────────────────────────────────────────────────────────
 
@@ -26,11 +42,23 @@ class CitationItem(BaseModel):
     label: str
     source_id: str
     snippet: str = ""
+    # Optional, preserved for the UI: a source link-out and the Phase-7 retrieval-layer provenance
+    # (vector|graph|web|memory). The frontend tolerantly narrows `layer` and guards `url`; dropping
+    # them here (the old model omitted both) made clickable citations + provenance badges dead.
+    url: str | None = None
+    layer: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def _disarm_unsafe_url(cls, v: str | None) -> str | None:
+        # R06: disarm a non-http(s) url to None — keep the citation, drop only the unsafe link.
+        return v if _is_safe_http_url(v) else None
 
 
 class MediaItem(BaseModel):
     url: str
     alt: str = ""
+    caption: str | None = None  # optional figcaption rendered under the media
 
 
 # ── Component catalog ────────────────────────────────────────────────────────
@@ -40,6 +68,7 @@ class TableComponent(BaseModel):
     type: Literal["table"]
     columns: list[str]
     rows: list[list[Any]]
+    caption: str | None = None  # optional <caption> the table renderer shows
 
 
 class ChartComponent(BaseModel):
@@ -47,6 +76,7 @@ class ChartComponent(BaseModel):
     chart: Literal["bar", "line", "pie"]
     x: list[Any]
     series: list[ChartSeries]
+    title: str | None = None  # optional figure title the chart renderer shows
 
 
 class CitationComponent(BaseModel):
@@ -64,11 +94,18 @@ class CalloutComponent(BaseModel):
     type: Literal["callout"]
     level: Literal["info", "warning", "tip"] = "info"
     text: str
+    title: str | None = None  # optional bold title above the callout text
 
 
 class MediaComponent(BaseModel):
     type: Literal["media"]
     items: list[MediaItem]
+
+    @field_validator("items")
+    @classmethod
+    def _drop_unsafe_items(cls, items: list[MediaItem]) -> list[MediaItem]:
+        # R06: drop media whose url isn't http(s) (keep the safe ones; the frontend re-filters too).
+        return [it for it in items if _is_safe_http_url(it.url)]
 
 
 Component = Annotated[
@@ -95,7 +132,9 @@ def validate_component(obj: Any) -> dict | None:
         model = _ADAPTER.validate_python(obj)
     except ValidationError:
         return None
-    return model.model_dump()
+    # exclude_none so absent optionals (url/layer/caption/title) don't emit nulls — the wire shape
+    # is unchanged when they aren't present, and the frontend treats absent ⇒ no badge/caption.
+    return model.model_dump(exclude_none=True)
 
 
 def parse_components(text: str) -> tuple[str, list[dict]]:

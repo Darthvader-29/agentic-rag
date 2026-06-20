@@ -25,3 +25,16 @@ export const flags = {
 } as const;
 
 export type Flags = typeof flags;
+
+/**
+ * R24 — BYOK depends on auth. Saving/listing keys is Bearer-guarded, so with `auth` OFF the
+ * BYOK surface (model picker, free-tier banner + exhausted dialog, the Settings key form, and
+ * the sidebar "API Keys" link) can't deliver a usable capability — Settings dead-ends at "Sign
+ * in to add keys" and `/login` mints nothing. Every BYOK surface gates on this derived flag so
+ * the default config (`auth=false`, `byok=true`) advertises nothing it can't provide.
+ *
+ * Exposed as a function (not a const) so it re-reads `flags` after a test mock swaps the module.
+ */
+export function isByokEnabled(): boolean {
+  return flags.byok && flags.auth;
+}

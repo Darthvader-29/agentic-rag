@@ -27,13 +27,13 @@ from llm.dependencies import get_llm_provider
 class _FakeProvider:
     canned_answer = "fake-provider-answer"
 
-    async def route(self, query, *, has_documents, web_allowed):
+    async def route(self, query, *, has_documents, web_allowed, history=None):
         return "DIRECT"
 
-    async def generate(self, query, context, decision):
+    async def generate(self, query, context, decision, *, history=None):
         return self.canned_answer
 
-    async def stream(self, query, context, decision):
+    async def stream(self, query, context, decision, *, history=None):
         yield self.canned_answer
 
 

@@ -1,8 +1,22 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
+import { securityHeaders } from "./lib/security-headers";
 
 const nextConfig: NextConfig = {
   devIndicators: false,
+  // R07: security headers (CSP / HSTS / X-Frame-Options / nosniff / Referrer-Policy / Permissions)
+  // on every route. The connect-src allow-list is derived from NEXT_PUBLIC_API_URL.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: securityHeaders({
+          apiUrl: process.env.NEXT_PUBLIC_API_URL,
+          isDev: process.env.NODE_ENV !== "production",
+        }),
+      },
+    ];
+  },
 };
 
 // ---- Sentry (Phase 7, FE-3) ------------------------------------------------------------------

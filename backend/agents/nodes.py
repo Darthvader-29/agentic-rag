@@ -53,10 +53,11 @@ async def supervisor_node(state: GraphState) -> dict[str, Any]:
     query = state["query"]
     has_documents = state["has_documents"]
     web_allowed = state["web_search_allowed"]
+    history = state.get("history") or []
 
     try:
         base_route = await provider.route(
-            query, has_documents=has_documents, web_allowed=web_allowed
+            query, has_documents=has_documents, web_allowed=web_allowed, history=history
         )
     except Exception:
         logger.error("supervisor_route_failed", exc_info=True)
@@ -65,7 +66,7 @@ async def supervisor_node(state: GraphState) -> dict[str, Any]:
     route = decide_agentic_route(
         str(base_route), has_documents=has_documents, web_allowed=web_allowed
     )
-    rewritten_query = _rewrite_query(query, state.get("history") or [])
+    rewritten_query = _rewrite_query(query, history)
 
     logger.info(
         "supervisor_decision",
@@ -79,12 +80,13 @@ async def supervisor_node(state: GraphState) -> dict[str, Any]:
 
 
 def _rewrite_query(query: str, history: list[Turn]) -> str:
-    """Context-resolve the query against recent turns.
+    """Resolve the retrieval/search query against recent turns.
 
-    docs/09 Decision 4 folds rewriting into the supervisor's single call. Until a provider-native
-    rewrite is wired into ``LLMProvider.route``, this is a deterministic, zero-LLM-cost resolver: the
-    raw query already carries its own context for first turns, and the verbatim last-N history (also
-    fed to synthesis) covers follow-ups. Always returns a non-empty string.
+    Conversation history now reaches the LLM directly — it is threaded into the routing and
+    synthesis prompts via ``provider.route``/``generate``/``stream`` (H-B1) — so follow-ups are
+    answered with prior context. This helper only shapes the *retrieval* query string fed to the
+    vector/web nodes; a full provider-native rewrite (resolving pronouns in the search text itself)
+    is a separate follow-up. Always returns a non-empty string.
     """
     q = (query or "").strip()
     return q or (query or "")
@@ -217,6 +219,7 @@ async def synthesis_node(
     """
     with get_tracer().start_as_current_span("agent.synthesis"):
         provider = state["provider"]
+        history = state.get("history") or []
         doc_context = state.get("context", "") or ""
         web_result = state.get("web_result", "") or ""
         merged, layers = await _assemble_context(state, doc_context, web_result)
@@ -237,7 +240,7 @@ async def synthesis_node(
                         components.append(value)
                         writer({"kind": "component", "data": value})
 
-            async for delta in provider.stream(synth_query, merged, decision):
+            async for delta in provider.stream(synth_query, merged, decision, history=history):
                 _emit(splitter.feed(delta))
             _emit(splitter.flush())
 
@@ -246,7 +249,7 @@ async def synthesis_node(
             logger.info("synthesis_streamed", decision=decision, components=len(components))
             return {"answer": answer, "components": components, "layers": layers}
 
-        raw = await provider.generate(synth_query, merged, decision)
+        raw = await provider.generate(synth_query, merged, decision, history=history)
         prose, components = parse_components(raw)
         await _persist_markdown(state, prose)
         logger.info("synthesis_generated", decision=decision, components=len(components))

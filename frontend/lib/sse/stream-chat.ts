@@ -13,7 +13,7 @@ import {
   type SseRoute,
   type SseStage,
   type SseComponent,
-  type SseDoneSource,
+  type SseDoneLayer,
 } from "@/features/chat/api/chat.schemas";
 
 /**
@@ -54,13 +54,13 @@ export interface StreamChatHandlers {
   onComponent?: (component: SseComponent) => void;
   /**
    * The stream completed with the final answer + backend route (flat enum, legacy tolerated).
-   * Phase 7: `sources` carries the optional done-event sources (each item MAY have a `layer`);
-   * undefined when the backend omits them (pre-Phase-7 contract).
+   * Phase 7: `layers` is the contributing-layer set the backend emits on `done` (answer-level
+   * provenance); undefined when the backend omits it (pre-Phase-7 contract).
    */
   onDone?: (result: {
     answer: string;
     route: SseRoute | null;
-    sources?: SseDoneSource[];
+    layers?: SseDoneLayer[];
   }) => void;
   /**
    * Phase 7 observability hook. Called once, immediately after the chat fetch is dispatched,
@@ -182,8 +182,8 @@ export async function streamChat(
             onDone?.({
               answer: parsed.data.answer,
               route: parsed.data.route ?? null,
-              // Phase 7: forward optional done-event sources (each item MAY carry a layer).
-              sources: parsed.data.sources,
+              // Phase 7: forward the contributing-layer set (answer-level provenance).
+              layers: parsed.data.layers,
             });
           }
           return; // typed completion terminates the stream

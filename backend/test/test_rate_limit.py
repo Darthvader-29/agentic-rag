@@ -128,3 +128,29 @@ def test_health_is_never_rate_limited(rl_client):
     """/health carries no limit decorator → liveness probes are never throttled."""
     statuses = {rl_client.get("/health").status_code for _ in range(150)}
     assert statuses == {200}
+
+
+def test_429_uses_detail_code_envelope(rl_client, fake_user):
+    """R27: a throttled response carries the FE's {detail, code} shape, not slowapi's {error}."""
+    fake_session = MagicMock()
+    fake_session.user_id = fake_user.id
+    with (
+        patch("app.repo.get_session", new_callable=AsyncMock, return_value=fake_session),
+        patch("app.repo.session_has_documents", new_callable=AsyncMock, return_value=False),
+        patch("app.repo.load_recent_messages", new_callable=AsyncMock, return_value=[]),
+        patch("app.repo.save_message", new_callable=AsyncMock),
+    ):
+        last = None
+        for _ in range(40):
+            last = rl_client.post(
+                "/api/chat",
+                json={"message": "hi", "session_id": "s1", "web_search_allowed": False},
+            )
+            if last.status_code == 429:
+                break
+    assert last is not None and last.status_code == 429
+    body = last.json()
+    # slowapi's default {"error": ...} would fail both of these.
+    assert body.get("code") == "rate_limited"
+    assert isinstance(body.get("detail"), str) and body["detail"]
+    assert "error" not in body

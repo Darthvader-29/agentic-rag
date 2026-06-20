@@ -1,4 +1,15 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// BYOK must be enabled for getChatModelSelection to emit a selection (R24 gates it on byok+auth).
+// A mutable mock lets one test flip it off to assert the guard.
+let byokEnabled = true;
+vi.mock("@/lib/flags", () => ({
+  get flags() {
+    return { byok: true, auth: byokEnabled, streaming: false };
+  },
+  isByokEnabled: () => byokEnabled,
+}));
+
 import {
   useProviderStore,
   getChatModelSelection,
@@ -6,6 +17,7 @@ import {
 import { defaultModelFor } from "@/features/keys/models";
 
 function reset() {
+  byokEnabled = true;
   useProviderStore.setState({ provider: null, model: null });
 }
 
@@ -61,6 +73,14 @@ describe("provider.store", () => {
     it("returns provider only when model is somehow unset", () => {
       useProviderStore.setState({ provider: "gemini", model: null });
       expect(getChatModelSelection()).toEqual({ provider: "gemini" });
+    });
+
+    it("returns {} when BYOK is disabled even if a stale selection persists (R24)", () => {
+      useProviderStore.setState({ provider: "openai", model: "gpt-4o" });
+      byokEnabled = false;
+      // The picker that would reset it isn't mounted when the surface is hidden, so the
+      // accessor must not leak the stale provider into the request.
+      expect(getChatModelSelection()).toEqual({});
     });
   });
 });

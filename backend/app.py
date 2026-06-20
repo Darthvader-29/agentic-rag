@@ -1,15 +1,18 @@
+import asyncio
 import uuid
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 import redis.asyncio as aioredis
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from pydantic import BaseModel, Field, ValidationError
+from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +43,7 @@ from integrations.duckduckgo.client import DuckDuckGoClient
 from integrations.huggingface.client import HuggingFaceClient
 from integrations.s3.client import S3Client
 from llm.base import LLMProvider
-from llm.dependencies import get_llm_provider
+from llm.dependencies import FREE_TIER_REFUND_STATE_ATTR, get_llm_provider
 from logging_config import configure_logging
 from memory.graph import KnowledgeGraph
 from memory.hybrid import HybridRetriever
@@ -88,6 +91,9 @@ async def lifespan(app: FastAPI):
     init_langfuse(settings)
     # Phase 6: compile the agentic chat graph ONCE per process (pure + stateless — shared)
     app.state.graph = build_graph()
+    # Per-process registry of detached persist tasks (disconnect path) — strong refs so the loop
+    # can't GC them mid-flight. Per-process infra like the pools above; holds no cross-request state.
+    app.state.background_tasks = set()
     logger.info("clients_initialized", environment=settings.ENVIRONMENT)
     yield
     await app.state.redis.aclose()
@@ -129,6 +135,49 @@ app.add_middleware(
 )
 
 
+# ── R07: security response headers (every response: API JSON + the legacy /static SPA) ──
+# CSP keeps 'unsafe-inline' because the legacy index.html uses inline onclick/style; the Next.js
+# frontend ships its own (stricter, env-aware) CSP via next.config.ts. HSTS is emitted only in
+# production — never on plain-http localhost dev.
+# A tuple (not a dict) so it stays immutable — and so the statelessness guard, which flags any
+# module-level dict/list/set as possible cross-request state, leaves this read-only constant alone.
+_SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
+    ("X-Content-Type-Options", "nosniff"),
+    ("X-Frame-Options", "DENY"),
+    ("Referrer-Policy", "strict-origin-when-cross-origin"),
+    ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
+    (
+        "Content-Security-Policy",
+        (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self'; "
+            "connect-src 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "frame-ancestors 'none'; "
+            "form-action 'self'"
+        ),
+    ),
+)
+
+
+@app.middleware("http")
+async def _security_headers(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    response = await call_next(request)
+    for key, value in _SECURITY_HEADERS:
+        response.headers.setdefault(key, value)
+    if settings.ENVIRONMENT == "production":
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=63072000; includeSubDomains"
+        )
+    return response
+
+
 # ── Phase 5: per-user rate limiting (Redis-backed in prod, memory:// in tests) ──
 def _rate_limit_key(request: Request) -> str:
     """Throttle per authenticated user so one tenant can't drain another's budget;
@@ -149,7 +198,29 @@ def _rate_limit_key(request: Request) -> str:
 # in tests. Per-route @limiter.limit decorators below; no global default → /health is exempt.
 limiter = Limiter(key_func=_rate_limit_key, storage_uri=settings.rate_limit_storage_uri)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# ── R27: emit the {detail, code} envelope the frontend parses (not slowapi's {error}) ──
+# slowapi's default `_rate_limit_exceeded_handler` returns `{"error": "Rate limit exceeded: ..."}`,
+# which the FE's ApiError parser doesn't recognize → users saw "Backend error: 429". This custom
+# handler returns the same `{detail, code}` shape as `app_exception_handler` (code "rate_limited"),
+# so the FE surfaces a friendly throttle message. `Retry-After` is preserved when slowapi computed
+# a reset window so clients can back off.
+def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
+    response = JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Too many requests. Please slow down and try again shortly.",
+            "code": "rate_limited",
+        },
+    )
+    retry_after = getattr(exc, "retry_after", None)
+    if retry_after is not None:
+        response.headers["Retry-After"] = str(retry_after)
+    return response
+
+
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -163,12 +234,19 @@ app.include_router(keys_router)
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: str | None = None
+    # Bounded to Session.id's String(64): an over-long client id used to pass validation then trip
+    # a DB StringDataRightTruncation at flush → 500. Cap it so it's a clean 422 instead.
+    session_id: str | None = Field(default=None, max_length=64)
     web_search_allowed: bool = True
+    # M7: optional per-conversation provider/model pick from the chat picker. Honored only for a
+    # BYOK user who holds a key for the chosen provider (model → synthesis model); ignored for the
+    # free tier. Resolution lives in llm/dependencies.get_llm_provider → resolve_provider.
+    provider: str | None = None
+    model: str | None = None
 
 
 class CleanupRequest(BaseModel):
-    session_id: str
+    session_id: str = Field(max_length=64)
 
 
 class UploadResponse(BaseModel):
@@ -182,7 +260,8 @@ class UploadResponse(BaseModel):
 class PresignRequest(BaseModel):
     filename: str
     content_type: str | None = None
-    session_id: str | None = None  # optional; a new one is created and returned if absent
+    # optional; a new one is created and returned if absent. Bounded to Session.id's String(64).
+    session_id: str | None = Field(default=None, max_length=64)
 
 
 class PresignResponse(BaseModel):
@@ -319,7 +398,18 @@ async def _upload_multipart(request: Request, current_user: User, s3: S3Client, 
 
 async def _upload_presign(request: Request, current_user: User, s3: S3Client, db: AsyncSession):
     """Presigned flag-ON path: issue a PUT URL; the client uploads direct to storage."""
-    payload = PresignRequest.model_validate(await request.json())
+    # Validate the body here so a request DEFECT (bad JSON / failing field, e.g. an over-long
+    # session_id) is a 422 — not swallowed by the caller's blanket `except Exception` → 500. We
+    # parse manually because /api/upload is dual-transport (multipart OR json) and can't declare a
+    # single typed body model.
+    try:
+        body = await request.json()
+    except ValueError as exc:  # JSONDecodeError subclasses ValueError
+        raise HTTPException(422, "request body must be valid JSON") from exc
+    try:
+        payload = PresignRequest.model_validate(body)
+    except ValidationError as exc:
+        raise HTTPException(422, "invalid upload request") from exc
     session_id = await _resolve_session(db, payload.session_id, current_user)
     s3_key = s3.make_user_key(current_user.id, payload.filename)
     upload_url = await s3.generate_presigned_url(s3_key)
@@ -379,6 +469,10 @@ async def confirm_upload(
             await repo.set_document_status_by_id(
                 db, document_id=doc.id, status=DocumentStatus.FAILED
             )
+            # Commit the FAILED status BEFORE raising. The 409 unwinds through get_db_session's
+            # ``except: rollback()``, which would otherwise erase this UPDATE and leave the document
+            # stuck ``pending`` forever (status pollers never see ``failed``).
+            await db.commit()
             raise HTTPException(409, "object not uploaded")
         ingest_document.delay(
             document_id=doc.id,
@@ -455,18 +549,20 @@ async def get_session_graph(
 # ========= CHAT =========
 
 
-def _node_stage(node: str) -> str | None:
-    """Map a graph node to the coarse SSE ``status`` stage the frontend renders (None to skip).
+def _stage_after_route(route: str | None) -> str:
+    """The SSE ``status`` stage that begins once the supervisor has picked ``route``.
 
-    A function (not a module-level dict) keeps app.py free of mutable module state — the
-    horizontal-scale invariant in test_statelessness: any instance can serve any request.
+    ``stream_mode="updates"`` only tells us a node FINISHED, so we lead the indicator: when the
+    supervisor completes, the NEXT phase is starting — retrieval for RAG/BOTH, web search for WEB,
+    or straight to synthesis for DIRECT. (Old code emitted a node's own stage on its completion, so
+    "synthesizing" arrived AFTER the last token — always one phase behind the real work.)
     """
-    return {
-        "supervisor": "routing",
-        "vector": "retrieving",
-        "web": "searching web",
-        "synthesis": "synthesizing",
-    }.get(node)
+    r = (route or "").upper()
+    if r == "WEB":
+        return "searching web"
+    if r == "DIRECT":
+        return "synthesizing"  # no retrieval node runs
+    return "retrieving"  # RAG / BOTH (vector runs; web for BOTH is coarse-folded)
 
 
 def _count_context_chunks(state: dict) -> int:
@@ -525,6 +621,47 @@ async def _persist_turn(sessionmaker, session_id: str, user_msg: str, answer: st
         await session.commit()
 
 
+def _spawn_persist(
+    registry: set, sessionmaker, session_id: str, user_msg: str, answer: str
+) -> None:
+    """Fire-and-forget persist for the disconnect/cancel path.
+
+    When the client drops mid-stream the SSE generator is cancelled/closed, so we MUST NOT ``await``
+    inside it: awaiting during ``aclose()`` raises ``RuntimeError('async generator ignored
+    GeneratorExit')`` and awaiting during task cancellation re-raises ``CancelledError`` — either
+    way the turn was silently lost. Scheduling a detached task instead never suspends the generator;
+    the task runs to completion on the event loop with its own DB session. ``registry`` (the
+    per-process ``app.state.background_tasks`` set) holds a strong ref so the loop can't GC it.
+    """
+
+    async def _run() -> None:
+        try:
+            await _persist_turn(sessionmaker, session_id, user_msg, answer)
+        except Exception:
+            logger.error("chat_stream_persist_failed", exc_info=True)
+
+    task = asyncio.ensure_future(_run())
+    registry.add(task)
+    task.add_done_callback(registry.discard)
+
+
+def _take_free_tier_refund(request: Request) -> Callable[[], Awaitable[None]] | None:
+    """Pop the free-tier refund factory recorded on ``request.state`` by get_llm_provider (R16).
+
+    Returns a no-arg coroutine factory that credits the reserved allowance back, or ``None`` if no
+    free-tier reservation was made for this request (BYOK/exhausted) or it was already taken. Popping
+    makes the refund fire **at most once** per turn, so a refund can't double-credit and hand out
+    free budget. This is the single owner of the refund-state lifecycle; callers only decide whether
+    to ``await`` it (failure paths, where awaiting is safe) or schedule it detached (the
+    cancellation/disconnect path, where the generator must not suspend).
+    """
+    factory = getattr(request.state, FREE_TIER_REFUND_STATE_ATTR, None)
+    if factory is None:
+        return None
+    setattr(request.state, FREE_TIER_REFUND_STATE_ATTR, None)
+    return factory
+
+
 @app.post("/api/chat")
 @limiter.limit(settings.RATE_LIMIT_CHAT)
 async def chat(
@@ -570,19 +707,40 @@ async def chat(
     if "text/event-stream" in request.headers.get("accept", ""):
         sessionmaker = request.app.state.db_sessionmaker
 
+        # Commit the resolved session row BEFORE streaming begins. The generator below runs after
+        # this endpoint returns, and its turn/markdown writes open their OWN sessions (see
+        # _persist_turn / _persist_markdown). If the request-scoped db only flushed a brand-new
+        # session row, those fresh sessions can't see it (it commits on dependency teardown, which
+        # for a StreamingResponse runs AFTER the body finishes) → the first turn of every new
+        # session FK-violates and is silently lost. Committing here makes the row durable first.
+        await db.commit()
+
         async def event_stream():
             seen_stages: set[str] = set()
             tokens: list[str] = []
             route: str | None = None
             layers: list[str] = []
-            answered = False
+            disconnected = False
+
+            def _emit_stage(stage: str) -> str | None:
+                """Return an SSE status frame for `stage` the first time it's seen, else None."""
+                if stage in seen_stages:
+                    return None
+                seen_stages.add(stage)
+                return sse_event("status", {"stage": stage})
+
             try:
+                # Routing is in flight from the moment we start streaming — emit it up front rather
+                # than after the supervisor node completes (which is when its `updates` event lands).
+                if frame := _emit_stage("routing"):
+                    yield frame
                 async for mode, chunk in graph.astream(
                     state,
                     stream_mode=["updates", "custom"],
                     config={"configurable": {"stream": True}},
                 ):
                     if await request.is_disconnected():
+                        disconnected = True
                         break
                     if mode == "custom":
                         kind = chunk.get("kind")
@@ -592,35 +750,72 @@ async def chat(
                         elif kind == "component":
                             yield sse_event("component", chunk["data"])
                     elif mode == "updates":
+                        # `updates` signals a node FINISHED → announce the NEXT phase that's starting,
+                        # so the indicator leads the work instead of trailing it (B20).
                         for node, partial in chunk.items():
-                            stage = _node_stage(node)
-                            if stage and stage not in seen_stages:
-                                seen_stages.add(stage)
-                                yield sse_event("status", {"stage": stage})
                             if node == "supervisor" and isinstance(partial, dict):
                                 route = partial.get("route", route)
-                            if node == "synthesis" and isinstance(partial, dict):
+                                if frame := _emit_stage(_stage_after_route(route)):
+                                    yield frame
+                            elif node in ("vector", "web"):
+                                # retrieval done → synthesis is starting (tokens about to stream)
+                                if frame := _emit_stage("synthesizing"):
+                                    yield frame
+                            elif node == "synthesis" and isinstance(partial, dict):
                                 layers = partial.get("layers", layers)
                 final_answer = "".join(tokens).strip()
-                answered = bool(final_answer)
-                yield sse_event("done", {"answer": final_answer, "route": route, "layers": layers})
+                if not disconnected:  # don't push `done` at a client that already went away
+                    yield sse_event(
+                        "done", {"answer": final_answer, "route": route, "layers": layers}
+                    )
+            except (asyncio.CancelledError, GeneratorExit):
+                # Real mid-stream disconnect / generator close: we CANNOT await here (RuntimeError on
+                # aclose, re-raised CancelledError on cancel), so persist what streamed as a detached
+                # task and propagate. This is the turn the old `await` in `finally` silently lost.
+                registry = getattr(request.app.state, "background_tasks", None)
+                if tokens and registry is not None:
+                    _spawn_persist(
+                        registry, sessionmaker, session_id, payload.message, "".join(tokens).strip()
+                    )
+                # R16: an aborted turn that produced NO answer wasted its free-tier reservation —
+                # refund it. We can't await mid-cancel, so schedule the refund as a detached task
+                # (same constraint as the persist above). A turn that already streamed an answer
+                # keeps its reservation (the work was delivered).
+                if not tokens and registry is not None:
+                    if refund := _take_free_tier_refund(request):
+                        task = asyncio.ensure_future(refund())
+                        registry.add(task)
+                        task.add_done_callback(registry.discard)
+                raise
             except Exception as exc:
                 logger.error("chat_stream_failed", exc_info=True)
                 err: dict = {"detail": str(exc)}
                 if isinstance(exc, AppException) and getattr(exc, "code", None):
                     err["code"] = exc.code
                 yield sse_event("error", err)
+                # R16: the turn failed mid-stream — refund the free-tier reservation it consumed so a
+                # failed turn nets zero quota. Ordinary exception (not a BaseException) ⇒ awaiting is
+                # safe here. Best-effort: refund_free_allowance itself fails open on a Redis outage.
+                if refund := _take_free_tier_refund(request):
+                    await refund()
+                # Ordinary exception (not a BaseException) → awaiting is safe; persist synchronously.
+                try:
+                    await _persist_turn(
+                        sessionmaker, session_id, payload.message, "".join(tokens).strip()
+                    )
+                except Exception:
+                    logger.error("chat_stream_persist_failed", exc_info=True)
                 return
-            finally:
-                # Persist the turn from a FRESH session (the request db is closing by now).
-                # Skip if the client disconnected before any answer streamed.
-                if not await request.is_disconnected() or answered:
-                    try:
-                        await _persist_turn(
-                            sessionmaker, session_id, payload.message, "".join(tokens).strip()
-                        )
-                    except Exception:
-                        logger.error("chat_stream_persist_failed", exc_info=True)
+
+            # Normal completion (incl. a polled disconnect that `break`s, NOT a cancellation): no
+            # BaseException is in flight, so awaiting the persist is safe and keeps it synchronous
+            # with the response. The user turn is always saved; the assistant turn only if non-empty.
+            try:
+                await _persist_turn(
+                    sessionmaker, session_id, payload.message, "".join(tokens).strip()
+                )
+            except Exception:
+                logger.error("chat_stream_persist_failed", exc_info=True)
 
         return StreamingResponse(
             event_stream(),
@@ -636,23 +831,45 @@ async def chat(
         try:
             result = await graph.ainvoke(state)
         except (AppException, HTTPException):
+            # LLM errors (LLMError subclasses) and the real free-tier 402 (FreeTierExhaustedError)
+            # are AppExceptions — they pass through with their correct status/message.
+            # R16: the turn failed after consuming its free-tier reservation — refund it so a failed
+            # turn nets zero quota. (FreeTierExhaustedError is raised in the dependency BEFORE this
+            # body, so it never reserved here; _take_free_tier_refund returns None for it.)
+            if refund := _take_free_tier_refund(request):
+                await refund()
             raise
         except Exception as e:
+            # Everything reaching here is NON-quota (DB/Pinecone outage, a code bug). Don't claim a
+            # free-tier limit — that misleads paid BYOK users and hides the real cause (logged).
+            if refund := _take_free_tier_refund(request):
+                await refund()  # R16: the reservation was wasted on a failed turn — give it back.
             logger.error("chat_failed", exc_info=True)
             raise AppException(
-                status_code=500, detail="free tier Limit Reached for API please try again later"
+                status_code=500, detail="The chat request failed unexpectedly. Please try again."
             ) from e
 
         answer = result.get("answer", "")
+        # The graph emits the FLAT route enum (RAG|WEB|BOTH|DIRECT). The frontend's blocking
+        # routeTypeSchema is the combined form and has no "BOTH" — the SSE path maps it client-side,
+        # so the JSON path must map it here too (BOTH → WEB+RAG), else an otherwise-successful
+        # answer fails schema validation and surfaces as an error turn.
+        route = result.get("route")
+        if route == "BOTH":
+            route = "WEB+RAG"
         await repo.save_message(db, session_id=session_id, role="user", content=payload.message)
         if answer:
             await repo.save_message(db, session_id=session_id, role="assistant", content=answer)
         return {
             "answer": answer,
-            "route": result.get("route"),
+            "route": route,
             "context_count": _count_context_chunks(result),
             "session_id": session_id,
             "layers": result.get("layers", []),
+            # Carry the parsed rich components (table/chart/citation/code/callout/media) on the
+            # blocking path too — the SSE path emits them as `component` events, but the JSON path
+            # previously dropped them, so flipping streaming OFF lost every rich block.
+            "components": result.get("components", []),
         }
 
 
@@ -709,6 +926,73 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy", "version": "1.0.0"}
+
+
+# R23: readiness probe. /health is liveness only (the process is up); readiness additionally checks
+# that the backing services are reachable so an orchestrator can pull a pod out of rotation when a
+# dependency (Postgres / Redis / S3 / Pinecone) is down instead of routing traffic into 500s. Each
+# probe is bounded and isolated: one failing dependency is reported without masking the others, and
+# any dependency down → overall 503 (the {detail} envelope the FE understands). Clients are read off
+# app.state (initialized in the lifespan), so this route is purely additive.
+#
+# A module-level float (not a Settings field) bounds each probe — keeps the change inside app.py
+# (config.py untouched) and a scalar constant doesn't trip the statelessness guard (it flags only
+# module-level dict/list/set as possible cross-request state).
+_READINESS_PROBE_TIMEOUT_SECONDS: float = 5.0
+
+
+async def _probe(name: str, coro: Awaitable[Any]) -> tuple[str, bool, str | None]:
+    """Await a single dependency probe; never raises — maps an exception to (name, False, reason)."""
+    try:
+        await asyncio.wait_for(coro, timeout=_READINESS_PROBE_TIMEOUT_SECONDS)
+        return name, True, None
+    except Exception as exc:  # noqa: BLE001 — readiness must report, not propagate
+        logger.warning("readiness_dependency_unhealthy", dependency=name, error=str(exc))
+        return name, False, type(exc).__name__
+
+
+async def _check_db(app_state: Any) -> None:
+    from sqlalchemy import text
+
+    async with app_state.db_sessionmaker() as session:
+        await session.execute(text("SELECT 1"))
+
+
+async def _check_redis(app_state: Any) -> None:
+    await app_state.redis.ping()
+
+
+async def _check_s3(app_state: Any) -> None:
+    # head_object on a sentinel key: a 404 still proves the endpoint+creds are reachable (returns
+    # False, no raise); a connection/credential failure raises and is caught by _probe.
+    await app_state.s3.object_exists("__readiness_probe__")
+
+
+async def _check_pinecone(app_state: Any) -> None:
+    # describe_index_stats reaches Pinecone WITHOUT a vector query — avoids the dummy-vector
+    # state-query anti-pattern that test_no_pinecone_state forbids.
+    await app_state.pinecone.describe_stats()
+
+
+@app.get("/health/ready")
+async def readiness(request: Request):
+    """Readiness: 200 when DB/Redis/S3/Pinecone are all reachable, else 503 with per-dep status."""
+    app_state = request.app.state
+    results = await asyncio.gather(
+        _probe("database", _check_db(app_state)),
+        _probe("redis", _check_redis(app_state)),
+        _probe("s3", _check_s3(app_state)),
+        _probe("pinecone", _check_pinecone(app_state)),
+    )
+    checks = {name: ("up" if ok else "down") for name, ok, _ in results}
+    all_ok = all(ok for _, ok, _ in results)
+    body: dict[str, Any] = {"status": "ready" if all_ok else "unavailable", "checks": checks}
+    if not all_ok:
+        return JSONResponse(
+            status_code=503,
+            content={**body, "detail": "one or more dependencies are unavailable"},
+        )
+    return body
 
 
 if __name__ == "__main__":

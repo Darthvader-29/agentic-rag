@@ -37,6 +37,7 @@ async def process_file_pipeline(
     pinecone: "PineconeClient",
     session_factory,
     user_id: str | None = None,
+    document_id: str | None = None,
 ) -> str:
     """
     1. Mark document PROCESSING in Postgres
@@ -46,6 +47,12 @@ async def process_file_pipeline(
     5. Embed with HuggingFace
     6. Save to Pinecone
     7. Mark document READY (or FAILED on error)
+
+    ``document_id`` (the Document row UUID) makes each chunk's vector id per-document unique
+    (R15). Without it, two same-named files in one session minted identical ids
+    (``{session_id}_{filename}_{i}``) and silently clobbered each other; a shorter re-ingest also
+    left stale high-index chunks that still matched retrieval. Falls back to a filename slug only
+    when no id is supplied (legacy/direct callers); the Celery task always passes the real UUID.
     """
     temp_path = None
     try:
@@ -91,9 +98,13 @@ async def process_file_pipeline(
             )
             raise ValueError("Embedding mismatch")
 
+        # R15: the document UUID makes the vector id per-document unique, so two same-named files
+        # in one session no longer overwrite each other and a re-ingest can't orphan stale chunks.
+        # The id stays prefixed with ``{session_id}_`` so the by-session prefix cleanup still matches.
+        doc_segment = document_id or filename.replace(" ", "_")
         vectors = [
             {
-                "id": f"{session_id}_{filename.replace(' ', '_')}_{i:04d}",
+                "id": f"{session_id}_{doc_segment}_{i:04d}",
                 "values": embedding,
                 "metadata": {
                     "text": chunk,
@@ -101,6 +112,8 @@ async def process_file_pipeline(
                     "session_id": session_id,
                     "chunk_index": i,
                     "s3_key": file_key,
+                    # R15: stamp the document id so a single document's chunks can be targeted.
+                    **({"document_id": document_id} if document_id else {}),
                     # Tenant scoping: stamp the owner so search can filter by user_id. Pinecone
                     # rejects null metadata, so only set it when the owner is known.
                     **({"user_id": user_id} if user_id else {}),

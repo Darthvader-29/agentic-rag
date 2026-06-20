@@ -27,6 +27,7 @@ vi.mock("@/lib/sse/stream-chat", () => ({
 
 import { useChatStore } from "@/features/chat/store/chat.store";
 import { useStreamingChat } from "@/features/chat/hooks/use-streaming-chat";
+import { streamChat } from "@/lib/sse/stream-chat";
 
 const wrapper = ({ children }: { children: ReactNode }) => (
   <QueryClientProvider client={new QueryClient()}>
@@ -53,6 +54,8 @@ describe("useStreamingChat end-to-end", () => {
       "retrieving",
       "synthesizing",
     ]);
+    // B22: after a completed stream NO step is still "active" — the "Thinking…" spinner stops.
+    expect(assistant.steps.every((s) => s.state !== "active")).toBe(true);
     // Sources are DERIVED from the citation component (09 §5: citation = sources channel).
     expect(assistant.sources).toHaveLength(1);
     expect(assistant.sources[0].title).toBe("doc.pdf · p.4");
@@ -60,5 +63,69 @@ describe("useStreamingChat end-to-end", () => {
     expect(assistant.components).toHaveLength(1);
     expect(assistant.components![0].type).toBe("citation");
     expect(useChatStore.getState().isStreaming).toBe(false);
+  });
+
+  it("keeps streamed content when done.answer is empty (B26)", async () => {
+    useChatStore.setState({ messages: [], isStreaming: false });
+    vi.mocked(streamChat).mockImplementationOnce(
+      async (_payload: unknown, h: Record<string, (...a: unknown[]) => void>) => {
+        h.onToken?.("Hello");
+        h.onToken?.(" world");
+        h.onDone?.({ answer: "", route: "RAG" }); // empty done.answer must not wipe content
+      }
+    );
+
+    const { result } = renderHook(() => useStreamingChat(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("q", false);
+    });
+
+    const assistant = useChatStore
+      .getState()
+      .messages.find((m) => m.role === "assistant")!;
+    expect(assistant.content).toBe("Hello world"); // streamed accumulation preserved
+    expect(assistant.status).toBe("done");
+  });
+
+  it("a single done.layer fills the citation source's provenance layer (B07)", async () => {
+    useChatStore.setState({ messages: [], isStreaming: false });
+    vi.mocked(streamChat).mockImplementationOnce(
+      async (_payload: unknown, h: Record<string, (...a: unknown[]) => void>) => {
+        h.onComponent?.({ type: "citation", items: [{ label: "doc.pdf · p.4" }] });
+        h.onDone?.({ answer: "A.", route: "RAG", layers: ["vector"] });
+      }
+    );
+
+    const { result } = renderHook(() => useStreamingChat(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("q", false);
+    });
+
+    const assistant = useChatStore
+      .getState()
+      .messages.find((m) => m.role === "assistant")!;
+    expect(assistant.sources).toHaveLength(1);
+    expect(assistant.sources[0].layer).toBe("vector"); // single contributing layer → attributed
+  });
+
+  it("multiple done.layers do NOT guess a per-source layer (B07)", async () => {
+    useChatStore.setState({ messages: [], isStreaming: false });
+    vi.mocked(streamChat).mockImplementationOnce(
+      async (_payload: unknown, h: Record<string, (...a: unknown[]) => void>) => {
+        h.onComponent?.({ type: "citation", items: [{ label: "doc.pdf · p.4" }] });
+        h.onDone?.({ answer: "A.", route: "BOTH", layers: ["vector", "web"] });
+      }
+    );
+
+    const { result } = renderHook(() => useStreamingChat(), { wrapper });
+    await act(async () => {
+      await result.current.sendMessage("q", false);
+    });
+
+    const assistant = useChatStore
+      .getState()
+      .messages.find((m) => m.role === "assistant")!;
+    expect(assistant.sources).toHaveLength(1);
+    expect(assistant.sources[0].layer).toBeUndefined(); // ambiguous set → left to citations
   });
 });

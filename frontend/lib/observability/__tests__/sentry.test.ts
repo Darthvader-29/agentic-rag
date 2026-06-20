@@ -111,6 +111,10 @@ describe("Sentry init runs only when BOTH a DSN and the flag are present", () =>
     expect(opts.dsn).toBe("https://abc@o1.ingest.sentry.io/1");
     expect(opts.environment).toBe("production");
     expect(typeof opts.tracesSampleRate).toBe("number");
+    // PII scrubbing (H-F9): default PII off + a beforeSend/beforeSendBreadcrumb scrubber wired in.
+    expect(opts.sendDefaultPii).toBe(false);
+    expect(typeof opts.beforeSend).toBe("function");
+    expect(typeof opts.beforeSendBreadcrumb).toBe("function");
     // extraOptions are merged through.
     expect(opts.integrations).toEqual([]);
   });
@@ -189,5 +193,76 @@ describe("capture* helpers forward to the SDK when enabled", () => {
     const id = "c".repeat(32);
     setTraceTag(id);
     expect(setTagSpy).toHaveBeenCalledWith("trace_id", id);
+  });
+});
+
+// ---- PII scrubbing (H-F9 / R11) --------------------------------------------------------------
+
+describe("beforeSend scrubs PII from an outgoing event", () => {
+  it("masks emails, drops prompt/session keys, strips request query, and minimizes user", async () => {
+    const { scrubEvent } = await loadSentry();
+
+    const event = {
+      message: "failed for ada@example.com while sending",
+      request: {
+        url: "https://app.example/api/chat?next=/secret&session_id=abc123",
+        query_string: "session_id=abc123",
+        headers: { authorization: "Bearer secrettoken", "x-trace": "ok" },
+        data: { message: "my private prompt", note: "ping bob@corp.io" },
+      },
+      user: { id: "user-1", email: "ada@example.com", ip_address: "1.2.3.4" },
+      extra: {
+        prompt: "another private prompt",
+        rag_session_id: "sess-xyz",
+        safe: "keep me",
+      },
+      contexts: { custom: { email: "carol@example.com" } },
+    } as unknown as Parameters<typeof scrubEvent>[0];
+
+    const out = scrubEvent(event);
+
+    // email masked in the message
+    expect(out.message).not.toContain("ada@example.com");
+    expect(out.message).toContain("[redacted]");
+    // request url query stripped (no ?next / session_id leakage), path kept
+    expect(out.request?.url).toBe("https://app.example/api/chat");
+    expect(out.request?.query_string).toBe("[redacted]");
+    // authorization header redacted, benign header kept
+    const headers = out.request?.headers as Record<string, string>;
+    expect(headers.authorization).toBe("[redacted]");
+    expect(headers["x-trace"]).toBe("ok");
+    // prompt-bearing body key dropped; remaining string still email-masked
+    const data = out.request?.data as Record<string, string>;
+    expect(data.message).toBe("[redacted]");
+    expect(data.note).not.toContain("bob@corp.io");
+    // user minimized to opaque id only (no email / ip)
+    expect(out.user).toEqual({ id: "user-1" });
+    // extra: sensitive keys dropped, benign value preserved
+    const extra = out.extra as Record<string, unknown>;
+    expect(extra.prompt).toBe("[redacted]");
+    expect(extra.rag_session_id).toBe("[redacted]");
+    expect(extra.safe).toBe("keep me");
+    // nested contexts scrubbed too
+    expect(JSON.stringify(out.contexts)).not.toContain("carol@example.com");
+  });
+});
+
+describe("beforeSendBreadcrumb scrubs PII from a breadcrumb", () => {
+  it("strips the query (session ids) off a fetch URL and masks emails", async () => {
+    const { scrubBreadcrumb } = await loadSentry();
+    const crumb = {
+      category: "fetch",
+      message: "GET for ada@example.com",
+      data: {
+        url: "https://app.example/api/sessions/abc/memory?session_id=sess-1",
+        method: "GET",
+      },
+    } as unknown as Parameters<typeof scrubBreadcrumb>[0];
+
+    const out = scrubBreadcrumb(crumb);
+    const data = out.data as Record<string, string>;
+    expect(data.url).toBe("https://app.example/api/sessions/abc/memory");
+    expect(data.url).not.toContain("session_id");
+    expect(out.message).not.toContain("ada@example.com");
   });
 });

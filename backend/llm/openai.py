@@ -28,7 +28,10 @@ class OpenAIProvider(BaseLLMProvider):
     _UNAVAILABLE_STATUSES = frozenset({500, 502, 503})
 
     def _build_client(self, api_key: str) -> None:
-        self._client = AsyncOpenAI(api_key=api_key)
+        # R12: explicit per-request timeout so a hung upstream can't pin the request forever.
+        # The SDK's own retry loop is disabled (max_retries=0) — the base class owns retry/backoff
+        # via tenacity so exhaustion maps to the neutral taxonomy (not a raw SDK error).
+        self._client = AsyncOpenAI(api_key=api_key, timeout=self._timeout_seconds, max_retries=0)
 
     async def _call(
         self, model: str, system: str, user: str, *, max_tokens: int | None = None

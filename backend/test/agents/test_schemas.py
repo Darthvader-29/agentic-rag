@@ -26,8 +26,89 @@ def test_validate_component_valid_callout_fills_default_level():
     assert out == {"type": "callout", "level": "info", "text": "heads up"}
 
 
+def test_validate_component_preserves_optional_ui_fields():
+    """B08: optional UI fields (citation url/layer, media caption, callout/chart title, table
+    caption) must SURVIVE validation — the old models dropped them, killing link-outs + badges."""
+    cit = validate_component(
+        {
+            "type": "citation",
+            "items": [
+                {
+                    "label": "doc.pdf",
+                    "source_id": "s1",
+                    "url": "https://example.com/doc",
+                    "layer": "vector",
+                }
+            ],
+        }
+    )
+    assert cit is not None
+    assert cit["items"][0]["url"] == "https://example.com/doc"
+    assert cit["items"][0]["layer"] == "vector"
+
+    media = validate_component(
+        {"type": "media", "items": [{"url": "https://cdn/x.png", "caption": "Figure 1"}]}
+    )
+    assert media is not None
+    assert media["items"][0]["caption"] == "Figure 1"
+
+    callout = validate_component({"type": "callout", "text": "body", "title": "Heads up"})
+    assert callout is not None and callout["title"] == "Heads up"
+
+    chart = validate_component(
+        {
+            "type": "chart",
+            "chart": "bar",
+            "x": ["a"],
+            "series": [{"name": "s", "y": [1.0]}],
+            "title": "Quarterly",
+        }
+    )
+    assert chart is not None and chart["title"] == "Quarterly"
+
+    table = validate_component(
+        {"type": "table", "columns": ["A"], "rows": [["1"]], "caption": "Metrics"}
+    )
+    assert table is not None and table["caption"] == "Metrics"
+
+
+def test_validate_component_omits_absent_optional_fields():
+    """Absent optionals stay omitted (exclude_none) — the wire shape is unchanged when unused."""
+    out = validate_component({"type": "citation", "items": [{"label": "d", "source_id": "s"}]})
+    assert out == {"type": "citation", "items": [{"label": "d", "source_id": "s", "snippet": ""}]}
+    assert "url" not in out["items"][0] and "layer" not in out["items"][0]
+
+
 def test_validate_component_unknown_type_returns_none():
     assert validate_component({"type": "banana", "text": "x"}) is None
+
+
+def test_citation_disarms_unsafe_url():
+    """R06: a non-http(s) citation url is disarmed to None (citation kept, unsafe link dropped)."""
+    out = validate_component(
+        {
+            "type": "citation",
+            "items": [{"label": "evil", "source_id": "s", "url": "javascript:alert(1)"}],
+        }
+    )
+    assert out is not None
+    assert "url" not in out["items"][0]  # disarmed → None → excluded by exclude_none
+
+
+def test_media_drops_unsafe_url_items():
+    """R06: media items whose url isn't http(s) are filtered out; safe ones survive."""
+    out = validate_component(
+        {
+            "type": "media",
+            "items": [
+                {"url": "https://cdn/ok.png"},
+                {"url": "javascript:alert(1)"},
+                {"url": "data:text/html,x"},
+            ],
+        }
+    )
+    assert out is not None
+    assert [it["url"] for it in out["items"]] == ["https://cdn/ok.png"]
 
 
 def test_validate_component_missing_type_returns_none():

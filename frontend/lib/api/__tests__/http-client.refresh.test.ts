@@ -165,6 +165,34 @@ describe("http-client auth interceptor (flag on)", () => {
     ).toContain("/login");
   });
 
+  it("refresh hits a NETWORK error → keeps tokens, no redirect, propagates retryable (B04)", async () => {
+    installFetch([
+      { match: (u) => u.endsWith("/chat"), respond: () => json(401, {}) },
+      {
+        match: (u) => u.endsWith("/auth/refresh"),
+        respond: () => {
+          // simulate fetch throwing (offline / DNS / wifi reconnecting after sleep)
+          throw new TypeError("Failed to fetch");
+        },
+      },
+    ]);
+
+    const err = await request("/chat", {
+      method: "POST",
+      auth: true,
+      schema: okSchema,
+    }).catch((e: unknown) => e);
+
+    // a transient blip surfaces as a retryable network error, NOT a session-ending unauthorized
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).kind).toBe("network");
+    // tokens MUST survive — a guest has no way to sign back in if these are wiped
+    expect(useAuthStore.getState().accessToken).toBe("access-old");
+    expect(useAuthStore.getState().refreshToken).toBe("refresh-1");
+    // and no forced redirect to the login wall
+    expect(window.location.assign as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
+
   it("retry that 401s again does NOT trigger a second refresh (loop-free)", async () => {
     let refreshCount = 0;
     installFetch([

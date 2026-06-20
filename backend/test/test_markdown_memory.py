@@ -5,6 +5,7 @@ MarkdownMemory opens its own session per call, so these use a real sessionmaker 
 FK; unique session ids per test keep them independent, and each cleans up after itself.
 """
 
+import asyncio
 import uuid
 
 import pytest
@@ -72,6 +73,26 @@ async def test_append_is_bounded(factory):
     try:
         await mem.append(sid, "x" * 50)
         assert len(await mem.read(sid)) <= 20
+    finally:
+        await _cleanup(factory, sid)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_append_keeps_both_notes(factory):
+    """B21: two concurrent FIRST appends (no row yet) must BOTH persist via the atomic upsert.
+
+    The old SELECT ... FOR UPDATE then INSERT locked nothing (no row to lock), so both took the
+    INSERT branch → duplicate-PK IntegrityError → one note dropped (or the request errored).
+    """
+    sid = "mem-concurrent-first"
+    await _make_session(factory, sid)
+    mem = MarkdownMemory(factory, max_chars=8000)
+    try:
+        # each append opens its own session → genuine concurrent first-writes against the row
+        await asyncio.gather(mem.append(sid, "note-A"), mem.append(sid, "note-B"))
+        content = await mem.read(sid)
+        assert "note-A" in content
+        assert "note-B" in content
     finally:
         await _cleanup(factory, sid)
 

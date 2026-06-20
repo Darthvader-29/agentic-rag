@@ -4,6 +4,7 @@ Uses the `bcrypt` library directly (passlib 1.7.4 is incompatible with bcrypt â‰
 bcrypt silently truncates passwords at 72 bytes â€” keep passwords under that limit.
 """
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
@@ -32,10 +33,14 @@ def verify_password(raw: str, hashed: str) -> bool:
 def _create_token(subject: str, token_type: str, ttl: timedelta, is_guest: bool) -> str:
     now = datetime.now(UTC)
     # is_guest lets the client tell an anonymous session from a registered one after a reload.
+    # jti is a unique token id so a specific token can be revoked (logout denylist, R03).
     payload = {
         "sub": subject,
         "type": token_type,
         "is_guest": is_guest,
+        "jti": uuid.uuid4().hex,
+        "aud": settings.JWT_AUDIENCE,  # R04: bind the token to this service
+        "iss": settings.JWT_ISSUER,
         "iat": now,
         "exp": now + ttl,
     }
@@ -69,6 +74,8 @@ def decode_token(token: str) -> dict:
         token,
         settings.JWT_SECRET,
         algorithms=[settings.JWT_ALGORITHM],
+        audience=settings.JWT_AUDIENCE,  # R04: reject a token minted for another aud/iss
+        issuer=settings.JWT_ISSUER,
         leeway=10,  # small skew tolerance for multi-instance deployments
     )
 

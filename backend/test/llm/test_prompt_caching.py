@@ -97,6 +97,9 @@ async def test_anthropic_stream_caches_system_block():
 
     inner = MagicMock()
     inner.text_stream = _text_gen()
+    final_msg = MagicMock()
+    final_msg.stop_reason = "end_turn"  # R14: adapter inspects stop_reason after draining
+    inner.get_final_message = AsyncMock(return_value=final_msg)
     stream_cm = AsyncMock()
     stream_cm.__aenter__.return_value = inner
     stream_cm.__aexit__.return_value = False

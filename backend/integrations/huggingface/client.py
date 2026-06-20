@@ -10,14 +10,16 @@ import numpy as np
 from huggingface_hub import InferenceClient
 from tenacity import retry
 
-from integrations._retry import RETRY_KW
+from integrations._retry import READ_TIMEOUT, RETRY_KW
 
 _MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 class HuggingFaceClient:
     def __init__(self, *, token: str):
-        self._client = InferenceClient(model=_MODEL, token=token)
+        # InferenceClient takes a single overall timeout (seconds); without it a hung
+        # Inference API call would loop forever and the @retry below could never fire.
+        self._client = InferenceClient(model=_MODEL, token=token, timeout=READ_TIMEOUT)
 
     @classmethod
     def from_settings(cls, settings) -> "HuggingFaceClient":

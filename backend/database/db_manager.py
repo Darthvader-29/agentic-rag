@@ -52,6 +52,16 @@ class PineconeClient:
             self._ensure_index_sync()
         return self._index
 
+    @retry(**_RETRY)
+    def _describe_stats_sync(self) -> object:
+        # Reachability probe (R23): describe_index_stats() reaches Pinecone WITHOUT a vector query,
+        # avoiding the dummy-vector state-query anti-pattern (see test_no_pinecone_state).
+        return self._index_or_raise().describe_index_stats()
+
+    async def describe_stats(self) -> object:
+        """Probe Pinecone reachability for the readiness check; the caller only cares it doesn't raise."""
+        return await asyncio.to_thread(self._describe_stats_sync)
+
     # ── vectors ──────────────────────────────────────────────────────────────
 
     @retry(**_RETRY)
@@ -109,12 +119,22 @@ class PineconeClient:
 
     @retry(**_RETRY)
     def _delete_vectors_sync(self, session_id: str) -> None:
+        """Delete every vector for a session.
+
+        Serverless indexes REJECT delete-by-metadata-filter, so we enumerate this session's vector
+        ids by prefix (ids are ``f"{session_id}_{document_id}_{i:04d}"`` — see preprocessing, R15)
+        and delete them by id, which serverless does support. The ``{session_id}_`` prefix still
+        covers every document in the session, so this by-session cleanup is unchanged by R15.
+        Errors propagate (no inner swallow) so tenacity retries and the caller learns of a real
+        failure instead of a false "cleaned".
+        """
         index = self._index_or_raise()
-        try:
-            index.delete(filter={"session_id": {"$eq": session_id}})
-            logger.info("pinecone_vectors_deleted", session_id=session_id)
-        except Exception:
-            logger.error("pinecone_delete_error", exc_info=True)
+        ids: list[str] = []
+        for page in index.list(prefix=f"{session_id}_"):
+            ids.extend(page)  # `list` yields pages (lists) of ids
+        for i in range(0, len(ids), 1000):
+            index.delete(ids=ids[i : i + 1000])
+        logger.info("pinecone_vectors_deleted", session_id=session_id, count=len(ids))
 
     async def delete_vectors_by_session(self, session_id: str) -> None:
         await asyncio.to_thread(self._delete_vectors_sync, session_id)

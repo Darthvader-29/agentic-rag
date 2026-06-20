@@ -5,6 +5,7 @@ The decrypted key must never appear in the provider's repr.
 """
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis as fakeredis
@@ -14,7 +15,11 @@ from auth.crypto import encrypt_key
 from config import settings
 from database.models import User, UserLLMKey
 from exceptions import FreeTierExhaustedError
-from llm.dependencies import get_llm_provider
+from llm.dependencies import (
+    FREE_TIER_REFUND_STATE_ATTR,
+    get_llm_provider,
+    resolve_provider,
+)
 
 
 def _fake_user() -> User:
@@ -144,6 +149,91 @@ async def test_fallback_set_but_allowance_used_raises_402(mock_get_key, mock_all
     mock_allow.assert_awaited_once()
 
 
+# ── B05: per-conversation provider/model pick ────────────────────────────────
+
+
+@pytest.mark.asyncio
+@patch("llm.dependencies.get_user_llm_key_for_provider", new_callable=AsyncMock)
+@patch("llm.anthropic.AsyncAnthropic")
+async def test_provider_pick_honored_with_stored_key(mock_anthropic_cls, mock_get_for):
+    """A picked provider the user holds a key for is used; the picked model becomes synth_model."""
+    user = _fake_user()
+    mock_get_for.return_value = _fake_key_row(provider="anthropic", plaintext="sk-ant")
+    db = AsyncMock()
+
+    provider = await resolve_provider(
+        db, _fresh_redis(), user, provider_choice="anthropic", model_choice="claude-picked"
+    )
+
+    assert provider.__class__.__name__ == "AnthropicProvider"
+    assert provider._synth_model == "claude-picked"  # picked model → synthesis model
+    assert provider._route_model == settings.tier_route_model("anthropic")  # routing stays tiered
+    mock_get_for.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("llm.dependencies.get_user_llm_key", new_callable=AsyncMock)
+@patch("llm.dependencies.get_user_llm_key_for_provider", new_callable=AsyncMock)
+@patch("llm.openai.AsyncOpenAI")
+async def test_provider_pick_without_matching_key_falls_through(
+    mock_openai_cls, mock_get_for, mock_get_key
+):
+    """Picking a provider the user has NO key for falls through to a stored key — never 500s."""
+    user = _fake_user()
+    mock_get_for.return_value = None  # no anthropic key
+    mock_get_key.return_value = _fake_key_row(provider="openai", plaintext="sk-test")
+    db = AsyncMock()
+
+    provider = await resolve_provider(
+        db, _fresh_redis(), user, provider_choice="anthropic", model_choice="x"
+    )
+
+    assert provider.__class__.__name__ == "OpenAIProvider"  # fell through to the held key
+    mock_get_for.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("llm.dependencies.get_user_llm_key_for_provider", new_callable=AsyncMock)
+@patch("llm.openai.AsyncOpenAI")
+async def test_provider_pick_without_model_uses_tiered_synth(mock_openai_cls, mock_get_for):
+    """Picking a provider but no model keeps the provider's tiered synth model."""
+    user = _fake_user()
+    mock_get_for.return_value = _fake_key_row(provider="openai", plaintext="sk-test")
+    db = AsyncMock()
+
+    provider = await resolve_provider(
+        db, _fresh_redis(), user, provider_choice="openai", model_choice=None
+    )
+
+    assert provider.__class__.__name__ == "OpenAIProvider"
+    assert provider._synth_model == settings.tier_synth_model("openai")
+    mock_get_for.assert_awaited_once()
+
+
+# ── B13: undecryptable stored key → clear error, not a bare 500 ───────────────
+
+
+@pytest.mark.asyncio
+@patch("llm.dependencies.get_user_llm_key", new_callable=AsyncMock)
+async def test_undecryptable_key_raises_clear_error(mock_get_key):
+    """A rotated master key / corrupt ciphertext surfaces a clear 400 (code key_decryption_failed)
+    telling the user to re-enter the key — not an unhandled InvalidToken → bare 500."""
+    from exceptions import KeyDecryptionError
+
+    user = _fake_user()
+    row = MagicMock(spec=UserLLMKey)
+    row.provider = "openai"
+    row.ciphertext = "not-a-valid-fernet-token"  # decrypt_key will raise InvalidToken
+    mock_get_key.return_value = row
+    db = AsyncMock()
+
+    with pytest.raises(KeyDecryptionError) as exc_info:
+        await resolve_provider(db, _fresh_redis(), user)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.code == "key_decryption_failed"
+
+
 # ── No-key-leak invariant ─────────────────────────────────────────────────────
 
 
@@ -160,3 +250,64 @@ async def test_decrypted_byok_key_never_in_repr(mock_anthropic_cls, mock_get_key
 
     assert secret not in repr(provider)
     assert secret not in str(provider)
+
+
+# ── R16: free-tier reservation records a refund factory on request.state ──────
+
+
+def _fake_request_with_state() -> SimpleNamespace:
+    """A minimal stand-in for a FastAPI Request whose ``.state`` accepts attribute writes.
+
+    ``request.json()`` returns an empty dict so _read_model_selection sees no provider/model pick.
+    """
+
+    async def _json() -> dict:
+        return {}
+
+    return SimpleNamespace(state=SimpleNamespace(), json=_json)
+
+
+@pytest.mark.asyncio
+@patch("llm.dependencies.within_free_allowance", new_callable=AsyncMock)
+@patch("llm.dependencies.get_user_llm_key", new_callable=AsyncMock)
+@patch("llm.gemini.genai.Client")
+async def test_free_tier_records_refund_on_request_state(mock_gemini, mock_get_key, mock_allow):
+    """When the free tier is reserved, a no-arg refund factory is stashed on request.state (R16)."""
+    mock_get_key.return_value = None
+    mock_allow.return_value = True
+    user = _fake_user()
+    db = AsyncMock()
+    request = _fake_request_with_state()
+    redis = _fresh_redis()
+
+    with patch("llm.dependencies.settings") as s:
+        s.FREE_TIER_MODEL = "gemini-2.5-flash"
+        s.LLM_FALLBACK_API_KEY = MagicMock()
+        s.LLM_FALLBACK_API_KEY.get_secret_value.return_value = "sk-fallback"
+
+        await get_llm_provider(request=request, user=user, db=db, redis=redis)
+
+    factory = getattr(request.state, FREE_TIER_REFUND_STATE_ATTR, None)
+    assert factory is not None  # the reservation registered a refund hook
+
+    # The factory, when invoked, calls refund_free_allowance(redis, user.id).
+    with patch("llm.dependencies.refund_free_allowance", new_callable=AsyncMock) as mock_refund:
+        # Rebuild the factory under the patch so it picks up the mock (closure binds by name).
+        await get_llm_provider(request=request, user=user, db=db, redis=redis)
+        await getattr(request.state, FREE_TIER_REFUND_STATE_ATTR)()
+        mock_refund.assert_awaited_once_with(redis, user.id)
+
+
+@pytest.mark.asyncio
+@patch("llm.dependencies.get_user_llm_key", new_callable=AsyncMock)
+@patch("llm.openai.AsyncOpenAI")
+async def test_byok_records_no_refund_on_request_state(mock_openai, mock_get_key):
+    """BYOK consumes no shared quota → no refund factory is recorded (nothing to give back)."""
+    mock_get_key.return_value = _fake_key_row(provider="openai")
+    user = _fake_user()
+    db = AsyncMock()
+    request = _fake_request_with_state()
+
+    await get_llm_provider(request=request, user=user, db=db, redis=_fresh_redis())
+
+    assert getattr(request.state, FREE_TIER_REFUND_STATE_ATTR, None) is None

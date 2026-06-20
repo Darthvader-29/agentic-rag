@@ -2,17 +2,8 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { isSafeHttpUrl } from "@/lib/url";
 import type { MediaSpec } from "./component.schemas";
-
-/** Defense-in-depth over the schema: only ever load http(s) URLs (no data:, blob:, javascript:). */
-function isSafeHttpUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return u.protocol === "https:" || u.protocol === "http:";
-  } catch {
-    return false;
-  }
-}
 
 export function MediaComponent({ spec }: { spec: MediaSpec }) {
   const items = spec.items.filter((it) => isSafeHttpUrl(it.url));
