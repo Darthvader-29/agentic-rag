@@ -37,15 +37,16 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 
 ## Priority 0 — Release blockers (operational; do BEFORE the code loop)
 
-### REL-1 — Nothing is merged to `main`: tenant-isolation fix + all 26 bug fixes are stranded
-- **Status:** TODO
+### REL-1 — Merged to `main`: tenant-isolation fix + all 26 bug fixes are shipped
+- **Status:** DONE — merged via PR #2 (merge commit `5d302b8`, 2026-06-20)
 - **Type:** operational (no regression test; exit = CI green)
-- **Detail:** `main` (86 commits, tip `2c3bd91`) has the feature code but **not** the security
-  fix (`689814a`, C1/C2/C3 tenant isolation + auth contract) nor B01–B26. `fix/bug-sweep` =
-  `main` + 28 commits and `fix/bug-sweep..main` is **empty** → clean fast-forward.
-- **Action:** review and merge `fix/bug-sweep` → `main` (open the PR if a review gate is wanted;
-  otherwise `git merge --ff-only`). Confirm frontend CI + Jenkins are green on the merge commit.
-- **Exit:** `git log main..fix/bug-sweep` is empty; CI green on `main`.
+- **Detail:** `fix/bug-sweep` has been merged into `main`. The security fix (`689814a`, C1/C2/C3
+  tenant isolation + auth contract) and B01–B26 are now reachable from the `main` tip (`689814a`
+  is an ancestor of `main`), so nothing is stranded any more. `git rev-list main..fix/bug-sweep`
+  is **empty** (0 commits) and `main` is one merge commit ahead of `fix/bug-sweep`.
+- **Action:** none remaining. (Was: review + merge `fix/bug-sweep` → `main`.) Keep confirming
+  frontend CI + Jenkins stay green on `main`.
+- **Exit:** ✅ `git log main..fix/bug-sweep` is empty; the merge is on `main`.
 
 ### REL-2 — Rotate secrets that were baked into the Docker image; add `.dockerignore`
 - **Status:** TODO
@@ -273,7 +274,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
 
 ### R20 — Frontend CI never runs the test suite
 - **Status:** DONE — a17928a (track T7)
-- **Severity:** MEDIUM · `CODE_REVIEW.md` H-F8 · `SUGGESTIONS.md`
+- **Severity:** MEDIUM · `CODE_REVIEW.md` H-F8 · `frontend/SUGGESTIONS.md`
 - **Files:** `frontend/.github/workflows/ci.yml` (lint/format/typecheck/build only).
 - **Goal/approach:** Add a `npm run test -- run` (vitest) step to the `quality` job; ~40 test files
   currently never gate a PR.
@@ -373,7 +374,7 @@ Branch: continue on `fix/bug-sweep` (or cut a `feat/remaining-work` off it once 
   Authorization header. Needs a choice: short-lived token in the beacon body + a body-token auth
   path, or drop the beacon and rely on a server-side session TTL/sweeper. (Carried from `BUGFIX_QUEUE.md`.)
 - **R10 (tokens → BFF/httpOnly cookies)** if you don't take the architectural change now.
-- **Hosting/CICD migration (Render → AWS)** — infra decision (`frontend/README.md`, `SUGGESTIONS.md`).
+- **Hosting/CICD migration (Render → AWS)** — infra decision (`frontend/README.md`, `frontend/SUGGESTIONS.md`).
 - **PII / consent on entity extraction** — full doc text is sent to the operator's Gemini key by
   default; needs a per-user consent/PII-gating policy call (`CODE_REVIEW.md`).
 

@@ -6,7 +6,7 @@ BYOK, rich components, insights panels).
 
 ```
 agentic-rag/
-├── backend/    # FastAPI + LangGraph + Celery (Python, uv)        — see backend/CLAUDE.md
+├── backend/    # FastAPI + LangGraph + Celery (Python, uv)        — see backend/README.md
 └── frontend/   # Next.js + TanStack Query + Zustand + Zod (npm)
 ```
 
@@ -20,7 +20,7 @@ and `frontend/`).
 - A Postgres database (the project uses NeonDB) and the API keys listed in `backend/.env.example`
 
 ## Environment
-- **Backend:** copy `backend/.env.example` → `backend/.env` and fill it in (see `backend/CLAUDE.md`
+- **Backend:** copy `backend/.env.example` → `backend/.env` and fill it in (see `backend/README.md`
   for the full variable list). Object storage is **S3-compatible** — local dev uses MinIO
   (auto-targeted at `http://localhost:9000` when `ENVIRONMENT=development`), production uses
   Backblaze B2 (`S3_ENDPOINT_URL` selects the backend).
@@ -57,4 +57,4 @@ cd backend && uv run pytest && uv run ruff check . && uv run mypy .
 cd frontend && npm run typecheck && npm run lint && npm test
 ```
 
-See `backend/CLAUDE.md` for backend architecture and the phase-by-phase upgrade history.
+See `backend/README.md` for backend architecture and the phase-by-phase upgrade history.
