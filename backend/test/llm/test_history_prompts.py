@@ -18,10 +18,12 @@ from collections.abc import AsyncIterator
 import pytest
 
 from llm._prompts import (
+    REWRITE_SYSTEM,
     ROUTING_SYSTEM,
     _format_history,
     generation_system,
     generation_user,
+    rewrite_user,
     routing_user,
 )
 from llm.base import BaseLLMProvider
@@ -89,6 +91,26 @@ def test_routing_user_includes_history_in_variable_suffix():
     assert out.index(_APOLLO) < out.index(_FOLLOWUP)
     # The stable cached rubric must NOT carry per-request history.
     assert _APOLLO not in ROUTING_SYSTEM
+
+
+# ── rewrite prompt ────────────────────────────────────────────────────────────
+
+
+def test_rewrite_user_includes_history_and_query():
+    """The rewrite's variable suffix carries the conversation + the latest message (in that order);
+    the stable REWRITE_SYSTEM prefix never does (prefix-cache invariant)."""
+    out = rewrite_user(_FOLLOWUP, _HISTORY)
+    assert _APOLLO in out
+    assert _FOLLOWUP in out
+    assert out.index(_APOLLO) < out.index(_FOLLOWUP)  # history precedes the latest message
+    assert _APOLLO not in REWRITE_SYSTEM
+
+
+def test_rewrite_user_without_history_is_just_the_query():
+    """No history → the suffix is only the latest message, with no conversation header."""
+    out = rewrite_user(_FOLLOWUP, None)
+    assert _FOLLOWUP in out
+    assert "CONVERSATION SO FAR" not in out
 
 
 # ── generation prompt ─────────────────────────────────────────────────────────
@@ -159,3 +181,27 @@ async def test_history_threads_through_stream():
     _ = [c async for c in p.stream(_FOLLOWUP, "", "DIRECT", history=_HISTORY)]
     _, user = p.calls[-1]
     assert _APOLLO in user
+
+
+@pytest.mark.asyncio
+async def test_history_threads_through_rewrite_query():
+    """rewrite_query feeds the stable REWRITE_SYSTEM prefix + a history-bearing user suffix to the
+    SDK, and returns the model's standalone query."""
+    p = _CapturingProvider(api_key="x")
+    out = await p.rewrite_query(_FOLLOWUP, history=_HISTORY)
+    system, user = p.calls[-1]
+    assert system == REWRITE_SYSTEM  # stable rubric untouched
+    assert _APOLLO in user  # history reached the variable suffix
+    assert _APOLLO not in system
+    assert _FOLLOWUP in user
+    assert out == "DIRECT"  # _CapturingProvider._call returns "DIRECT" → stripped, non-empty
+
+
+@pytest.mark.asyncio
+async def test_rewrite_query_without_history_skips_sdk_call():
+    """No history → nothing to resolve: rewrite_query returns the query unchanged and never calls
+    the SDK (keeps single-turn requests free and identical to the pre-rewrite path)."""
+    p = _CapturingProvider(api_key="x")
+    out = await p.rewrite_query("standalone question?", history=None)
+    assert out == "standalone question?"
+    assert p.calls == []

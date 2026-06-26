@@ -44,10 +44,12 @@ from exceptions import (
     LLMUnavailableError,
 )
 from llm._prompts import (
+    REWRITE_SYSTEM,
     ROUTING_SYSTEM,
     History,
     generation_system_user,
     normalize_decision,
+    rewrite_user,
     routing_user,
 )
 
@@ -69,6 +71,10 @@ class LLMProvider(Protocol):
         self, query: str, *, has_documents: bool, web_allowed: bool, history: History | None = None
     ) -> Route:
         """Classify a query into RAG / WEB / DIRECT."""
+        ...
+
+    async def rewrite_query(self, query: str, *, history: History | None = None) -> str:
+        """Rewrite a follow-up query into a standalone retrieval string using recent history."""
         ...
 
     async def generate(
@@ -110,6 +116,9 @@ class BaseLLMProvider:
     # Generation token budgets (Anthropic requires an explicit max_tokens; OpenAI/Gemini ignore).
     _ROUTE_MAX_TOKENS: int | None = None
     _GENERATE_MAX_TOKENS: int | None = None
+    # Query rewriting runs on the cheap route model, but a rewritten QUERY needs far more room than
+    # the tiny routing budget (one word) — Anthropic overrides this; OpenAI/Gemini ignore max_tokens.
+    _REWRITE_MAX_TOKENS: int | None = None
 
     def __init__(
         self,
@@ -276,6 +285,25 @@ class BaseLLMProvider:
             max_tokens=self._ROUTE_MAX_TOKENS,
         )
         return normalize_decision(text)
+
+    async def rewrite_query(self, query: str, *, history: History | None = None) -> str:
+        """Rewrite a follow-up into a standalone retrieval query using recent conversation history.
+
+        Uses the CHEAP ``route_model`` (this is a light reformulation, not synthesis). With no
+        history there is nothing to resolve, so the SDK call is skipped and the query returned
+        unchanged — keeping single-turn requests free and byte-identical to the pre-rewrite path. A
+        model that returns blank falls back to the original query, so retrieval always receives a
+        usable, non-empty string.
+        """
+        if not history:
+            return query
+        text = await self._call_with_retry(
+            self._route_model,
+            REWRITE_SYSTEM,
+            rewrite_user(query, history),
+            max_tokens=self._REWRITE_MAX_TOKENS,
+        )
+        return text.strip() or query
 
     async def generate(
         self, query: str, context: str, decision: Route, *, history: History | None = None

@@ -119,6 +119,37 @@ def normalize_decision(text: str) -> Route:
     return "DIRECT"
 
 
+# ── History-aware query rewriting ─────────────────────────────────────────────
+
+# Stable, cacheable prefix: the rewrite rubric. Carries NO per-request data (the conversation and
+# the latest query live in the variable user suffix below) so this text is byte-identical on every
+# rewrite call — a prerequisite for an Anthropic/OpenAI/Gemini prefix-cache hit (see module docstring).
+REWRITE_SYSTEM = """You rewrite a user's latest message into ONE standalone search query for a retrieval system.
+
+Using the conversation so far, resolve pronouns and elliptical references (e.g. "it", "that one",
+"the second", "his", "there") into the explicit entities they stand for, so the query is fully
+self-contained and meaningful WITHOUT the conversation.
+
+Rules:
+- Output ONLY the rewritten query — no preamble, labels, quotes, or explanation.
+- Keep it concise; preserve the user's original intent, scope, and any constraints.
+- If the latest message is already self-contained, return it unchanged.
+- Never answer the question; only rephrase it into a search query."""
+
+
+def rewrite_user(query: str, history: History | None = None) -> str:
+    """Variable per-request suffix for query rewriting: recent history + the latest user message.
+
+    History is per-request data, so — exactly like the routing/generation builders — it goes in the
+    user/variable position, never the cacheable system prefix. With empty/missing history the caller
+    (``BaseLLMProvider.rewrite_query``) short-circuits before reaching this builder; it is written to
+    degrade safely (the query alone) if ever called without history.
+    """
+    convo = _format_history(history)
+    convo_block = f"{convo}\n\n" if convo else ""
+    return f'{convo_block}Latest user message: "{query}"\n\nRewritten standalone search query:'
+
+
 # ── Generation ────────────────────────────────────────────────────────────────
 
 # Indirect-prompt-injection defense (H-B2 / R09). Retrieved document chunks and web snippets are
