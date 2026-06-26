@@ -25,7 +25,10 @@ describe("isNearBottom (B24 auto-scroll gate)", () => {
 
   it("respects a custom threshold", () => {
     expect(
-      isNearBottom({ scrollHeight: 1000, scrollTop: 800, clientHeight: 80 }, 200)
+      isNearBottom(
+        { scrollHeight: 1000, scrollTop: 800, clientHeight: 80 },
+        200
+      )
     ).toBe(true);
   });
 });

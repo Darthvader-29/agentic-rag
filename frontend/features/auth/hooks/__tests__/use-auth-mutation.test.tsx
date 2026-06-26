@@ -45,9 +45,11 @@ describe("useAuthMutation identity reset (B02)", () => {
   it("rotates rag_session_id and wipes chat state on login/register (cache:clear)", async () => {
     // Simulate a prior identity's session + on-screen conversation.
     localStorage.setItem(SESSION_KEY, "previous-identity-session");
-    useChatStore.getState().addMessage(
-      createMessage({ role: "user", content: "previous user's message" })
-    );
+    useChatStore
+      .getState()
+      .addMessage(
+        createMessage({ role: "user", content: "previous user's message" })
+      );
 
     const { result } = renderHook(() => useAuthMutation(configFor("clear")), {
       wrapper,
@@ -67,9 +69,11 @@ describe("useAuthMutation identity reset (B02)", () => {
   it("preserves rag_session_id and chat state on guest upgrade (cache:invalidate)", async () => {
     // Upgrade keeps the same user_id, so the session + conversation stay valid.
     localStorage.setItem(SESSION_KEY, "same-user-session");
-    useChatStore.getState().addMessage(
-      createMessage({ role: "user", content: "in-progress message" })
-    );
+    useChatStore
+      .getState()
+      .addMessage(
+        createMessage({ role: "user", content: "in-progress message" })
+      );
 
     const { result } = renderHook(
       () => useAuthMutation(configFor("invalidate")),
