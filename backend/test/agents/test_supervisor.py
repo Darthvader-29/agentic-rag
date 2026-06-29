@@ -40,6 +40,20 @@ class _FakeProvider:
             yield ""
 
 
+class _RewritingProvider(_FakeProvider):
+    """Adds a history-aware ``rewrite_query`` that records its inputs and returns a canned, resolved
+    standalone query — so a test can prove the supervisor publishes the rewrite, not the raw query."""
+
+    def __init__(self, base_route: str = "DIRECT", rewritten: str = "RESOLVED query") -> None:
+        super().__init__(base_route)
+        self.rewritten = rewritten
+        self.rewrite_calls: list[dict] = []
+
+    async def rewrite_query(self, query, *, history=None):
+        self.rewrite_calls.append({"query": query, "history": history})
+        return self.rewritten
+
+
 def _state(provider, *, query="What is X?", history=None, has_documents=False, web_allowed=True):
     return {
         "query": query,
@@ -143,6 +157,48 @@ async def test_supervisor_passes_history_to_provider_route():
     p = _FakeProvider("DIRECT")
     await supervisor_node(_state(p, query="what about the second one?", history=history))
     assert p.route_calls[0]["history"] == history
+
+
+# ── history-aware rewrite (resolves pronouns/follow-ups before retrieval) ─────
+
+
+@pytest.mark.asyncio
+async def test_supervisor_uses_history_aware_rewrite_for_followups():
+    """With prior turns, the supervisor resolves the elliptical query via ``provider.rewrite_query``
+    and publishes that standalone string as ``rewritten_query`` (what the vector/web nodes search)."""
+    history = [
+        {"role": "user", "content": "Tell me about the Apollo and Gemini programs."},
+        {"role": "assistant", "content": "Apollo landed on the Moon; Gemini was earlier."},
+    ]
+    p = _RewritingProvider(rewritten="What was the Gemini program?")
+    out = await supervisor_node(_state(p, query="what about the second one?", history=history))
+    # The retrieval query is the LLM-resolved standalone form, NOT the raw elliptical message.
+    assert out["rewritten_query"] == "What was the Gemini program?"
+    # The rewrite saw the raw follow-up AND the conversation history it must resolve against.
+    assert p.rewrite_calls == [{"query": "what about the second one?", "history": history}]
+
+
+@pytest.mark.asyncio
+async def test_supervisor_skips_rewrite_without_history():
+    """A first turn has nothing to resolve → no rewrite LLM call; the raw query is used verbatim."""
+    p = _RewritingProvider(rewritten="SHOULD NOT BE USED")
+    out = await supervisor_node(_state(p, query="What is X?", history=[]))
+    assert out["rewritten_query"] == "What is X?"
+    assert p.rewrite_calls == []  # history-free turn never invokes the rewrite
+
+
+@pytest.mark.asyncio
+async def test_supervisor_rewrite_failure_falls_back_to_raw_query():
+    """A raising rewrite must never break routing — the node falls back to the raw query."""
+
+    class _BoomRewrite(_RewritingProvider):
+        async def rewrite_query(self, query, *, history=None):
+            raise RuntimeError("rewrite model blew up")
+
+    history = [{"role": "user", "content": "prior turn"}]
+    out = await supervisor_node(_state(_BoomRewrite(), query="follow up?", history=history))
+    assert out["rewritten_query"] == "follow up?"
+    assert out["route"] in {"RAG", "WEB", "BOTH", "DIRECT"}
 
 
 # ── defensive fallback ────────────────────────────────────────────────────────

@@ -55,6 +55,9 @@ class AnthropicProvider(BaseLLMProvider):
     _UNAVAILABLE_STATUSES = frozenset({500, 503, _ANTHROPIC_OVERLOADED})
 
     _ROUTE_MAX_TOKENS = 8
+    # A rewritten standalone query is short but needs more than the 8-token routing budget; 256 is
+    # ample for any reformulated question while keeping the cheap route-model call inexpensive.
+    _REWRITE_MAX_TOKENS = 256
     # R14: raised from 1024 → 4096 so rich-markdown answers + a trailing ```json component block
     # aren't truncated mid-block (which fails parse_components and silently drops the component).
     _GENERATE_MAX_TOKENS = 4096

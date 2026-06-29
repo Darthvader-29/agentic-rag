@@ -190,7 +190,9 @@ describe("http-client auth interceptor (flag on)", () => {
     expect(useAuthStore.getState().accessToken).toBe("access-old");
     expect(useAuthStore.getState().refreshToken).toBe("refresh-1");
     // and no forced redirect to the login wall
-    expect(window.location.assign as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(
+      window.location.assign as ReturnType<typeof vi.fn>
+    ).not.toHaveBeenCalled();
   });
 
   it("retry that 401s again does NOT trigger a second refresh (loop-free)", async () => {

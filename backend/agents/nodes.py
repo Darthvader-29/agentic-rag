@@ -45,9 +45,11 @@ async def supervisor_node(state: GraphState) -> dict[str, Any]:
     Ports the intent half of the old ``decide_combined_route``: the provider returns an intent label
     (RAG/WEB/DIRECT) which ``decide_agentic_route`` maps to ``RAG``/``WEB``/``BOTH``/``DIRECT`` using
     ``has_documents`` + ``web_search_allowed`` (the >=0.4 score gate stays in the vector node,
-    docs/09 §2.1). Query rewriting is folded in here (Decision 4) with no extra LLM call. On any
-    malformed/raising provider response we fall back to a safe default route and never raise —
-    mirroring today's defensive routing.
+    docs/09 §2.1). The retrieval query is then made standalone by a history-aware rewrite
+    (``_rewrite_query`` → ``provider.rewrite_query``): a second cheap route-tier call, made ONLY when
+    there is prior history to resolve (history-free turns skip it). On any malformed/raising provider
+    response — for routing or the rewrite — we fall back to a safe default route / the raw query and
+    never raise, mirroring today's defensive routing.
     """
     provider = state["provider"]
     query = state["query"]
@@ -66,7 +68,7 @@ async def supervisor_node(state: GraphState) -> dict[str, Any]:
     route = decide_agentic_route(
         str(base_route), has_documents=has_documents, web_allowed=web_allowed
     )
-    rewritten_query = _rewrite_query(query, history)
+    rewritten_query = await _rewrite_query(provider, query, history)
 
     logger.info(
         "supervisor_decision",
@@ -79,17 +81,26 @@ async def supervisor_node(state: GraphState) -> dict[str, Any]:
     return {"route": route, "rewritten_query": rewritten_query}
 
 
-def _rewrite_query(query: str, history: list[Turn]) -> str:
-    """Resolve the retrieval/search query against recent turns.
+async def _rewrite_query(provider: Any, query: str, history: list[Turn]) -> str:
+    """Resolve the *retrieval* query against recent turns via a history-aware LLM rewrite.
 
-    Conversation history now reaches the LLM directly — it is threaded into the routing and
-    synthesis prompts via ``provider.route``/``generate``/``stream`` (H-B1) — so follow-ups are
-    answered with prior context. This helper only shapes the *retrieval* query string fed to the
-    vector/web nodes; a full provider-native rewrite (resolving pronouns in the search text itself)
-    is a separate follow-up. Always returns a non-empty string.
+    Follow-ups are frequently elliptical — "what about the second one?", "and its CEO?" — so the
+    bare latest message is a poor vector/web search string: its referents live in PRIOR turns.
+    Before retrieval we ask the provider (cheap route-tier model, ``rewrite_query``) to resolve
+    pronouns / fill the ellipsis into a standalone, context-grounded search string. History-free
+    turns skip the call entirely (nothing to resolve → free, and identical to a single-turn
+    request). The rewrite is best-effort: any provider error falls back to the raw query — resolving
+    pronouns must never be able to break a chat turn. Always returns a non-empty string.
     """
-    q = (query or "").strip()
-    return q or (query or "")
+    raw = (query or "").strip() or (query or "")
+    if not history:
+        return raw
+    try:
+        rewritten = await provider.rewrite_query(raw, history=history)
+    except Exception:
+        logger.warning("query_rewrite_failed", exc_info=True)
+        return raw
+    return (rewritten or "").strip() or raw
 
 
 # ── vector ────────────────────────────────────────────────────────────────────

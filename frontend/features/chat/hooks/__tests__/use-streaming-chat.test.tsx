@@ -6,28 +6,23 @@ import type { ReactNode } from "react";
 // Replay a scripted SSE sequence by invoking the handlers streamChat would call.
 // Scripts the 09 contract: a whole `component` block + a FLAT-enum done.route.
 vi.mock("@/lib/sse/stream-chat", () => ({
-  streamChat: vi.fn(
-    async (
-      _payload: unknown,
-      h: Record<string, (...args: unknown[]) => void>
-    ) => {
-      h.onStatus?.("routing");
-      h.onStatus?.("retrieving");
-      h.onStatus?.("synthesizing");
-      h.onToken?.("Grounded ");
-      h.onToken?.("answer.");
-      h.onComponent?.({
-        type: "citation",
-        items: [{ label: "doc.pdf · p.4" }],
-      });
-      h.onDone?.({ answer: "Grounded answer.", route: "BOTH" }); // flat enum (09)
-    }
-  ),
+  streamChat: vi.fn(async (_payload: unknown, h: StreamChatHandlers) => {
+    h.onStatus?.("routing");
+    h.onStatus?.("retrieving");
+    h.onStatus?.("synthesizing");
+    h.onToken?.("Grounded ");
+    h.onToken?.("answer.");
+    h.onComponent?.({
+      type: "citation",
+      items: [{ label: "doc.pdf · p.4" }],
+    });
+    h.onDone?.({ answer: "Grounded answer.", route: "BOTH" }); // flat enum (09)
+  }),
 }));
 
 import { useChatStore } from "@/features/chat/store/chat.store";
 import { useStreamingChat } from "@/features/chat/hooks/use-streaming-chat";
-import { streamChat } from "@/lib/sse/stream-chat";
+import { streamChat, type StreamChatHandlers } from "@/lib/sse/stream-chat";
 
 const wrapper = ({ children }: { children: ReactNode }) => (
   <QueryClientProvider client={new QueryClient()}>
@@ -68,7 +63,7 @@ describe("useStreamingChat end-to-end", () => {
   it("keeps streamed content when done.answer is empty (B26)", async () => {
     useChatStore.setState({ messages: [], isStreaming: false });
     vi.mocked(streamChat).mockImplementationOnce(
-      async (_payload: unknown, h: Record<string, (...a: unknown[]) => void>) => {
+      async (_payload: unknown, h: StreamChatHandlers) => {
         h.onToken?.("Hello");
         h.onToken?.(" world");
         h.onDone?.({ answer: "", route: "RAG" }); // empty done.answer must not wipe content
@@ -90,8 +85,11 @@ describe("useStreamingChat end-to-end", () => {
   it("a single done.layer fills the citation source's provenance layer (B07)", async () => {
     useChatStore.setState({ messages: [], isStreaming: false });
     vi.mocked(streamChat).mockImplementationOnce(
-      async (_payload: unknown, h: Record<string, (...a: unknown[]) => void>) => {
-        h.onComponent?.({ type: "citation", items: [{ label: "doc.pdf · p.4" }] });
+      async (_payload: unknown, h: StreamChatHandlers) => {
+        h.onComponent?.({
+          type: "citation",
+          items: [{ label: "doc.pdf · p.4" }],
+        });
         h.onDone?.({ answer: "A.", route: "RAG", layers: ["vector"] });
       }
     );
@@ -111,8 +109,11 @@ describe("useStreamingChat end-to-end", () => {
   it("multiple done.layers do NOT guess a per-source layer (B07)", async () => {
     useChatStore.setState({ messages: [], isStreaming: false });
     vi.mocked(streamChat).mockImplementationOnce(
-      async (_payload: unknown, h: Record<string, (...a: unknown[]) => void>) => {
-        h.onComponent?.({ type: "citation", items: [{ label: "doc.pdf · p.4" }] });
+      async (_payload: unknown, h: StreamChatHandlers) => {
+        h.onComponent?.({
+          type: "citation",
+          items: [{ label: "doc.pdf · p.4" }],
+        });
         h.onDone?.({ answer: "A.", route: "BOTH", layers: ["vector", "web"] });
       }
     );
